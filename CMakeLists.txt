@@ -3,10 +3,17 @@ cmake_minimum_required(VERSION 4.1)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
 
 project(gpp VERSION 0.1.0 LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 23)
 
 # ---------------- dependencies ----------------
 
+set(FMT_MODULE ON)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 add_subdirectory(dependencies/spdlog)
+add_subdirectory(dependencies/fmt)
 
 # ------------------ my stuff ------------------
 
@@ -18,12 +25,15 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-add_library(gpp SHARED)
+file(GLOB_RECURSE GPP_SOURCES "src/**/*.cpp")
+file(GLOB_RECURSE GPP_MODULES "src/**/*.cppm")
+
+add_library(gpp SHARED ${GPP_SOURCES})
 
 target_sources(gpp
         PRIVATE FILE_SET private_modules TYPE CXX_MODULES FILES
         PUBLIC FILE_SET public_modules TYPE CXX_MODULES FILES
-        src/core/test.cppm
+        ${GPP_MODULES}
 )
 
 set_target_properties(gpp PROPERTIES
@@ -31,7 +41,7 @@ set_target_properties(gpp PROPERTIES
     WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
-target_link_libraries(gpp PRIVATE spdlog::spdlog_module)
+target_link_libraries(gpp PRIVATE spdlog::spdlog_module fmt::fmt)
 
 add_executable(scratch)
 
