@@ -1,7 +1,10 @@
-export module Core:Types;
+module;
+
+#include <fmt/format.h>
+
+export module GPP.Core:Types;
 
 import std;
-import fmt;
 
 export using $u8 = std::uint8_t;
 export using $u16 = std::uint16_t;

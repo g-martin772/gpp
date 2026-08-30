@@ -1,13 +1,15 @@
-import Core;
+import GPP;
+
+using namespace GPP;
 
 int main() {
-    $Logger::LogInfo("Test {}", 12);
+    Logger::LogInfo("Test {}", 12);
 
-    auto logger = new $Logger();
+    auto logger = new Logger();
 
     logger->CreateMultiLogger("MyLogger", "log.txt", true);
     logger->SetPattern("[%^%l%$] %v");
-    logger->SetLevel($LogLevel::Debug);
+    logger->SetLevel(LogLevel::Debug);
 
     logger->Info("This is an info message with number: {}", 42);
 
