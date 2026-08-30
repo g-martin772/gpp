@@ -46,6 +46,7 @@ export using $u32stringv = std::u32string_view;
 export template <typename... T> using $format_string = fmt::format_string<T...>;
 
 export using $size = std::size_t;
+export using $size_t = std::size_t;
 export using $ptrdiff = std::ptrdiff_t;
 export using $uintptr = std::uintptr_t;
 export using $intptr = std::intptr_t;
