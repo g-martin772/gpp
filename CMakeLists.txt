@@ -11,6 +11,7 @@ set(FMT_MODULE ON)
 
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(Catch2 CONFIG REQUIRED)
 
 # ------------------ my stuff ------------------
 
@@ -35,3 +36,16 @@ target_sources(scratch
         tests/scratch/main.cpp)
 target_link_libraries(scratch PRIVATE gpp)
 
+# ------ tests -------
+
+add_executable(unit_tests)
+file(GLOB_RECURSE TEST_SOURCES "tests/unit/**/*.cpp")
+target_sources(unit_tests
+        PRIVATE
+        ${TEST_SOURCES})
+target_link_libraries(unit_tests PRIVATE gpp)
+target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain)
+
+include(CTest)
+include(Catch)
+catch_discover_tests(unit_tests)

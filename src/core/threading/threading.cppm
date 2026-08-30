@@ -9,7 +9,7 @@ namespace GPP {
         explicit ThreadPool(std::size_t workerCount = std::thread::hardware_concurrency());
         ~ThreadPool();
 
-        static ThreadPool* Instance();
+        static ThreadPool& Instance();
 
         ThreadPool(const ThreadPool&) = delete;
         ThreadPool& operator=(const ThreadPool&) = delete;
@@ -30,12 +30,22 @@ namespace GPP {
         bool m_Stopping{false};
     };
 
-    struct ResumeOnAwaiter {
+    export struct ResumeOnAwaiter {
         ThreadPool* pool{nullptr};
         bool await_ready() const noexcept;
         void await_suspend(std::coroutine_handle<> handle) const;
         void await_resume() const noexcept;
     };
 
-    export auto ResumeOn(ThreadPool& pool);
+    export ResumeOnAwaiter ResumeOn(ThreadPool& pool);
+
+    export struct AsyncVoid {
+        struct promise_type {
+            AsyncVoid get_return_object() { return {}; }
+            std::suspend_never initial_suspend() noexcept { return {}; }
+            std::suspend_never final_suspend() noexcept { return {}; }
+            void return_void() noexcept {}
+            void unhandled_exception() { std::terminate(); }
+        };
+    };
 }

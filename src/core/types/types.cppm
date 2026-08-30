@@ -1,6 +1,7 @@
 module;
 
 #include <fmt/format.h>
+#include <fmt/std.h>
 
 export module GPP.Core:Types;
 

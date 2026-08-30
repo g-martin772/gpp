@@ -23,10 +23,10 @@ namespace GPP {
         m_QueueCondition.notify_all();
     }
 
-    ThreadPool* ThreadPool::Instance()
+    ThreadPool& ThreadPool::Instance()
     {
         static ThreadPool instance;
-        return &instance;
+        return instance;
     }
 
     void ThreadPool::Submit(std::move_only_function<void()> task) {
@@ -89,7 +89,7 @@ namespace GPP {
     {
     }
 
-    auto ResumeOn(ThreadPool& pool) {
+    ResumeOnAwaiter ResumeOn(ThreadPool& pool) {
         return ResumeOnAwaiter{.pool = &pool};
     }
 }
