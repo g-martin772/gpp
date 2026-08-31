@@ -1,3 +1,7 @@
+module;
+
+#include <csignal>
+
 module GPP.Core;
 
 import :Application;
@@ -6,11 +10,27 @@ namespace GPP
 {
     Application* Application::s_Instance = nullptr;
 
+    void Application::HandleSignal(int signal) {
+        switch (signal) {
+            case SIGINT:
+            case SIGTERM:
+                if (s_Instance) {
+                    std::cout << std::endl;
+                    s_Instance->Stop();
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
     Application::Application(ServiceProvider&& provider) : m_ServiceProvider(std::move(provider)),
                                                            m_Running(false)
     {
         m_HostedServices = m_ServiceProvider.GetHostedServices();
         s_Instance = this;
+        std::signal(SIGINT, HandleSignal);
+        std::signal(SIGTERM, HandleSignal);
     }
 
     Application& Application::Instance()

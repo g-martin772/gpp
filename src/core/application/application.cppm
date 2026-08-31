@@ -24,6 +24,7 @@ namespace GPP
 
     private:
         static Application* s_Instance;
+        static void HandleSignal(int signal);
 
         ServiceProvider m_ServiceProvider;
         std::vector<std::shared_ptr<IHostedService>> m_HostedServices;
