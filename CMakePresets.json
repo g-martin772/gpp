@@ -4,11 +4,19 @@
     {
       "name": "vcpkg",
       "generator": "Ninja",
+      "displayName": "Vcpkg - DEBUG",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_MANIFEST_MODE": "ON"
+        "VCPKG_MANIFEST_MODE": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
       }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vcpkg",
+      "configurePreset": "vcpkg"
     }
   ]
 }
