@@ -3,25 +3,47 @@ import std;
 
 using namespace GPP;
 
-Task<int> ExampleCoroutine(std::stop_token stopToken = {})
-{
-    co_await ResumeOn(ThreadPool::Instance());
-    Logger::LogInfo("Inside Coroutine Part 1. Thread ID: {}", std::this_thread::get_id());
-    co_await DelayAsync(std::chrono::milliseconds(200), stopToken);
-    Logger::LogInfo("Inside Coroutine Part 2. Thread ID: {}", std::this_thread::get_id());
-    co_return 42;
-}
+struct IAssetManager : public IService {
+    virtual void Load() = 0;
+};
 
+class VulkanAssetManager : public IAssetManager {
+public:
+    using Dependencies = std::tuple<Logger>;
+
+    VulkanAssetManager(Logger* logger)
+        : m_Logger(logger) {}
+
+    void Load() override {
+        m_Logger->Info("Vulkan Asset Manager loading texture ...");
+    }
+
+private:
+    Logger* m_Logger;
+};
 
 int main()
 {
     Logger::LogInfo("Starting Scratch");
     Logger::LogInfo("Main Thread ID: {}", std::this_thread::get_id());
 
+    ServiceCollection services;
 
-    Spawn(ExampleCoroutine());
+    services.AddSingleton<Logger>([](ServiceProvider& _)
+    {
+        auto logger = std::make_unique<Logger>();
+        logger->CreateConsoleLogger("DI Logger");
+        logger->SetLevel(LogLevel::Info);
+        logger->Info("Test");
+        return logger;
+    });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    services.AddSingleton<IAssetManager, VulkanAssetManager>();
+
+    auto serviceProvider = services.Build();
+
+    auto assetManager = serviceProvider.GetRequiredService<IAssetManager>();
+    assetManager->Load();
 
     return 0;
 }

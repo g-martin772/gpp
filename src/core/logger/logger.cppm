@@ -4,6 +4,7 @@ module;
 
 export module GPP.Core:Logger;
 import :Types;
+import :DI.Service;
 
 namespace GPP
 {
@@ -17,7 +18,7 @@ namespace GPP
         Off
     };
 
-    export class Logger {
+    export class Logger : public IService {
         spdlog::logger m_logger;
         static std::unique_ptr<Logger> s_instance;
     public:
