@@ -17,7 +17,7 @@ int main(int argc, char* argv[])
     auto builder = App::CreateCliBuilder();
 
     builder.Configuration
-            //AddJsonFile("appsettings.json")
+            .AddJsonFile("config.json", &builder.FS)
             .AddCommandLine(argc, argv)
             .AddEnvironmentVariables();
 

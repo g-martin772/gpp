@@ -3,6 +3,7 @@ export module GPP.Core:Application;
 import std;
 import :DI;
 import :Logger;
+import :IO.File;
 export import :Application.Config;
 
 namespace GPP
@@ -57,6 +58,7 @@ namespace GPP
 
         ServiceCollection Services{};
         ConfigurationBuilder Configuration{};
+        FileSystem FS{};
 
         virtual Application Build();
     };

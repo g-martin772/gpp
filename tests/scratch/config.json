@@ -1,0 +1,10 @@
+{
+  "Graphics": {
+    "Window": {
+      "Width": 1600,
+      "Height": 900,
+      "Fullscreen": true,
+      "Title": "Scratch"
+    }
+  }
+}

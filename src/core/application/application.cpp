@@ -5,6 +5,7 @@ module;
 module GPP.Core;
 
 import :Application;
+import :IO.File;
 
 namespace GPP
 {
@@ -188,6 +189,11 @@ namespace GPP
             logger->CreateConsoleLogger("GPP APP");
             logger->SetLevel(LogLevel::Info);
             return logger;
+        });
+
+        Services.AddSingleton<IFileSystem, FileSystem>([this](ServiceProvider& _)
+        {
+            return std::make_shared<FileSystem>(FS);
         });
     }
 

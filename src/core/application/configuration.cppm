@@ -5,6 +5,7 @@ module;
 export module GPP.Core:Application.Config;
 
 import std;
+import :IO.File;
 
 namespace GPP {
     export class IConfigurationSection {
@@ -75,13 +76,14 @@ namespace GPP {
 
     export class JsonConfigurationProvider : public IConfigurationProvider {
     public:
-        explicit JsonConfigurationProvider(std::string filePath) 
-            : m_FilePath(std::move(filePath)) {}
+        explicit JsonConfigurationProvider(std::string filePath, IFileSystem* fs = nullptr)
+            : m_FilePath(std::move(filePath)), m_FileSystem(fs) {}
 
         void Load(std::unordered_map<std::string, std::string>& data) override;
     private:
         void FlattenJson(const nlohmann::json& j, const std::string& prefix, std::unordered_map<std::string, std::string>& data);
         std::string m_FilePath;
+        IFileSystem* m_FileSystem;
     };
 
     export class ConfigurationBuilder {
@@ -89,7 +91,7 @@ namespace GPP {
         ConfigurationBuilder() = default;
         ConfigurationBuilder& AddCommandLine(int argc, char* argv[]);
         ConfigurationBuilder& AddEnvironmentVariables(std::string prefix = "GPP_");
-        ConfigurationBuilder& AddJsonFile(std::string filePath);
+        ConfigurationBuilder& AddJsonFile(std::string filePath, IFileSystem* fs = nullptr);
         std::unique_ptr<IConfiguration> Build();
     private:
         std::vector<std::unique_ptr<IConfigurationProvider>> m_Providers{};

@@ -31,11 +31,20 @@ target_sources(gpp
 )
 target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
 
+# ---- scratch -----
+
 add_executable(scratch)
 target_sources(scratch
         PRIVATE
         tests/scratch/main.cpp)
 target_link_libraries(scratch PRIVATE gpp)
+# add_custom_command(
+#         OUTPUT "${SCRATCH_CONFIG_OUTPUT}"
+#         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/scratch/config.json"
+#         COMMAND ${CMAKE_COMMAND} -E copy
+#         "${CMAKE_CURRENT_SOURCE_DIR}/tests/scratch/config.json"
+#         "${SCRATCH_CONFIG_OUTPUT}")
+# target_sources(scratch PRIVATE "${SCRATCH_CONFIG_OUTPUT}")
 
 # ------ tests -------
 

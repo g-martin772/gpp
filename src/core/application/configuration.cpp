@@ -126,6 +126,12 @@ namespace GPP
 
     void JsonConfigurationProvider::Load(std::unordered_map<std::string, std::string>& data)
     {
+        auto path = m_FilePath;
+
+        if (m_FileSystem) {
+            path = m_FileSystem->ResolvePath(m_FilePath);
+        }
+
         std::ifstream file(m_FilePath);
         if (!file.is_open()) throw std::runtime_error("Failed to open JSON configuration file: " + m_FilePath);
 
@@ -176,9 +182,9 @@ namespace GPP
         return *this;
     }
 
-    ConfigurationBuilder& ConfigurationBuilder::AddJsonFile(std::string filePath)
+    ConfigurationBuilder& ConfigurationBuilder::AddJsonFile(std::string filePath, IFileSystem* fs)
     {
-        m_Providers.push_back(std::make_unique<JsonConfigurationProvider>(std::move(filePath)));
+        m_Providers.push_back(std::make_unique<JsonConfigurationProvider>(std::move(filePath), fs));
         return *this;
     }
 
