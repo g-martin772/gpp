@@ -15,21 +15,34 @@ namespace GPP
     constexpr bool has_dependencies = decltype(has_dependencies_impl<T>(0))::value;
 
     template <typename T, typename Tuple, std::size_t... I, typename Container>
-    std::unique_ptr<T> createInstanceWithDepsImpl(Container& container, std::index_sequence<I...>)
+    std::shared_ptr<T> createInstanceWithDepsImpl(Container& container, std::index_sequence<I...>)
     {
-        return std::make_unique<T>(
-            container.template GetRequiredService<std::tuple_element_t<I, Tuple>>()...
+        auto resolveDep = [&container]<typename TDep>() -> decltype(auto)
+        {
+            if constexpr (std::is_pointer_v<TDep>)
+            {
+                using TValue = std::remove_pointer_t<TDep>;
+                return container.template GetRequiredService<TValue>().get();
+            }
+            else
+            {
+                return container.template GetRequiredService<TDep>();
+            }
+        };
+
+        return std::make_shared<T>(
+            resolveDep.template operator()<std::tuple_element_t<I, Tuple>>()...
         );
     }
 
     template <typename T, typename Tuple, typename Container>
-    std::unique_ptr<T> createInstanceWithDeps(Container& container)
+    std::shared_ptr<T> createInstanceWithDeps(Container& container)
     {
         return createInstanceWithDepsImpl<T, Tuple>(container, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
     }
 
     template <typename T, typename Container>
-    std::unique_ptr<T> createInstance(Container& container)
+    std::shared_ptr<T> createInstance(Container& container)
     {
         if constexpr (has_dependencies<T>)
         {
@@ -38,24 +51,43 @@ namespace GPP
         }
         else
         {
-            return std::make_unique<T>();
+            return std::make_shared<T>();
         }
     }
 
     export class ServiceCollection
     {
     public:
+        template <typename TInterface>
+            requires std::derived_from<TInterface, IService>
+        void Add(
+            ServiceLifetime lifetime,
+            ServiceFactory factory)
+        {
+            auto typeId = std::type_index(typeid(TInterface));
+            m_Descriptors[typeId] = ServiceDescriptor{
+                .factory = std::move(factory),
+                .lifetime = lifetime
+            };
+        }
+
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void Add(ServiceLifetime lifetime)
+        {
+            Add<TInterface>(
+                lifetime,
+                [](ServiceProvider& provider) -> std::shared_ptr<IService>
+                {
+                    return std::shared_ptr<IService>(createInstance<TImplementation>(provider));
+                });
+        }
+
         template <typename TInterface, typename TImplementation>
             requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
         void AddSingleton()
         {
-            auto typeId = std::type_index(typeid(TInterface));
-            m_Descriptors[typeId] = ServiceDescriptor{
-                .m_Factory = [](ServiceProvider& provider) -> std::unique_ptr<IService>
-                {
-                    return std::unique_ptr<IService>(createInstance<TImplementation>(provider));
-                }
-            };
+            Add<TInterface, TImplementation>(ServiceLifetime::Singleton);
         }
 
         template <typename T> requires std::derived_from<T, IService>
@@ -68,10 +100,7 @@ namespace GPP
             requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
         void AddSingleton(ServiceFactory factory)
         {
-            auto typeId = std::type_index(typeid(TInterface));
-            m_Descriptors[typeId] = ServiceDescriptor{
-                .m_Factory = factory
-            };
+            Add<TInterface>(ServiceLifetime::Singleton, std::move(factory));
         }
 
         template <typename T> requires std::derived_from<T, IService>
@@ -80,12 +109,64 @@ namespace GPP
             AddSingleton<T, T>(factory);
         }
 
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void AddTransient()
+        {
+            Add<TInterface, TImplementation>(ServiceLifetime::Transient);
+        }
+
+        template <typename T> requires std::derived_from<T, IService>
+        void AddTransient()
+        {
+            AddTransient<T, T>();
+        }
+
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void AddTransient(ServiceFactory factory)
+        {
+            Add<TInterface>(ServiceLifetime::Transient, std::move(factory));
+        }
+
+        template <typename T> requires std::derived_from<T, IService>
+        void AddTransient(ServiceFactory factory)
+        {
+            AddTransient<T, T>(factory);
+        }
+
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void AddScoped()
+        {
+            Add<TInterface, TImplementation>(ServiceLifetime::Scoped);
+        }
+
+        template <typename T> requires std::derived_from<T, IService>
+        void AddScoped()
+        {
+            AddScoped<T, T>();
+        }
+
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void AddScoped(ServiceFactory factory)
+        {
+            Add<TInterface>(ServiceLifetime::Scoped, std::move(factory));
+        }
+
+        template <typename T> requires std::derived_from<T, IService>
+        void AddScoped(ServiceFactory factory)
+        {
+            AddScoped<T, T>(factory);
+        }
+
         ServiceProvider Build()
         {
-            return ServiceProvider(std::move(m_Descriptors));
+            return ServiceProvider(&m_Descriptors);
         }
 
     private:
-        std::unordered_map<std::type_index, ServiceDescriptor> m_Descriptors{};
+        ServiceDescriptorMap m_Descriptors{};
     };
 }

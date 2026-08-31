@@ -11,7 +11,7 @@ class VulkanAssetManager : public IAssetManager {
 public:
     using Dependencies = std::tuple<Logger>;
 
-    VulkanAssetManager(Logger* logger)
+    VulkanAssetManager(std::shared_ptr<Logger> logger)
         : m_Logger(logger) {}
 
     void Load() override {
@@ -19,7 +19,7 @@ public:
     }
 
 private:
-    Logger* m_Logger;
+    std::shared_ptr<Logger> m_Logger;
 };
 
 int main()
@@ -31,7 +31,7 @@ int main()
 
     services.AddSingleton<Logger>([](ServiceProvider& _)
     {
-        auto logger = std::make_unique<Logger>();
+        auto logger = std::make_shared<Logger>();
         logger->CreateConsoleLogger("DI Logger");
         logger->SetLevel(LogLevel::Info);
         logger->Info("Test");
