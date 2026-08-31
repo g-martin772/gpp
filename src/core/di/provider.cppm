@@ -26,11 +26,11 @@ namespace GPP
     export using ServiceDescriptorMap = std::unordered_map<std::type_index, ServiceDescriptor>;
     export using ServiceCacheMap = std::unordered_map<std::type_index, std::shared_ptr<IService>>;
 
-    class ServiceProvider
+    class ServiceProvider : public IService
     {
     public:
         explicit ServiceProvider(ServiceDescriptorMap* descriptors)
-            : m_Descriptors(descriptors), m_ParentProvider(nullptr)
+            : m_Descriptors(descriptors)
         {
         }
 
@@ -42,6 +42,11 @@ namespace GPP
         template <typename TService> requires std::derived_from<TService, IService>
         std::shared_ptr<TService> GetService()
         {
+            if constexpr (std::same_as<TService, ServiceProvider>)
+            {
+                return std::shared_ptr<ServiceProvider>(this, [](ServiceProvider*) {});
+            }
+
             const auto typeId = std::type_index(typeid(TService));
 
             // fetch descriptor
