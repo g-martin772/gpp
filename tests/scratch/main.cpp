@@ -27,23 +27,14 @@ int main()
     Logger::LogInfo("Starting Scratch");
     Logger::LogInfo("Main Thread ID: {}", std::this_thread::get_id());
 
-    ServiceCollection services;
+    auto builder = App::CreateCliBuilder();
 
-    services.AddSingleton<Logger>([](ServiceProvider& _)
-    {
-        auto logger = std::make_shared<Logger>();
-        logger->CreateConsoleLogger("DI Logger");
-        logger->SetLevel(LogLevel::Info);
-        logger->Info("Test");
-        return logger;
-    });
+    builder.Services.AddSingleton<IAssetManager, VulkanAssetManager>();
 
-    services.AddSingleton<IAssetManager, VulkanAssetManager>();
+    auto app = builder.Build();
 
-    auto serviceProvider = services.Build();
-
-    auto assetManager = serviceProvider.GetRequiredService<IAssetManager>();
+    auto assetManager = app.GetServiceProvider().GetRequiredService<IAssetManager>();
     assetManager->Load();
 
-    return 0;
+    return app.Run();
 }

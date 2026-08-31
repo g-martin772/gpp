@@ -2,6 +2,7 @@ export module GPP.Core:DI.Provider;
 import std;
 import :DI.Service;
 import :Types;
+import :DI.HostedService;
 
 namespace GPP
 {
@@ -29,6 +30,28 @@ namespace GPP
     class ServiceProvider : public IService
     {
     public:
+        ServiceProvider(const ServiceProvider&) = delete;
+        ServiceProvider& operator=(const ServiceProvider&) = delete;
+
+        ServiceProvider(ServiceProvider&& other) noexcept
+            : m_Descriptors(std::exchange(other.m_Descriptors, nullptr)),
+              m_Cache(std::move(other.m_Cache)),
+              m_ParentProvider(std::exchange(other.m_ParentProvider, nullptr))
+        {
+        }
+
+        ServiceProvider& operator=(ServiceProvider&& other) noexcept
+        {
+            if (this != &other)
+            {
+                m_Descriptors = std::exchange(other.m_Descriptors, nullptr);
+                m_Cache = std::move(other.m_Cache);
+                m_ParentProvider = std::exchange(other.m_ParentProvider, nullptr);
+            }
+
+            return *this;
+        }
+
         explicit ServiceProvider(ServiceDescriptorMap* descriptors)
             : m_Descriptors(descriptors)
         {
@@ -152,6 +175,25 @@ namespace GPP
         bool IsRootProvider() const noexcept
         {
             return m_ParentProvider == nullptr;
+        }
+
+        std::vector<std::shared_ptr<IHostedService>> GetHostedServices()
+        {
+            std::vector<std::shared_ptr<IHostedService>> hostedServices;
+
+            for (const auto& [typeId, descriptor] : *m_Descriptors)
+            {
+                if (std::is_base_of_v<IHostedService, std::remove_pointer_t<std::remove_reference_t<decltype(*descriptor.factory(*this))>>>)
+                {
+                    auto service = GetService<IHostedService>();
+                    if (service)
+                    {
+                        hostedServices.push_back(service);
+                    }
+                }
+            }
+
+            return hostedServices;
         }
 
         ServiceScope CreateScope();

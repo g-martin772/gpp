@@ -111,6 +111,32 @@ namespace GPP
 
         template <typename TInterface, typename TImplementation>
             requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void AddHostedService()
+        {
+            Add<TInterface, TImplementation>(ServiceLifetime::Singleton);
+        }
+
+        template <typename T> requires std::derived_from<T, IService>
+        void AddHostedService()
+        {
+            AddSingleton<T, T>();
+        }
+
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
+        void AddHostedService(ServiceFactory factory)
+        {
+            Add<TInterface>(ServiceLifetime::Singleton, std::move(factory));
+        }
+
+        template <typename T> requires std::derived_from<T, IService>
+        void AddHostedService(ServiceFactory factory)
+        {
+            AddSingleton<T, T>(factory);
+        }
+
+        template <typename TInterface, typename TImplementation>
+            requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
         void AddTransient()
         {
             Add<TInterface, TImplementation>(ServiceLifetime::Transient);
