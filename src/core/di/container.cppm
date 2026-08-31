@@ -2,6 +2,7 @@ export module GPP.Core:DI.Container;
 import std;
 import :DI.Service;
 import :DI.Provider;
+import :Application.Config;
 
 namespace GPP
 {
@@ -187,6 +188,35 @@ namespace GPP
             AddScoped<T, T>(factory);
         }
 
+        template <typename TOptions> requires std::derived_from<TOptions, IService>
+        void Configure(const std::string& sectionPath,
+                       std::function<TOptions(const IConfigurationSection &)> binder)
+        {
+            auto typeId = std::type_index(typeid(TOptions));
+            auto binderPtr = std::make_shared<std::function<TOptions(const IConfigurationSection&)>>(std::move(binder));
+
+            m_DeferredConfigurations.push_back([typeId, sectionPath, binderPtr](IConfiguration& config, ServiceDescriptorMap& descriptors)
+            {
+                auto section = std::shared_ptr<IConfigurationSection>(config.GetSection(sectionPath).release());
+                descriptors[typeId] = ServiceDescriptor{
+                    .factory = [section = std::move(section), binderPtr](ServiceProvider&) -> std::shared_ptr<IService>
+                    {
+                        TOptions options = (*binderPtr)(*section);
+                        return std::make_shared<TOptions>(std::move(options));
+                    },
+                    .lifetime = ServiceLifetime::Singleton
+                };
+            });
+        }
+
+        void ApplyConfiguration(IConfiguration& config)
+        {
+            for (auto& deferred : m_DeferredConfigurations)
+            {
+                deferred(config, m_Descriptors);
+            }
+        }
+
         ServiceProvider Build()
         {
             return ServiceProvider(&m_Descriptors);
@@ -194,5 +224,6 @@ namespace GPP
 
     private:
         ServiceDescriptorMap m_Descriptors{};
+        std::vector<std::function<void(IConfiguration&, ServiceDescriptorMap&)>> m_DeferredConfigurations{};
     };
 }

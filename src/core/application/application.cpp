@@ -24,7 +24,8 @@ namespace GPP
         }
     }
 
-    Application::Application(ServiceProvider&& provider) : m_ServiceProvider(std::move(provider)),
+    Application::Application(ServiceProvider&& provider, std::unique_ptr<IConfiguration> configuration) : m_ServiceProvider(std::move(provider)),
+                                                           m_Configuration(std::move(configuration)),
                                                            m_Running(false)
     {
         m_HostedServices = m_ServiceProvider.GetHostedServices();
@@ -147,6 +148,11 @@ namespace GPP
         return m_ServiceProvider;
     }
 
+    IConfiguration& Application::GetConfiguration()
+    {
+        return *m_Configuration;
+    }
+
     bool ResumeOnApplicationAwaiter::await_ready() const noexcept
     {
         return false;
@@ -187,7 +193,9 @@ namespace GPP
 
     Application ApplicationBuilder::Build()
     {
-        return Application(Services.Build());
+        auto config = Configuration.Build();
+        Services.ApplyConfiguration(*config);
+        return Application(Services.Build(), std::move(config));
     }
 
 

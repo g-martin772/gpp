@@ -3,6 +3,7 @@ export module GPP.Core:Application;
 import std;
 import :DI;
 import :Logger;
+export import :Application.Config;
 
 namespace GPP
 {
@@ -11,7 +12,7 @@ namespace GPP
     public:
         using MainThreadTask = std::move_only_function<void()>;
 
-        explicit Application(ServiceProvider&& provider);
+        explicit Application(ServiceProvider&& provider, std::unique_ptr<IConfiguration> configuration);
         ~Application();
 
         static Application& Instance();
@@ -21,12 +22,14 @@ namespace GPP
         void ScheduleOnMainThread(MainThreadTask task);
 
         ServiceProvider& GetServiceProvider() noexcept;
+        IConfiguration& GetConfiguration();
 
     private:
         static Application* s_Instance;
         static void HandleSignal(int signal);
 
         ServiceProvider m_ServiceProvider;
+        std::unique_ptr<IConfiguration> m_Configuration;
         std::vector<std::shared_ptr<IHostedService>> m_HostedServices;
         std::queue<MainThreadTask> m_MainThreadQueue{};
 
@@ -53,6 +56,7 @@ namespace GPP
         virtual ~ApplicationBuilder() = default;
 
         ServiceCollection Services{};
+        ConfigurationBuilder Configuration{};
 
         virtual Application Build();
     };

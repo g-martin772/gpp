@@ -4,6 +4,7 @@
   "dependencies": [
     "fmt",
     "spdlog",
-    "catch2"
+    "catch2",
+    "nlohmann-json"
   ]
 }

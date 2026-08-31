@@ -3,38 +3,38 @@ import std;
 
 using namespace GPP;
 
-struct IAssetManager : public IService {
-    virtual void Load() = 0;
+struct WindowOptions : public IService {
+    int m_Width{1280};
+    int m_Height{720};
+    std::string m_Title{"GPP Engine"};
 };
 
-class VulkanAssetManager : public IAssetManager {
-public:
-    using Dependencies = std::tuple<Logger>;
-
-    VulkanAssetManager(std::shared_ptr<Logger> logger)
-        : m_Logger(logger) {}
-
-    void Load() override {
-        m_Logger->Info("Vulkan Asset Manager loading texture ...");
-    }
-
-private:
-    std::shared_ptr<Logger> m_Logger;
-};
-
-int main()
+int main(int argc, char* argv[])
 {
     Logger::LogInfo("Starting Scratch");
     Logger::LogInfo("Main Thread ID: {}", std::this_thread::get_id());
 
     auto builder = App::CreateCliBuilder();
 
-    builder.Services.AddSingleton<IAssetManager, VulkanAssetManager>();
+    builder.Configuration
+            //AddJsonFile("appsettings.json")
+            .AddCommandLine(argc, argv)
+            .AddEnvironmentVariables();
+
+    builder.Services.Configure<WindowOptions>(
+       "Graphics:Window",
+       [](const IConfigurationSection& config) {
+           WindowOptions options;
+           options.m_Width = config.GetValue<int>("Width", 1280);
+           options.m_Height = config.GetValue<int>("Height", 720);
+           options.m_Title = config.GetValue<std::string>("Title", "Vulkan Renderer");
+           return options;
+       }
+   );
 
     auto app = builder.Build();
-
-    auto assetManager = app.GetServiceProvider().GetRequiredService<IAssetManager>();
-    assetManager->Load();
+    const auto& appConfig = app.GetConfiguration();
+    Logger::LogInfo("Configured window width: {}", appConfig.GetSection("Graphics:Window")->GetValue<int>("Width", 1280));
 
     return app.Run();
 }

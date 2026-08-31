@@ -12,6 +12,7 @@ set(FMT_MODULE ON)
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # ------------------ my stuff ------------------
 
@@ -28,7 +29,7 @@ target_sources(gpp
         PUBLIC FILE_SET public_modules TYPE CXX_MODULES FILES
         ${GPP_MODULES} "src/gpp.cppm"
 )
-target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt)
+target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
 
 add_executable(scratch)
 target_sources(scratch
