@@ -1,8 +1,11 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "../../../build/vcpkg_installed/x64-linux/include/catch2/catch_test_macros.hpp"
+
 import GPP;
 import std;
 
 using namespace GPP;
-
 Task<int> ExampleCoroutine(std::stop_token stopToken = {})
 {
     Logger::LogInfo("Inside Coroutine Part 1. Thread ID: {}", std::this_thread::get_id());
@@ -33,9 +36,8 @@ Task<void> RunAsync()
 }
 
 
-int main()
+TEST_CASE("Task Execution", "[task][coroutine]")
 {
-    Logger::LogInfo("Starting Scratch");
     Logger::LogInfo("Main Thread ID: {}", std::this_thread::get_id());
 
     Task<int> task = []() -> Task<int>
@@ -47,11 +49,14 @@ int main()
 
     int result = task.get();
     Logger::LogInfo("Result: {}", result);
+}
 
+
+TEST_CASE("Task Timeout", "[task][coroutine]")
+{
     Task<void> appTask = RunAsync();
     Logger::LogInfo("Main thread continues");
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     Logger::LogInfo("Main Thread done");
     appTask.get();
-    return 0;
 }

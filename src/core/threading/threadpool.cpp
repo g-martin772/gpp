@@ -1,5 +1,5 @@
 module GPP.Core;
-import :Threading;
+import :Threading.ThreadPool;
 
 import std;
 

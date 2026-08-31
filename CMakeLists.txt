@@ -19,8 +19,8 @@ set(CMAKE_CXX_MODULE_STD 1)
 set(CMAKE_CXX_SCAN_FOR_MODULES 1)
 set(CMAKE_CXX_STANDARD 23)
 
-file(GLOB_RECURSE GPP_SOURCES "src/**/*.cpp")
-file(GLOB_RECURSE GPP_MODULES "src/**/*.cppm")
+file(GLOB_RECURSE GPP_SOURCES CONFIGURE_DEPENDS "src/**/*.cpp")
+file(GLOB_RECURSE GPP_MODULES CONFIGURE_DEPENDS "src/**/*.cppm")
 
 add_library(gpp SHARED ${GPP_SOURCES})
 target_sources(gpp
@@ -39,7 +39,7 @@ target_link_libraries(scratch PRIVATE gpp)
 # ------ tests -------
 
 add_executable(unit_tests)
-file(GLOB_RECURSE TEST_SOURCES "tests/unit/**/*.cpp")
+file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS "tests/unit/**/*.cpp")
 target_sources(unit_tests
         PRIVATE
         ${TEST_SOURCES})
