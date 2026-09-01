@@ -20,6 +20,11 @@ namespace GPP {
         [[nodiscard]] T GetValue(const std::string& key, T defaultValue) const;
     };
 
+    export template<typename T>
+    concept ConfigurableOptions = requires(const IConfigurationSection& config) {
+        { T::FromConfig(config) } -> std::same_as<T>;
+    };
+
     export class IConfiguration : public IConfigurationSection {
     public:
         ~IConfiguration() override = default;

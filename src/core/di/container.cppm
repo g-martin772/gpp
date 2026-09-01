@@ -209,6 +209,12 @@ namespace GPP
             });
         }
 
+        template <typename TOptions> requires std::derived_from<TOptions, IService>  && ConfigurableOptions<TOptions>
+        void Configure(const std::string& sectionPath)
+        {
+            Configure<TOptions>(sectionPath, TOptions::FromConfig);
+        }
+
         void ApplyConfiguration(IConfiguration& config)
         {
             for (auto& deferred : m_DeferredConfigurations)
