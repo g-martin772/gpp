@@ -11,23 +11,27 @@ namespace GPP
 {
     Application* Application::s_Instance = nullptr;
 
-    void Application::HandleSignal(int signal) {
-        switch (signal) {
-            case SIGINT:
-            case SIGTERM:
-                if (s_Instance) {
-                    std::cout << std::endl;
-                    s_Instance->Stop();
-                }
-                break;
-            default:
-                break;
+    void Application::HandleSignal(int signal)
+    {
+        switch (signal)
+        {
+        case SIGINT:
+        case SIGTERM:
+            if (s_Instance)
+            {
+                std::cout << std::endl;
+                s_Instance->Stop();
+            }
+            break;
+        default:
+            break;
         }
     }
 
-    Application::Application(ServiceProvider&& provider, std::unique_ptr<IConfiguration> configuration) : m_ServiceProvider(std::move(provider)),
-                                                           m_Configuration(std::move(configuration)),
-                                                           m_Running(false)
+    Application::Application(ServiceProvider&& provider, std::unique_ptr<IConfiguration> configuration) :
+        m_ServiceProvider(std::move(provider)),
+        m_Configuration(std::move(configuration)),
+        m_Running(false)
     {
         m_HostedServices = m_ServiceProvider.GetHostedServices();
         s_Instance = this;
@@ -47,11 +51,6 @@ namespace GPP
 
     Application::~Application()
     {
-        if (s_Instance == this)
-        {
-            s_Instance = nullptr;
-        }
-
         if (m_Running)
         {
             Stop();
@@ -68,6 +67,21 @@ namespace GPP
         {
             std::scoped_lock lock(m_Mutex);
             m_MainThreadQueue.push(std::move(task));
+        }
+
+        m_ConditionVariable.notify_one();
+    }
+
+    void Application::ScheduleContinuousOnMainThread(MainThreadTask task)
+    {
+        if (!task)
+        {
+            return;
+        }
+
+        {
+            std::scoped_lock lock(m_Mutex);
+            m_ContinuousTasks.push_back(std::move(task));
         }
 
         m_ConditionVariable.notify_one();
@@ -97,7 +111,19 @@ namespace GPP
 
             {
                 std::unique_lock lock(m_Mutex);
-                m_ConditionVariable.wait(lock, [this] { return !m_Running || !m_MainThreadQueue.empty(); });
+                if (m_ContinuousTasks.empty())
+                {
+                    m_ConditionVariable.wait(lock, [this]
+                    {
+                        return !m_Running || !m_MainThreadQueue.empty() || !m_ContinuousTasks.
+                            empty();
+                    });
+                }
+                else
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
                 if (!m_Running)
                 {
                     break;
@@ -120,6 +146,11 @@ namespace GPP
                     task();
                 }
             }
+
+            for (auto& task : m_ContinuousTasks)
+            {
+                task();
+            }
         }
 
         logger->Info("Shutdown signal received! Stopping application...");
@@ -136,11 +167,7 @@ namespace GPP
 
     void Application::Stop()
     {
-        {
-            std::scoped_lock lock(m_Mutex);
-            if (!m_Running) return;
-            m_Running = false;
-        }
+        m_Running = false;
         m_ConditionVariable.notify_all();
     }
 
@@ -178,7 +205,7 @@ namespace GPP
 
     ResumeOnApplicationAwaiter ResumeOn(Application& app)
     {
-        return ResumeOnApplicationAwaiter{ .app = &app };
+        return ResumeOnApplicationAwaiter{.app = &app};
     }
 
     ApplicationBuilder::ApplicationBuilder()
@@ -210,15 +237,6 @@ namespace GPP
     }
 
     Application CliApplicationBuilder::Build()
-    {
-        return ApplicationBuilder::Build();
-    }
-
-    GuiApplicationBuilder::GuiApplicationBuilder()
-    {
-    }
-
-    Application GuiApplicationBuilder::Build()
     {
         return ApplicationBuilder::Build();
     }

@@ -22,6 +22,7 @@ namespace GPP
     {
         ServiceFactory factory;
         ServiceLifetime lifetime;
+        bool isHostedService = false;
     };
 
     export using ServiceDescriptorMap = std::unordered_map<std::type_index, ServiceDescriptor>;
@@ -63,15 +64,8 @@ namespace GPP
         }
 
         template <typename TService> requires std::derived_from<TService, IService>
-        std::shared_ptr<TService> GetService()
+        std::shared_ptr<TService> GetServiceByTypeIndex(std::type_index typeId)
         {
-            if constexpr (std::same_as<TService, ServiceProvider>)
-            {
-                return std::shared_ptr<ServiceProvider>(this, [](ServiceProvider*) {});
-            }
-
-            const auto typeId = std::type_index(typeid(TService));
-
             // fetch descriptor
             auto descIt = m_Descriptors->find(typeId);
             if (descIt == m_Descriptors->end())
@@ -160,6 +154,18 @@ namespace GPP
         }
 
         template <typename TService> requires std::derived_from<TService, IService>
+        std::shared_ptr<TService> GetService()
+        {
+            if constexpr (std::same_as<TService, ServiceProvider>)
+            {
+                return std::shared_ptr<ServiceProvider>(this, [](ServiceProvider*) {});
+            }
+
+            const auto typeId = std::type_index(typeid(TService));
+            return GetServiceByTypeIndex<TService>(typeId);
+        }
+
+        template <typename TService> requires std::derived_from<TService, IService>
         std::shared_ptr<TService> GetRequiredService()
         {
             std::shared_ptr<TService> service = GetService<TService>();
@@ -183,9 +189,10 @@ namespace GPP
 
             for (const auto& [typeId, descriptor] : *m_Descriptors)
             {
-                if (std::is_base_of_v<IHostedService, std::remove_pointer_t<std::remove_reference_t<decltype(*descriptor.factory(*this))>>>)
+                //if (std::is_base_of_v<IHostedService, std::remove_pointer_t<std::remove_reference_t<decltype(*descriptor.factory(*this))>>>)
+                if (descriptor.isHostedService)
                 {
-                    auto service = GetService<IHostedService>();
+                    auto service = GetServiceByTypeIndex<IHostedService>(typeId);
                     if (service)
                     {
                         hostedServices.push_back(service);
@@ -222,3 +229,4 @@ namespace GPP
         return ServiceScope(std::make_unique<ServiceProvider>(this));
     }
 }
+

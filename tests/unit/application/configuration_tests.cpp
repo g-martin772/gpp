@@ -7,14 +7,6 @@ using namespace GPP;
 
 namespace
 {
-    struct WindowOptions : IService
-    {
-        int width{0};
-        int height{0};
-        bool fullscreen{false};
-        std::string title{};
-    };
-
     std::filesystem::path MakeTempJsonPath(const std::string& prefix)
     {
         const auto ts = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -52,10 +44,10 @@ TEST_CASE("Configuration supports JSON file mapping and typed parsing", "[applic
     builder.Configuration.AddJsonFile(filePath.string());
     builder.Services.Configure<WindowOptions>("Graphics:Window", [](const IConfigurationSection& section) {
         WindowOptions options;
-        options.width = section.GetValue<int>("Width", 0);
-        options.height = section.GetValue<int>("Height", 0);
-        options.fullscreen = section.GetValue<bool>("Fullscreen", false);
-        options.title = section.GetValue<std::string>("Title", "");
+        options.Width = section.GetValue<int>("Width", 0);
+        options.Height = section.GetValue<int>("Height", 0);
+        options.Fullscreen = section.GetValue<bool>("Fullscreen", false);
+        options.Title = section.GetValue<std::string>("Title", "");
         return options;
     });
 
@@ -69,10 +61,10 @@ TEST_CASE("Configuration supports JSON file mapping and typed parsing", "[applic
     CHECK(config.GetSection("Graphics:Adapters")->GetValue<std::string>("1", "") == "vk1");
 
     const auto options = app.GetServiceProvider().GetRequiredService<WindowOptions>();
-    CHECK(options->width == 1600);
-    CHECK(options->height == 900);
-    CHECK(options->fullscreen);
-    CHECK(options->title == "FromJson");
+    CHECK(options->Width == 1600);
+    CHECK(options->Height == 900);
+    CHECK(options->Fullscreen);
+    CHECK(options->Title == "FromJson");
 
     std::filesystem::remove(filePath);
 }
@@ -89,10 +81,10 @@ TEST_CASE("Configuration supports prefixed environment variables and defaults", 
     builder.Configuration.AddEnvironmentVariables("GPP_TEST_");
     builder.Services.Configure<WindowOptions>("Graphics:Window", [](const IConfigurationSection& section) {
         WindowOptions options;
-        options.width = section.GetValue<int>("Width", -1);
-        options.height = section.GetValue<int>("Height", -1);
-        options.fullscreen = section.GetValue<bool>("Fullscreen", false);
-        options.title = section.GetValue<std::string>("Title", "");
+        options.Width = section.GetValue<int>("Width", -1);
+        options.Height = section.GetValue<int>("Height", -1);
+        options.Fullscreen = section.GetValue<bool>("Fullscreen", false);
+        options.Title = section.GetValue<std::string>("Title", "");
         return options;
     });
 
@@ -105,10 +97,10 @@ TEST_CASE("Configuration supports prefixed environment variables and defaults", 
     CHECK(app.GetConfiguration().GetSection("Missing:Path")->GetValue<int>("Width", 77) == 77);
 
     const auto options = app.GetServiceProvider().GetRequiredService<WindowOptions>();
-    CHECK(options->width == 1920);
-    CHECK(options->height == 1080);
-    CHECK(options->fullscreen);
-    CHECK(options->title == "FromEnv");
+    CHECK(options->Width == 1920);
+    CHECK(options->Height == 1080);
+    CHECK(options->Fullscreen);
+    CHECK(options->Title == "FromEnv");
 }
 
 TEST_CASE("Configuration supports command line forms and precedence", "[application][configuration][argv]")
@@ -134,10 +126,10 @@ TEST_CASE("Configuration supports command line forms and precedence", "[applicat
            .AddCommandLine(argc, argv);
     builder.Services.Configure<WindowOptions>("Graphics:Window", [](const IConfigurationSection& section) {
         WindowOptions options;
-        options.width = section.GetValue<int>("Width", 0);
-        options.height = section.GetValue<int>("Height", 720);
-        options.fullscreen = section.GetValue<bool>("Fullscreen", false);
-        options.title = section.GetValue<std::string>("Title", "");
+        options.Width = section.GetValue<int>("Width", 0);
+        options.Height = section.GetValue<int>("Height", 720);
+        options.Fullscreen = section.GetValue<bool>("Fullscreen", false);
+        options.Title = section.GetValue<std::string>("Title", "");
         return options;
     });
 
@@ -151,8 +143,8 @@ TEST_CASE("Configuration supports command line forms and precedence", "[applicat
     CHECK(app.GetConfiguration().GetValue("Flag") == "true");
 
     const auto options = app.GetServiceProvider().GetRequiredService<WindowOptions>();
-    CHECK(options->width == 1280);
-    CHECK(options->height == 720);
-    CHECK(options->fullscreen);
-    CHECK(options->title == "CLI Window");
+    CHECK(options->Width == 1280);
+    CHECK(options->Height == 720);
+    CHECK(options->Fullscreen);
+    CHECK(options->Title == "CLI Window");
 }

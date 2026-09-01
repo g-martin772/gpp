@@ -8,6 +8,8 @@ export import :Application.Config;
 
 namespace GPP
 {
+    export class ApplicationBuilder;
+
     export class Application
     {
     public:
@@ -21,6 +23,7 @@ namespace GPP
         int Run();
         void Stop();
         void ScheduleOnMainThread(MainThreadTask task);
+        void ScheduleContinuousOnMainThread(MainThreadTask task);
 
         ServiceProvider& GetServiceProvider() noexcept;
         IConfiguration& GetConfiguration();
@@ -32,12 +35,15 @@ namespace GPP
         ServiceProvider m_ServiceProvider;
         std::unique_ptr<IConfiguration> m_Configuration;
         std::vector<std::shared_ptr<IHostedService>> m_HostedServices;
+        std::vector<MainThreadTask> m_ContinuousTasks{};
         std::queue<MainThreadTask> m_MainThreadQueue{};
 
         std::stop_source m_StopSource;
         std::condition_variable m_ConditionVariable;
         std::mutex m_Mutex;
         bool m_Running;
+
+        friend class ApplicationBuilder;
     };
 
     export struct ResumeOnApplicationAwaiter
@@ -50,7 +56,7 @@ namespace GPP
 
     export ResumeOnApplicationAwaiter ResumeOn(Application& app);
 
-    export class ApplicationBuilder
+    class ApplicationBuilder
     {
     public:
         ApplicationBuilder();
@@ -68,13 +74,6 @@ namespace GPP
     {
     public:
         CliApplicationBuilder();
-        Application Build() override;
-    };
-
-    export class GuiApplicationBuilder : public ApplicationBuilder
-    {
-    public:
-        GuiApplicationBuilder();
         Application Build() override;
     };
 
@@ -96,11 +95,6 @@ namespace GPP
         static CliApplicationBuilder CreateCliBuilder()
         {
             return CliApplicationBuilder();
-        }
-
-        static GuiApplicationBuilder CreateGuiBuilder()
-        {
-            return GuiApplicationBuilder();
         }
 
         static WebApplicationBuilder CreateWebBuilder()

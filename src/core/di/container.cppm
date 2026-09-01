@@ -6,14 +6,14 @@ import :Application.Config;
 
 namespace GPP
 {
-    template <typename T>
-    auto has_dependencies_impl(int) -> decltype(typename T::Dependencies{}, std::true_type{});
+    template <typename T, typename = void>
+    struct has_dependencies_impl : std::false_type {};
 
     template <typename T>
-    std::false_type has_dependencies_impl(...);
+    struct has_dependencies_impl<T, std::void_t<typename T::Dependencies>> : std::true_type {};
 
     template <typename T>
-    constexpr bool has_dependencies = decltype(has_dependencies_impl<T>(0))::value;
+    constexpr bool has_dependencies = has_dependencies_impl<T>::value;
 
     template <typename T, typename Tuple, std::size_t... I, typename Container>
     std::shared_ptr<T> createInstanceWithDepsImpl(Container& container, std::index_sequence<I...>)
@@ -63,25 +63,28 @@ namespace GPP
             requires std::derived_from<TInterface, IService>
         void Add(
             ServiceLifetime lifetime,
-            ServiceFactory factory)
+            ServiceFactory factory,
+            bool isHostedService = false)
         {
             auto typeId = std::type_index(typeid(TInterface));
             m_Descriptors[typeId] = ServiceDescriptor{
                 .factory = std::move(factory),
-                .lifetime = lifetime
+                .lifetime = lifetime,
+                .isHostedService = isHostedService
             };
         }
 
         template <typename TInterface, typename TImplementation>
             requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
-        void Add(ServiceLifetime lifetime)
+        void Add(ServiceLifetime lifetime, bool isHostedService = false)
         {
             Add<TInterface>(
                 lifetime,
                 [](ServiceProvider& provider) -> std::shared_ptr<IService>
                 {
                     return std::shared_ptr<IService>(createInstance<TImplementation>(provider));
-                });
+                },
+                isHostedService);
         }
 
         template <typename TInterface, typename TImplementation>
@@ -114,26 +117,26 @@ namespace GPP
             requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
         void AddHostedService()
         {
-            Add<TInterface, TImplementation>(ServiceLifetime::Singleton);
+            Add<TInterface, TImplementation>(ServiceLifetime::Singleton, true);
         }
 
         template <typename T> requires std::derived_from<T, IService>
         void AddHostedService()
         {
-            AddSingleton<T, T>();
+            AddHostedService<T, T>();
         }
 
         template <typename TInterface, typename TImplementation>
             requires std::derived_from<TImplementation, TInterface> && std::derived_from<TInterface, IService>
         void AddHostedService(ServiceFactory factory)
         {
-            Add<TInterface>(ServiceLifetime::Singleton, std::move(factory));
+            Add<TInterface>(ServiceLifetime::Singleton, std::move(factory), true);
         }
 
         template <typename T> requires std::derived_from<T, IService>
         void AddHostedService(ServiceFactory factory)
         {
-            AddSingleton<T, T>(factory);
+            AddHostedService<T, T>(factory);
         }
 
         template <typename TInterface, typename TImplementation>

@@ -8,18 +8,20 @@ set(CMAKE_CXX_STANDARD 23)
 # ---------------- dependencies ----------------
 
 set(FMT_MODULE ON)
+set(Vulkan_ROOT "/usr")
+set(VULKAN_SDK "/usr")
 
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(SDL3 CONFIG REQUIRED)
-find_package(Vulkan REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
-find_package(unofficial-shaderc CONFIG REQUIRED)
 find_package(spirv_cross_core CONFIG REQUIRED)
 find_package(spirv_cross_glsl CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(Vulkan REQUIRED COMPONENTS shaderc_combined)
 
 # ------------------ my stuff ------------------
 
@@ -36,9 +38,9 @@ target_sources(gpp
         PUBLIC FILE_SET public_modules TYPE CXX_MODULES FILES
         ${GPP_MODULES} "src/gpp.cppm"
 )
-target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json imgui::imgui)
-target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator
-        unofficial::shaderc::shaderc spirv-cross-core spirv-cross-glsl)
+target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json imgui::imgui glm::glm)
+target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Headers GPUOpen::VulkanMemoryAllocator
+        Vulkan::shaderc_combined spirv-cross-core spirv-cross-glsl)
 
 # ---- scratch -----
 
@@ -63,7 +65,7 @@ target_sources(unit_tests
         PRIVATE
         ${TEST_SOURCES})
 target_link_libraries(unit_tests PRIVATE gpp)
-target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain Vulkan::Vulkan)
 
 include(CTest)
 include(Catch)

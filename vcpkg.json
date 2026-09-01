@@ -5,9 +5,12 @@
     "fmt",
     "spdlog",
     "catch2",
+    "glm",
     "nlohmann-json",
-    "sdl3",
-    "vulkan-headers",
+    {
+      "name": "sdl3",
+      "features": [ "vulkan" ]
+    },
     "vulkan-memory-allocator",
     {
       "name": "imgui",
@@ -15,8 +18,6 @@
         "vulkan-binding",
         "sdl3-binding"
       ]
-    },
-    "shaderc",
-    "spirv-cross"
+    }
   ]
 }
