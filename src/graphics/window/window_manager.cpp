@@ -16,7 +16,7 @@ namespace GPP
     {
     }
 
-    void WindowManager::StartAsync(std::stop_token stopToken)
+    Task<void> WindowManager::StartAsync(std::stop_token stopToken)
     {
         Application::Instance().ScheduleOnMainThread([this]
         {
@@ -26,6 +26,7 @@ namespace GPP
             }
             m_IsInitialized = true;
             m_Logger->Info("SDL initialized successfully");
+            m_ReadyPromise.set_value();
         });
 
         Application::Instance().ScheduleContinuousOnMainThread([this]
@@ -43,16 +44,23 @@ namespace GPP
 
             PollEvents();
         });
-        m_Logger->Info("WindowManager scheduling done");
+        co_return;
     }
 
-    void WindowManager::StopAsync()
+    Task<void> WindowManager::StopAsync()
     {
         Application::Instance().ScheduleOnMainThread([this]
         {
             m_Windows.clear();
             SDL_Quit();
         });
+        co_return;
+    }
+
+    Task<void> WindowManager::AwaitReady()
+    {
+        co_await m_ReadyPromise.get_future();
+        co_return;
     }
 
     Task<std::shared_ptr<Window>> WindowManager::CreateWindow(const WindowOptions& options)

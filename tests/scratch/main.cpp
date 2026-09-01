@@ -13,20 +13,23 @@ public:
     {
     }
 
-    void StartAsync(std::stop_token stopToken) override
+    Task<void> StartAsync(std::stop_token stopToken) override
     {
-        Spawn(RunServiceAsync());
+        Spawn(Run());
+        co_return;
     }
 
-    void StopAsync() override
+    Task<void> StopAsync() override
     {
+        co_return;
     }
 
 private:
-    Task<void> RunServiceAsync()
+    Task<void> Run()
     {
-        co_await DelayAsync(std::chrono::milliseconds(100));
+        co_await m_WM->AwaitReady();
         co_await m_WM->CreateWindow(*m_WO);
+        //co_await m_WM->ShowMessageBox("Test", "This is a test message.");
         co_return;
     }
 

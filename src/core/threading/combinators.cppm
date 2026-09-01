@@ -305,4 +305,36 @@ namespace GPP
 
         co_return co_await WhenAnyAwaiter<T>{state};
     }
+
+    // make this al work with std::futures
+    export template <typename T>
+    struct FutureAwaiter
+    {
+        std::future<T> m_Future;
+
+        bool await_ready() const noexcept
+        {
+            return m_Future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        }
+
+        void await_suspend(std::coroutine_handle<> handle)
+        {
+            ThreadPool::Instance().Submit([this, handle]() mutable
+            {
+                m_Future.wait();
+                handle.resume();
+            });
+        }
+
+        T await_resume()
+        {
+            return m_Future.get();
+        }
+    };
+
+    export template <typename T>
+    auto operator co_await(std::future<T>&& future)
+    {
+        return FutureAwaiter<T>{std::move(future)};
+    }
 }

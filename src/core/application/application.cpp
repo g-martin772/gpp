@@ -98,10 +98,12 @@ namespace GPP
         const auto logger = m_ServiceProvider.GetRequiredService<Logger>();
         logger->Info("Starting application...");
 
-        for (const auto service : m_HostedServices)
+        std::vector<Task<void>> startTasks;
+        for (auto service : m_HostedServices)
         {
-            service->StartAsync(m_StopSource.get_token());
+            startTasks.push_back(service->StartAsync(m_StopSource.get_token()));
         }
+        WhenAll(std::move(startTasks)).get();
 
         logger->Info("Application running");
 
@@ -156,10 +158,12 @@ namespace GPP
         logger->Info("Shutdown signal received! Stopping application...");
 
         m_StopSource.request_stop();
-        for (const auto service : m_HostedServices)
+        std::vector<Task<void>> stopTasks;
+        for (auto service : m_HostedServices)
         {
-            service->StopAsync();
+            stopTasks.push_back(service->StopAsync());
         }
+        WhenAll(std::move(stopTasks)).get();
 
         logger->Info("Application terminated successfully");
         return 0;
