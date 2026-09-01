@@ -13,6 +13,13 @@ find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
+find_package(Vulkan REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+find_package(unofficial-shaderc CONFIG REQUIRED)
+find_package(spirv_cross_core CONFIG REQUIRED)
+find_package(spirv_cross_glsl CONFIG REQUIRED)
 
 # ------------------ my stuff ------------------
 
@@ -29,7 +36,9 @@ target_sources(gpp
         PUBLIC FILE_SET public_modules TYPE CXX_MODULES FILES
         ${GPP_MODULES} "src/gpp.cppm"
 )
-target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json imgui::imgui)
+target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator
+        unofficial::shaderc::shaderc spirv-cross-core spirv-cross-glsl)
 
 # ---- scratch -----
 
