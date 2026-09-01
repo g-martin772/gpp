@@ -60,3 +60,64 @@ TEST_CASE("Task Timeout", "[task][coroutine]")
     Logger::LogInfo("Main Thread done");
     appTask.get();
 }
+
+TEST_CASE("Task then - value continuation", "[task][continuation]")
+{
+    auto base = []() -> Task<int>
+    {
+        co_await DelayAsync(std::chrono::milliseconds(10));
+        co_return 2;
+    }();
+
+    auto cont = base.then([](int x) { return x + 3; });
+    REQUIRE(cont.get() == 5);
+}
+
+TEST_CASE("Task then - task-returning continuation", "[task][continuation]")
+{
+    auto base = []() -> Task<int>
+    {
+        co_await DelayAsync(std::chrono::milliseconds(10));
+        co_return 2;
+    }();
+
+    auto cont = base.then([](int x) -> Task<int>
+    {
+        co_await DelayAsync(std::chrono::milliseconds(5));
+        co_return x * 4;
+    });
+
+    REQUIRE(cont.get() == 8);
+}
+
+TEST_CASE("Task<void> then -> value", "[task][continuation]")
+{
+    auto base = []() -> Task<void>
+    {
+        co_await DelayAsync(std::chrono::milliseconds(5));
+        co_return;
+    }();
+
+    auto cont = base.then([]() { return 7; });
+    REQUIRE(cont.get() == 7);
+}
+
+TEST_CASE("Task then -> Task<void> continuation", "[task][continuation]")
+{
+    bool ran = false;
+    auto base = []() -> Task<int>
+    {
+        co_await DelayAsync(std::chrono::milliseconds(10));
+        co_return 2;
+    }();
+
+    auto cont = base.then([&](int x) -> Task<void>
+    {
+        co_await DelayAsync(std::chrono::milliseconds(5));
+        ran = (x == 2);
+        co_return;
+    });
+
+    cont.get();
+    REQUIRE(ran);
+}

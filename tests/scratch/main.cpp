@@ -11,8 +11,8 @@ struct WindowOptions : public IService {
 
 int main(int argc, char* argv[])
 {
-    Logger::LogInfo("Starting Scratch");
-    Logger::LogInfo("Main Thread ID: {}", std::this_thread::get_id());
+    Logger::LogInfo("[App] Starting Scratch");
+    Logger::LogInfo("[App] Main Thread ID: {}", std::this_thread::get_id());
 
     auto builder = App::CreateCliBuilder();
 
