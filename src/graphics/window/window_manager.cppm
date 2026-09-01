@@ -35,5 +35,6 @@ namespace GPP
         bool m_ShouldQuit{false}, m_Quitting{false}, m_IsInitialized{false};
         std::shared_ptr<Logger> m_Logger;
         std::promise<void> m_ReadyPromise;
+        std::shared_future<void> m_SharedFuture{ m_ReadyPromise.get_future().share() };
     };
 }

@@ -24,6 +24,11 @@ namespace GPP
             {
                 throw std::runtime_error(std::string("Failed to initialize SDL3: ") + SDL_GetError());
             }
+            if (!SDL_Vulkan_LoadLibrary("/usr/lib/libvulkan.so.1"))
+            {
+                throw std::runtime_error(std::string("SDL3 failed to bind system Vulkan: ") + SDL_GetError());
+            }
+
             m_IsInitialized = true;
             m_Logger->Info("SDL initialized successfully");
             m_ReadyPromise.set_value();
@@ -59,7 +64,7 @@ namespace GPP
 
     Task<void> WindowManager::AwaitReady()
     {
-        co_await m_ReadyPromise.get_future();
+        co_await m_SharedFuture;
         co_return;
     }
 
