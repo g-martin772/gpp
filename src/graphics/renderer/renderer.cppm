@@ -9,21 +9,12 @@ import :Vulkan.Context;
 import :Vulkan.Device;
 import :Windowing.WindowManager;
 import :Vulkan.Swapchain;
+import :Vulkan.Command;
 
 namespace GPP
 {
     class VulkanContext;
     class WindowManager;
-
-    struct WindowResources
-    {
-        std::shared_ptr<GPP::Window> Window;
-        vk::SurfaceKHR Surface;
-        std::shared_ptr<VulkanDevice> Device;
-        std::shared_ptr<VulkanSwapChain> SwapChain;
-
-        ~WindowResources();
-    };
 
     export class Renderer : public IHostedService
     {
@@ -45,10 +36,15 @@ namespace GPP
         }
 
         const std::shared_ptr<VulkanDevice>& GetDevice() const noexcept { return m_MainWindowResources.Device; }
-        const std::shared_ptr<VulkanSwapChain>& GetSwapChain() const noexcept { return m_MainWindowResources.SwapChain; }
+
+        const std::shared_ptr<VulkanSwapChain>& GetSwapChain() const noexcept
+        {
+            return m_MainWindowResources.SwapChain;
+        }
 
     private:
         Task<void> InitializeRenderSystem();
+        Task<void> StopRenderSystem();
         void RenderLoop(std::stop_token stopToken);
 
         std::shared_ptr<VulkanContext> m_VulkanContext;
@@ -56,7 +52,37 @@ namespace GPP
         std::shared_ptr<WindowOptions> m_WindowOptions;
         std::shared_ptr<Logger> m_Logger;
 
+        struct WindowResources
+        {
+            std::shared_ptr<GPP::Window> Window;
+            vk::SurfaceKHR Surface;
+            std::shared_ptr<VulkanDevice> Device;
+            std::shared_ptr<VulkanSwapChain> SwapChain;
+            std::shared_ptr<VulkanCommandPool> CommandPool;
+
+            ~WindowResources();
+        };
+
+        struct FrameResources
+        {
+            VulkanCommandBuffer CommandBuffer;
+
+            FrameResources() = default;
+            explicit FrameResources(VulkanCommandBuffer commandBuffer) noexcept
+                : CommandBuffer(std::move(commandBuffer))
+            {
+            }
+
+            FrameResources(const FrameResources&) = delete;
+            FrameResources& operator=(const FrameResources&) = delete;
+            FrameResources(FrameResources&&) noexcept = default;
+            FrameResources& operator=(FrameResources&&) noexcept = default;
+            ~FrameResources();
+        };
+
         WindowResources m_MainWindowResources{};
+        std::vector<FrameResources> m_FrameResources{};
+        uint32_t m_FrameIndex = 0;
 
         std::thread m_RenderThread;
         std::atomic<bool> m_Running{true};

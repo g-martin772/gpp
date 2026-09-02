@@ -9,8 +9,9 @@ import :Renderer;
 
 namespace GPP
 {
-    WindowResources::~WindowResources()
+    Renderer::WindowResources::~WindowResources()
     {
+        CommandPool = nullptr;
         SwapChain = nullptr;
         if (Surface)
         {
@@ -18,6 +19,15 @@ namespace GPP
         }
         Device = nullptr;
         Window = nullptr;
+    }
+
+    Renderer::FrameResources::FrameResources(VulkanCommandBuffer commandBuffer) noexcept
+        : CommandBuffer(std::move(commandBuffer))
+    {
+    }
+
+    Renderer::FrameResources::~FrameResources()
+    {
     }
 
     Renderer::Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
@@ -77,6 +87,25 @@ namespace GPP
             glm::uvec2{100,100},
             m_MainWindowResources.Surface
         );
+
+        m_MainWindowResources.CommandPool = std::make_shared<VulkanCommandPool>(
+            m_MainWindowResources.Device,
+            m_Logger,
+            m_MainWindowResources.Device->GetQueueIndices().Graphics
+        );
+
+        m_FrameResources.reserve(2);
+        for (int i = 0; i < 2; i++)
+        {
+            auto cb = m_MainWindowResources.CommandPool->AllocateCommandBuffer();
+            m_FrameResources.emplace_back(std::move(cb));
+        }
+
+        co_return;
+    }
+
+    Task<void> Renderer::StopRenderSystem()
+    {
         co_return;
     }
 
@@ -91,6 +120,13 @@ namespace GPP
             std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Simulate ~60 FPS
             //m_MainWindowResources.SwapChain->Update(glm::uvec2{100, 100});
             iterations++;
+
+            FrameResources& frame = m_FrameResources[m_FrameIndex];
+            m_FrameIndex = (m_FrameIndex + 1) % m_FrameResources.size();
+
+            frame.CommandBuffer.Begin();
+            frame.CommandBuffer.End();
+            //frame.CommandBuffer.Submit();
         }
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
