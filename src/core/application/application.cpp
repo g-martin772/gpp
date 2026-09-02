@@ -218,7 +218,11 @@ namespace GPP
         {
             auto logger = std::make_shared<Logger>();
             logger->CreateConsoleLogger("GPP APP");
+#ifdef NDEBUG
             logger->SetLevel(LogLevel::Info);
+#else
+            logger->SetLevel(LogLevel::Trace);
+#endif
             return logger;
         });
 
