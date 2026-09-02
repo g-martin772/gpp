@@ -28,7 +28,7 @@ private:
     Task<void> Run()
     {
         co_await m_WM->AwaitReady();
-        co_await m_WM->CreateWindow(*m_WO);
+        //co_await m_WM->CreateWindow(*m_WO);
         //co_await m_WM->ShowMessageBox("Test", "This is a test message.");
         co_return;
     }

@@ -81,6 +81,7 @@ namespace GPP
         co_await m_WindowManager->AwaitReady();
         CreateInstance();
         SetupDebugMessenger();
+        m_PhysicalDevices = m_Instance.enumeratePhysicalDevices();
         m_IsInitialized = true;
         co_return;
     }
