@@ -22,6 +22,10 @@ namespace GPP
 
     VulkanSwapChain::~VulkanSwapChain()
     {
+        if (m_Device)
+        {
+            m_Device->WaitIdle();
+        }
         DestroySwapChain();
     }
 
@@ -158,7 +162,8 @@ namespace GPP
         createInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
-        createInfo.oldSwapchain = oldSwapchain; // Is this worth being checked out? -- later me: YES, 10x-15x faster then full recreation
+        createInfo.oldSwapchain = oldSwapchain;
+        // Is this worth being checked out? -- later me: YES, 10x-15x faster then full recreation
 
         try
         {

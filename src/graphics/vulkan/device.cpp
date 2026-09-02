@@ -54,26 +54,36 @@ namespace GPP
             VulkanDevice::m_Logger->Trace("\t\t Max Framebuffer Size: {}, {}", properties.limits.maxFramebufferHeight,
                                           properties.limits.maxFramebufferWidth);
             VulkanDevice::m_Logger->Trace("\t\t Max Descriptorsets: {}", properties.limits.maxBoundDescriptorSets);
-            VulkanDevice::m_Logger->Trace("\t\t Max memory allocations: {}", properties.limits.maxMemoryAllocationCount);
+            VulkanDevice::m_Logger->Trace("\t\t Max memory allocations: {}",
+                                          properties.limits.maxMemoryAllocationCount);
             VulkanDevice::m_Logger->Trace("\t\t Max dynamic Storage Buffers: {}",
                                           properties.limits.maxDescriptorSetStorageBuffersDynamic);
             VulkanDevice::m_Logger->Trace("\t\t Max dynamic Uniform Buffers: {}",
                                           properties.limits.maxDescriptorSetUniformBuffersDynamic);
-            VulkanDevice::m_Logger->Trace("\t\t Max Storage Buffers: {}", properties.limits.maxDescriptorSetStorageBuffers);
-            VulkanDevice::m_Logger->Trace("\t\t Max Uniform Buffers: {}", properties.limits.maxDescriptorSetUniformBuffers);
+            VulkanDevice::m_Logger->Trace("\t\t Max Storage Buffers: {}",
+                                          properties.limits.maxDescriptorSetStorageBuffers);
+            VulkanDevice::m_Logger->Trace("\t\t Max Uniform Buffers: {}",
+                                          properties.limits.maxDescriptorSetUniformBuffers);
             VulkanDevice::m_Logger->Trace("\t\t Max Sampler: {}", properties.limits.maxDescriptorSetSamplers);
-            VulkanDevice::m_Logger->Trace("\t\t Max input attachments: {}", properties.limits.maxDescriptorSetInputAttachments);
-            VulkanDevice::m_Logger->Trace("\t\t Max sampled images: {}", properties.limits.maxDescriptorSetSampledImages);
+            VulkanDevice::m_Logger->Trace("\t\t Max input attachments: {}",
+                                          properties.limits.maxDescriptorSetInputAttachments);
+            VulkanDevice::m_Logger->Trace("\t\t Max sampled images: {}",
+                                          properties.limits.maxDescriptorSetSampledImages);
             VulkanDevice::m_Logger->Trace("\t\t Max draw index: {}", properties.limits.maxDrawIndexedIndexValue);
 
             VulkanDevice::m_Logger->Trace("\t\t Supported device features:");
             VulkanDevice::m_Logger->Trace("\t\t\t TessellationShader: {}",
                                           (features.tessellationShader ? "Supported" : "Not Supported"));
-            VulkanDevice::m_Logger->Trace("\t\t\t GeometryShader: {}", (features.geometryShader ? "Supported" : "Not Supported"));
-            VulkanDevice::m_Logger->Trace("\t\t\t MultiViewport: {}", (features.multiViewport ? "Supported" : "Not Supported"));
-            VulkanDevice::m_Logger->Trace("\t\t\t SamplerAnisotropy: {}", (features.samplerAnisotropy ? "Supported" : "Not Supported"));
-            VulkanDevice::m_Logger->Trace("\t\t\t FillModeNonSolid: {}", (features.fillModeNonSolid ? "Supported" : "Not Supported"));
-            VulkanDevice::m_Logger->Trace("\t\t\t SparseBinding: {}", (features.sparseBinding ? "Supported" : "Not Supported"));
+            VulkanDevice::m_Logger->Trace("\t\t\t GeometryShader: {}",
+                                          (features.geometryShader ? "Supported" : "Not Supported"));
+            VulkanDevice::m_Logger->Trace("\t\t\t MultiViewport: {}",
+                                          (features.multiViewport ? "Supported" : "Not Supported"));
+            VulkanDevice::m_Logger->Trace("\t\t\t SamplerAnisotropy: {}",
+                                          (features.samplerAnisotropy ? "Supported" : "Not Supported"));
+            VulkanDevice::m_Logger->Trace("\t\t\t FillModeNonSolid: {}",
+                                          (features.fillModeNonSolid ? "Supported" : "Not Supported"));
+            VulkanDevice::m_Logger->Trace("\t\t\t SparseBinding: {}",
+                                          (features.sparseBinding ? "Supported" : "Not Supported"));
 
             VulkanQueueIndices queueIndices;
 
@@ -198,7 +208,8 @@ namespace GPP
             VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
             VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
             VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-            VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME
+            VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+            VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
         };
         deviceCreateInfo.enabledExtensionCount = deviceExtensions.size();
         deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
@@ -207,9 +218,13 @@ namespace GPP
         vk::PhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures;
         bufferDeviceAddressFeatures.bufferDeviceAddress = VK_TRUE;
 
+        vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{};
+        dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
+        dynamicRenderingFeatures.pNext = &bufferDeviceAddressFeatures;
+
         vk::PhysicalDeviceAccelerationStructureFeaturesKHR asFeatures;
         asFeatures.accelerationStructure = VK_TRUE;
-        asFeatures.pNext = &bufferDeviceAddressFeatures;
+        asFeatures.pNext = &dynamicRenderingFeatures;
 
         vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures;
         rtFeatures.rayTracingPipeline = VK_TRUE;
@@ -222,7 +237,11 @@ namespace GPP
         // Enable shaderInt64 for buffer addresses if needed, but usually implied or separate
         deviceFeatures2.features.shaderInt64 = VK_TRUE;
 
-        deviceFeatures2.pNext = &rtFeatures;
+        vk::PhysicalDeviceSynchronization2Features synchronization2Features{};
+        synchronization2Features.synchronization2 = VK_TRUE;
+        synchronization2Features.pNext = &rtFeatures;
+
+        deviceFeatures2.pNext = &synchronization2Features;
 
         deviceCreateInfo.pEnabledFeatures = nullptr;
         deviceCreateInfo.pNext = &deviceFeatures2;
@@ -282,11 +301,82 @@ namespace GPP
 
     VulkanDevice::~VulkanDevice()
     {
-        m_Device.destroy();
+        if (m_Device)
+        {
+            m_Device.waitIdle();
+            m_Device.destroy();
+        }
     }
 
     void VulkanDevice::WaitIdle()
     {
         m_Device.waitIdle();
+    }
+
+    VulkanFence::VulkanFence(vk::Device device, bool isSignaled)
+    {
+        m_Device = device;
+
+        vk::FenceCreateInfo createInfo;
+        createInfo.flags = isSignaled ? vk::FenceCreateFlagBits::eSignaled : vk::FenceCreateFlags();
+
+        try
+        {
+            m_Fence = device.createFence(createInfo);
+        }
+        catch (const vk::SystemError& err)
+        {
+            throw new std::runtime_error("Failed to create vulkan fence: " + std::string(err.what()));
+            return;
+        }
+    }
+
+    VulkanFence::~VulkanFence()
+    {
+        if (m_Fence && m_Device)
+            m_Device.destroyFence(m_Fence);
+    }
+
+    void VulkanFence::Reset() const
+    {
+        const vk::Result result = m_Device.resetFences(1, &m_Fence);
+        if (result != vk::Result::eSuccess)
+            throw new std::runtime_error("Failed to reset vulkan fence: " + vk::to_string(result));
+    }
+
+    void VulkanFence::Wait() const
+    {
+        const vk::Result result = m_Device.waitForFences(1, &m_Fence, VK_TRUE, UINT64_MAX);
+        if (result != vk::Result::eSuccess)
+            throw new std::runtime_error("Failed to create vulkan fence" + vk::to_string(result));
+    }
+
+    void VulkanFence::WaitAndReset() const
+    {
+        Wait();
+        Reset();
+    }
+
+    VulkanSemaphore::VulkanSemaphore(vk::Device device)
+    {
+        m_Device = device;
+
+        vk::SemaphoreCreateInfo createInfo;
+        createInfo.flags = vk::SemaphoreCreateFlags();
+
+        try
+        {
+            m_Semaphore = device.createSemaphore(createInfo);
+        }
+        catch (const vk::SystemError& err)
+        {
+            throw new std::runtime_error("Failed to create vulkan semaphore: " + std::string(err.what()));
+        }
+    }
+
+    VulkanSemaphore::~VulkanSemaphore()
+    {
+        if (m_Semaphore && m_Device)
+            m_Device.destroySemaphore(m_Semaphore);
     }
 }

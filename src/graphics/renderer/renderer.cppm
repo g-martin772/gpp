@@ -10,6 +10,7 @@ import :Vulkan.Device;
 import :Windowing.WindowManager;
 import :Vulkan.Swapchain;
 import :Vulkan.Command;
+import :Vulkan.Pipeline;
 
 namespace GPP
 {
@@ -19,12 +20,13 @@ namespace GPP
     export class Renderer : public IHostedService
     {
     public:
-        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, Logger>;
+        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, Logger, IFileSystem>;
 
         Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                  const std::shared_ptr<WindowManager>& windowManager,
                  const std::shared_ptr<WindowOptions>& windowOptions,
-                 const std::shared_ptr<Logger>& logger);
+                 const std::shared_ptr<Logger>& logger,
+                 const std::shared_ptr<IFileSystem>& fileSystem);
 
         Task<void> StartAsync(std::stop_token stopToken) override;
         Task<void> StopAsync() override;
@@ -50,6 +52,7 @@ namespace GPP
         std::shared_ptr<VulkanContext> m_VulkanContext;
         std::shared_ptr<WindowManager> m_WindowManager;
         std::shared_ptr<WindowOptions> m_WindowOptions;
+        std::shared_ptr<IFileSystem> m_FileSystem;
         std::shared_ptr<Logger> m_Logger;
 
         struct WindowResources
@@ -66,10 +69,17 @@ namespace GPP
         struct FrameResources
         {
             VulkanCommandBuffer CommandBuffer;
+            VulkanSemaphore ImageAvailableSemaphore;
+            VulkanSemaphore RenderFinishedSemaphore;
+            VulkanFence InFlightFence;
 
             FrameResources() = default;
-            explicit FrameResources(VulkanCommandBuffer commandBuffer) noexcept
-                : CommandBuffer(std::move(commandBuffer))
+
+            explicit FrameResources(VulkanCommandBuffer commandBuffer, vk::Device device) noexcept
+                : CommandBuffer(std::move(commandBuffer)),
+                  ImageAvailableSemaphore(device),
+                  RenderFinishedSemaphore(device),
+                  InFlightFence(device, true)
             {
             }
 
@@ -82,7 +92,10 @@ namespace GPP
 
         WindowResources m_MainWindowResources{};
         std::vector<FrameResources> m_FrameResources{};
+        std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
         uint32_t m_FrameIndex = 0;
+
+        std::shared_ptr<VulkanPipeline> m_Pipeline;
 
         std::thread m_RenderThread;
         std::atomic<bool> m_Running{true};
