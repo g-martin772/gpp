@@ -34,17 +34,35 @@ namespace GPP
                        const std::shared_ptr<WindowManager>& windowManager,
                        const std::shared_ptr<WindowOptions>& windowOptions,
                        const std::shared_ptr<Logger>& logger,
-                       const std::shared_ptr<IFileSystem>& fileSystem)
+                       const std::shared_ptr<IFileSystem>& fileSystem,
+                       const std::shared_ptr<InputState>& inputState,
+                       const std::shared_ptr<EventDispatcher>& dispatcher)
         : m_VulkanContext(std::move(vulkanContext)),
           m_WindowManager(std::move(windowManager)),
           m_WindowOptions(std::move(windowOptions)),
           m_Logger(std::move(logger)),
-          m_FileSystem(std::move(fileSystem))
+          m_FileSystem(std::move(fileSystem)),
+          m_InputState(std::move(inputState)),
+          m_Dispatcher(std::move(dispatcher))
     {
     }
 
     Task<void> Renderer::StartAsync(std::stop_token stopToken)
     {
+        m_Dispatcher->SetRenderExecutor([this](std::move_only_function<void()> task)
+        {
+            std::scoped_lock lock(m_RenderQueueMutex);
+            m_RenderQueue.push(std::move(task));
+        });
+        m_ResizeSubscription = m_Dispatcher->Subscribe<WindowResizedEvent>(
+            [this](const WindowResizedEvent& event)
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                m_PendingResize[event.Window] = glm::uvec2{
+                    static_cast<uint32_t>(std::max(event.Width, 1)),
+                    static_cast<uint32_t>(std::max(event.Height, 1))
+                };
+            }, EventDelivery::Async, EventTarget::Render);
         m_RenderThread = std::thread([this, stopToken]()
         {
             RenderLoop(stopToken);
@@ -54,6 +72,8 @@ namespace GPP
 
     Task<void> Renderer::StopAsync()
     {
+        m_ResizeSubscription.Reset();
+        m_Dispatcher->SetRenderExecutor({});
         m_Running = false;
         if (m_RenderThread.joinable())
         {
@@ -86,7 +106,7 @@ namespace GPP
             m_MainWindowResources.Device,
             m_Logger,
             //m_MainWindowResources.Window->GetSize(),
-            glm::uvec2{100, 100},
+            glm::uvec2{10000, 10000},
             m_MainWindowResources.Surface
         );
 
@@ -219,6 +239,29 @@ namespace GPP
         std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
         while (m_Running && !stopToken.stop_requested())
         {
+            std::queue<std::move_only_function<void()>> pendingTasks;
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                pendingTasks.swap(m_RenderQueue);
+            }
+            while (!pendingTasks.empty())
+            {
+                auto task = std::move(pendingTasks.front());
+                pendingTasks.pop();
+                task();
+            }
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                if (m_MainWindowResources.Window && m_MainWindowResources.SwapChain)
+                {
+                    const auto windowId = m_MainWindowResources.Window->GetID();
+                    if (auto it = m_PendingResize.find(windowId); it != m_PendingResize.end())
+                    {
+                        m_MainWindowResources.SwapChain->Update(it->second);
+                        m_PendingResize.erase(it);
+                    }
+                }
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Simulate ~60 FPS
             //m_MainWindowResources.SwapChain->Update(glm::uvec2{100, 100});
             iterations++;
@@ -323,8 +366,22 @@ namespace GPP
                 m_MainWindowResources.Device->GetPresentQueue(),
                 renderFinishedSemaphore.GetSemaphore()
             );
+
+            // m_Logger->Trace("W key pressed: {}", m_InputState->IsKeyDown(ScanCode::W));
         }
         m_MainWindowResources.Device->WaitIdle();
+        m_Pipeline.reset();
+        m_RenderFinishedSemaphores.clear();
+        m_FrameResources.clear();
+        m_MainWindowResources.CommandPool.reset();
+        m_MainWindowResources.SwapChain.reset();
+        if (m_MainWindowResources.Surface)
+        {
+            m_MainWindowResources.Device->GetInstance().destroySurfaceKHR(m_MainWindowResources.Surface);
+            m_MainWindowResources.Surface = nullptr;
+        }
+        m_MainWindowResources.Window.reset();
+        m_MainWindowResources.Device.reset();
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         auto averageFps = iterations / (duration.count() / 1000.0);

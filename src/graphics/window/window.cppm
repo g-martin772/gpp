@@ -6,9 +6,12 @@ export module GPP.Graphics:Windowing.Window;
 
 import std;
 import GPP.Core;
+import :Windowing.Events;
 
 namespace GPP
 {
+    export class WindowManager;
+
     export struct WindowOptions : public IService
     {
         int Width;
@@ -32,7 +35,6 @@ namespace GPP
     export class Window
     {
     public:
-        explicit Window(SDL_Window* window);
         ~Window();
 
         // prevent copy
@@ -42,8 +44,7 @@ namespace GPP
         Window(Window&& other) noexcept;
         Window& operator=(Window&& other) noexcept;
 
-        [[nodiscard]] SDL_Window* GetNativeHandle() const noexcept;
-        [[nodiscard]] SDL_WindowID GetID() const noexcept;
+        [[nodiscard]] WindowId GetID() const noexcept;
         [[nodiscard]] Task<void> DestroyWindow();
         [[nodiscard]] Task<void> GetSize(int* width, int* height) const noexcept;
         [[nodiscard]] Task<void> SetSize(int width, int height) noexcept;
@@ -51,6 +52,8 @@ namespace GPP
         [[nodiscard]] Task<void> SetTitle(const std::string& title) noexcept;
         [[nodiscard]] Task<bool> CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* outSurface) const noexcept;
     private:
+        explicit Window(SDL_Window* window);
+        friend class WindowManager;
         SDL_Window* m_Window{nullptr};
     };
 }

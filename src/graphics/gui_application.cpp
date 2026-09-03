@@ -9,6 +9,7 @@ namespace GPP
     GuiApplicationBuilder::GuiApplicationBuilder()
     {
         Services.AddSingleton<VulkanContext>();
+        Services.AddSingleton<InputState>();
 
         Services.AddHostedService<WindowManager>();
         Services.AddHostedService<Renderer>();

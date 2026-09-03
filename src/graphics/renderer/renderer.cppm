@@ -8,6 +8,7 @@ import GPP.Core;
 import :Vulkan.Context;
 import :Vulkan.Device;
 import :Windowing.WindowManager;
+import :Windowing.Events;
 import :Vulkan.Swapchain;
 import :Vulkan.Command;
 import :Vulkan.Pipeline;
@@ -20,13 +21,15 @@ namespace GPP
     export class Renderer : public IHostedService
     {
     public:
-        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, Logger, IFileSystem>;
+        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, Logger, IFileSystem, InputState, EventDispatcher>;
 
         Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                  const std::shared_ptr<WindowManager>& windowManager,
                  const std::shared_ptr<WindowOptions>& windowOptions,
                  const std::shared_ptr<Logger>& logger,
-                 const std::shared_ptr<IFileSystem>& fileSystem);
+                 const std::shared_ptr<IFileSystem>& fileSystem,
+                 const std::shared_ptr<InputState>& inputState,
+                 const std::shared_ptr<EventDispatcher>& dispatcher);
 
         Task<void> StartAsync(std::stop_token stopToken) override;
         Task<void> StopAsync() override;
@@ -54,6 +57,12 @@ namespace GPP
         std::shared_ptr<WindowOptions> m_WindowOptions;
         std::shared_ptr<IFileSystem> m_FileSystem;
         std::shared_ptr<Logger> m_Logger;
+        std::shared_ptr<InputState> m_InputState;
+        std::shared_ptr<EventDispatcher> m_Dispatcher;
+        EventSubscription m_ResizeSubscription{};
+        std::mutex m_RenderQueueMutex{};
+        std::queue<std::move_only_function<void()>> m_RenderQueue{};
+        std::unordered_map<uint32_t, glm::uvec2> m_PendingResize{};
 
         struct WindowResources
         {

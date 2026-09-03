@@ -230,6 +230,7 @@ namespace GPP
         {
             return std::make_shared<FileSystem>(FS);
         });
+        Services.AddSingleton<EventDispatcher>();
     }
 
     Application ApplicationBuilder::Build()

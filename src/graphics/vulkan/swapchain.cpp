@@ -78,7 +78,8 @@ namespace GPP
             return;
         }
 
-        //DestroySwapChain(); recreate in place
+        m_Device->WaitIdle();
+        m_Size = size;
         m_Extent = vk::Extent2D(size.x, size.y);
         CreateSwapChain();
     }

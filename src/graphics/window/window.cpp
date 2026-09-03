@@ -47,12 +47,7 @@ namespace GPP
         return *this;
     }
 
-    SDL_Window* Window::GetNativeHandle() const noexcept
-    {
-        return m_Window;
-    }
-
-    SDL_WindowID Window::GetID() const noexcept
+    WindowId Window::GetID() const noexcept
     {
         return SDL_GetWindowID(m_Window);
     }
