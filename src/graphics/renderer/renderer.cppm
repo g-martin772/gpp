@@ -12,6 +12,7 @@ import :Windowing.Events;
 import :Vulkan.Swapchain;
 import :Vulkan.Command;
 import :Vulkan.Pipeline;
+import :Vulkan.Image;
 
 namespace GPP
 {

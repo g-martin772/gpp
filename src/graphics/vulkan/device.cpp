@@ -1,5 +1,6 @@
 module;
 #include <vulkan/vulkan.hpp>
+#include <vk_mem_alloc.h>
 //VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 module GPP.Graphics;
 
@@ -257,6 +258,21 @@ namespace GPP
         }
         m_Logger->Trace("Created logical device: successful");
 
+        VmaAllocatorCreateInfo allocatorInfo{};
+        allocatorInfo.physicalDevice = m_PhysicalDevice;
+        allocatorInfo.device = m_Device;
+        allocatorInfo.instance = m_VulkanContext->GetInstance();
+        allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+        allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+        if (vmaCreateAllocator(&allocatorInfo, &m_Allocator) != VK_SUCCESS)
+        {
+            m_Logger->Error("Failed to create Vulkan Memory Allocator.");
+            m_Device.destroy();
+            m_Device = nullptr;
+            return;
+        }
+        m_Logger->Trace("Created Vulkan Memory Allocator: successful");
+
         // Initialize Dynamic Dispatcher (Local)
         // m_Dispatcher = vk::detail::DispatchLoaderDynamic(m_Instance->GetInstance(), vkGetInstanceProcAddr, m_Device);
         // Initialize Default Dispatcher (Global)
@@ -304,8 +320,37 @@ namespace GPP
         if (m_Device)
         {
             m_Device.waitIdle();
+            if (m_Allocator)
+            {
+                DumpMemoryStats();
+                vmaDestroyAllocator(m_Allocator);
+                m_Allocator = nullptr;
+            }
             m_Device.destroy();
         }
+    }
+
+    VulkanMemoryStats VulkanDevice::GetMemoryStats() const
+    {
+        VulkanMemoryStats result{};
+        if (!m_Allocator)
+            return result;
+        VmaTotalStatistics stats{};
+        vmaCalculateStatistics(m_Allocator, &stats);
+        result.allocationCount = stats.total.statistics.allocationCount;
+        result.blockCount = stats.total.statistics.blockCount;
+        result.allocationBytes = stats.total.statistics.allocationBytes;
+        result.blockBytes = stats.total.statistics.blockBytes;
+        return result;
+    }
+
+    void VulkanDevice::DumpMemoryStats() const
+    {
+        if (!m_Allocator || !m_Logger)
+            return;
+        const auto stats = GetMemoryStats();
+        m_Logger->Debug("VMA memory: {} allocations / {} blocks, {} allocated bytes / {} block bytes",
+                        stats.allocationCount, stats.blockCount, stats.allocationBytes, stats.blockBytes);
     }
 
     void VulkanDevice::WaitIdle()

@@ -6,6 +6,7 @@ export module GPP.Graphics:Vulkan.Swapchain;
 import std;
 import GPP.Core;
 import :Vulkan.Context;
+import :Vulkan.Image;
 
 namespace GPP
 {

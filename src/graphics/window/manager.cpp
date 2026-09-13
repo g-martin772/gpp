@@ -134,7 +134,7 @@ namespace GPP
                 }
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                 {
-                    const auto windowId = static_cast<WindowId>(event.window.windowID);
+                    const auto windowId = event.window.windowID;
                     TriggerWindowClose(windowId);
                     m_Dispatcher->Publish(WindowCloseRequestedEvent{windowId});
                     break;

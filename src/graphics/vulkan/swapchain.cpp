@@ -190,19 +190,11 @@ namespace GPP
         m_Views.clear();
         for (const auto& image : m_Images)
         {
-            vk::ImageViewCreateInfo viewInfo;
-            viewInfo.image = image;
-            viewInfo.viewType = vk::ImageViewType::e2D;
-            viewInfo.format = m_Format;
-            viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-            viewInfo.subresourceRange.baseMipLevel = 0;
-            viewInfo.subresourceRange.levelCount = 1;
-            viewInfo.subresourceRange.baseArrayLayer = 0;
-            viewInfo.subresourceRange.layerCount = 1;
-
             try
             {
-                m_Views.push_back(m_Device->GetDevice().createImageView(viewInfo));
+                m_Views.push_back(CreateImageView(
+                    m_Device->GetDevice(), image, m_Format, vk::ImageViewType::e2D,
+                    GetImageAspectMask(m_Format), 1, 1));
             }
             catch (const vk::SystemError& err)
             {

@@ -242,6 +242,7 @@ namespace GPP
 
     private:
         mutable std::mutex m_Mutex{};
+        // this could probably also just be an array with a few gaps to avoid the lookups but ill keep this for now since well it works fine enough xD
         std::unordered_map<KeyCode, bool> m_Keys{}, m_Pressed{}, m_Released{};
         std::unordered_map<ScanCode, bool> m_Scans{}, m_PressedScans{}, m_ReleasedScans{};
         std::unordered_map<MouseButton, bool> m_Buttons{}, m_PressedButtons{}, m_ReleasedButtons{};

@@ -1,5 +1,6 @@
 module;
 #include <vulkan/vulkan.hpp>
+#include <vk_mem_alloc.h>
 export module GPP.Graphics:Vulkan.Device;
 
 import std;
@@ -17,6 +18,14 @@ namespace GPP
     export struct VulkanQueueIndices
     {
         uint32_t Graphics = -1, Compute = -1, Transfer = -1, Sparse = -1, Present = -1;
+    };
+
+    export struct VulkanMemoryStats
+    {
+        uint32_t allocationCount = 0;
+        uint32_t blockCount = 0;
+        vk::DeviceSize allocationBytes = 0;
+        vk::DeviceSize blockBytes = 0;
     };
 
     export class VulkanDevice
@@ -38,6 +47,9 @@ namespace GPP
         vk::SurfaceCapabilitiesKHR GetSurfaceCapabilities() const { return m_SurfaceCapabilities; }
         std::vector<vk::SurfaceFormatKHR> GetSurfaceFormats() const { return m_SurfaceFormats; }
         std::vector<vk::PresentModeKHR> GetSurfacePresentModes() const { return m_SurfacePresentModes; }
+        VmaAllocator GetAllocator() const noexcept { return m_Allocator; }
+        VulkanMemoryStats GetMemoryStats() const;
+        void DumpMemoryStats() const;
 
         vk::Queue GetGraphicsQueue() const { return m_Queues[m_GraphicsIndex]; }
         vk::Queue GetTransferQueue() const { return m_Queues[m_TransferIndex]; }
@@ -63,6 +75,7 @@ namespace GPP
         vk::SurfaceCapabilitiesKHR m_SurfaceCapabilities;
         std::vector<vk::SurfaceFormatKHR> m_SurfaceFormats;
         std::vector<vk::PresentModeKHR> m_SurfacePresentModes;
+        VmaAllocator m_Allocator = nullptr;
     };
 
     class VulkanFence {
