@@ -85,6 +85,14 @@ namespace GPP
     Task<void> Renderer::InitializeRenderSystem()
     {
         co_await m_VulkanContext->Init();
+        try
+        {
+            m_FileSystem->RegisterAssetDirectory("shaders", "shaders");
+        }
+        catch (const std::exception& exception)
+        {
+            m_Logger->Warn("Shader asset directory registration skipped: {}", exception.what());
+        }
         m_MainWindowResources.Window = co_await m_WindowManager->CreateWindow(*m_WindowOptions);
         VkSurfaceKHR surface;
         if (!co_await m_MainWindowResources.Window->CreateVulkanSurface(m_VulkanContext->GetInstance(), &surface))
@@ -145,16 +153,35 @@ namespace GPP
             return words;
         };
 
-        auto vertSpirv = readSpirvWords("shaders/vert.spv");
-        auto fragSpirv = readSpirvWords("shaders/frag.spv");
+        const auto vertexSource = m_FileSystem->ResolveAssetPath("shaders", "vert.vert");
+        const auto fragmentSource = m_FileSystem->ResolveAssetPath("shaders", "frag.frag");
+        if (std::filesystem::exists(vertexSource) && std::filesystem::exists(fragmentSource))
+        {
+            m_HotReloadablePipeline = std::make_shared<HotReloadablePipeline>(
+                m_MainWindowResources.Device,
+                m_MainWindowResources.SwapChain->GetImageFormat(),
+                m_MainWindowResources.SwapChain->GetDepthImageFormat(),
+                ShaderPipelineDescription{
+                    .vertex = ShaderSource{.path = vertexSource, .stage = ShaderStage::Vertex},
+                    .fragment = ShaderSource{.path = fragmentSource, .stage = ShaderStage::Fragment}
+                },
+                m_FileSystem, m_Dispatcher, m_Logger);
+            m_HotReloadablePipeline->StartAsync().get();
+            m_Pipeline = m_HotReloadablePipeline->GetPipeline();
+        }
+        else
+        {
+            auto vertSpirv = readSpirvWords("shaders/vert.spv");
+            auto fragSpirv = readSpirvWords("shaders/frag.spv");
 
-        m_Pipeline = std::make_shared<VulkanPipeline>(
-            m_MainWindowResources.Device,
-            m_MainWindowResources.SwapChain->GetImageFormat(),
-            m_MainWindowResources.SwapChain->GetDepthImageFormat(),
-            std::span<const std::uint32_t>(vertSpirv),
-            std::span<const std::uint32_t>(fragSpirv)
-        );
+            m_Pipeline = std::make_shared<VulkanPipeline>(
+                m_MainWindowResources.Device,
+                m_MainWindowResources.SwapChain->GetImageFormat(),
+                m_MainWindowResources.SwapChain->GetDepthImageFormat(),
+                std::span<const std::uint32_t>(vertSpirv),
+                std::span<const std::uint32_t>(fragSpirv)
+            );
+        }
 
         co_return;
     }
@@ -257,7 +284,14 @@ namespace GPP
                     rawCmd.setViewport(0, 1, &viewport);
                     rawCmd.setScissor(0, 1, &scissor);
 
-                    rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_Pipeline->GetPipeline());
+                    auto pipeline = m_HotReloadablePipeline
+                                        ? m_HotReloadablePipeline->GetPipeline()
+                                        : m_Pipeline;
+                    if (!pipeline)
+                    {
+                        throw std::runtime_error("No valid graphics pipeline is available.");
+                    }
+                    rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
                     rawCmd.draw(3, 1, 0, 0);
                 }
                 rawCmd.endRendering();
@@ -303,6 +337,11 @@ namespace GPP
             // m_Logger->Trace("W key pressed: {}", m_InputState->IsKeyDown(ScanCode::W));
         }
         m_MainWindowResources.Device->WaitIdle();
+        if (m_HotReloadablePipeline)
+        {
+            m_HotReloadablePipeline->StopAsync().get();
+            m_HotReloadablePipeline.reset();
+        }
         m_Pipeline.reset();
         m_RenderFinishedSemaphores.clear();
         m_FrameResources.clear();

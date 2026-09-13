@@ -20,6 +20,12 @@ namespace GPP
         UTF16BE
     };
 
+    export struct AssetDirectory
+    {
+        std::string name;
+        std::filesystem::path path;
+    };
+
     export class IFileSystem : public IService
     {
     public:
@@ -28,6 +34,11 @@ namespace GPP
         [[nodiscard]] virtual std::filesystem::path GetBinaryDirectory() const noexcept = 0;
         [[nodiscard]] virtual std::filesystem::path GetWorkingDirectory() const noexcept = 0;
         virtual void SetWorkingDirectory(const std::filesystem::path& path) = 0;
+        virtual void RegisterAssetDirectory(std::string name,
+                                            std::filesystem::path path) = 0;
+        [[nodiscard]] virtual std::filesystem::path ResolveAssetPath(
+            std::string_view directory, const std::filesystem::path& relativePath) const = 0;
+        [[nodiscard]] virtual std::vector<AssetDirectory> GetAssetDirectories() const = 0;
 
         [[nodiscard]] virtual std::filesystem::path ResolvePath(
             const std::filesystem::path& relativePath,
@@ -52,6 +63,11 @@ namespace GPP
         [[nodiscard]] std::filesystem::path GetWorkingDirectory() const noexcept override;
 
         void SetWorkingDirectory(const std::filesystem::path& path) override;
+        void RegisterAssetDirectory(std::string name,
+                                    std::filesystem::path path) override;
+        [[nodiscard]] std::filesystem::path ResolveAssetPath(
+            std::string_view directory, const std::filesystem::path& relativePath) const override;
+        [[nodiscard]] std::vector<AssetDirectory> GetAssetDirectories() const override;
 
         [[nodiscard]] std::filesystem::path ResolvePath(
             const std::filesystem::path& relativePath,
@@ -68,5 +84,6 @@ namespace GPP
 
         std::filesystem::path m_BinaryDir;
         std::filesystem::path m_WorkingDir;
+        std::unordered_map<std::string, std::filesystem::path> m_AssetDirectories;
     };
 }

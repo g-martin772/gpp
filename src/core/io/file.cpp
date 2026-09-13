@@ -40,6 +40,36 @@ namespace GPP
         }
     }
 
+    void FileSystem::RegisterAssetDirectory(std::string name, std::filesystem::path path)
+    {
+        if (name.empty())
+            throw std::invalid_argument("Asset directory name cannot be empty.");
+        const auto resolved = ResolvePath(path);
+        if (!std::filesystem::exists(resolved) || !std::filesystem::is_directory(resolved))
+            throw std::runtime_error("Invalid asset directory path: " + resolved.string());
+        m_AssetDirectories[std::move(name)] = std::filesystem::canonical(resolved);
+    }
+
+    std::filesystem::path FileSystem::ResolveAssetPath(
+        const std::string_view directory, const std::filesystem::path& relativePath) const
+    {
+        const auto it = m_AssetDirectories.find(std::string(directory));
+        if (it == m_AssetDirectories.end())
+            throw std::out_of_range("Unknown asset directory: " + std::string(directory));
+        if (relativePath.is_absolute())
+            return relativePath;
+        return it->second / relativePath;
+    }
+
+    std::vector<AssetDirectory> FileSystem::GetAssetDirectories() const
+    {
+        std::vector<AssetDirectory> result;
+        result.reserve(m_AssetDirectories.size());
+        for (const auto& [name, path] : m_AssetDirectories)
+            result.push_back({name, path});
+        return result;
+    }
+
     std::filesystem::path FileSystem::ResolvePath(const std::filesystem::path& relativePath, PathAnchor anchor) const
     {
         if (relativePath.is_absolute())

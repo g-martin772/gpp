@@ -13,6 +13,8 @@ import :Vulkan.Swapchain;
 import :Vulkan.Command;
 import :Vulkan.Pipeline;
 import :Vulkan.Image;
+import :Shader;
+import :HotReload;
 
 namespace GPP
 {
@@ -106,6 +108,7 @@ namespace GPP
         uint32_t m_FrameIndex = 0;
 
         std::shared_ptr<VulkanPipeline> m_Pipeline;
+        std::shared_ptr<HotReloadablePipeline> m_HotReloadablePipeline;
 
         std::thread m_RenderThread;
         std::atomic<bool> m_Running{true};

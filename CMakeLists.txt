@@ -22,6 +22,7 @@ find_package(spirv_cross_core CONFIG REQUIRED)
 find_package(spirv_cross_glsl CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(Vulkan REQUIRED COMPONENTS shaderc_combined)
+find_library(SHADERC_SHARED_LIBRARY NAMES shaderc_shared)
 
 # ------------------ my stuff ------------------
 
@@ -40,7 +41,12 @@ target_sources(gpp
 )
 target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json imgui::imgui glm::glm)
 target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Headers GPUOpen::VulkanMemoryAllocator
-        Vulkan::shaderc_combined spirv-cross-core spirv-cross-glsl)
+        spirv-cross-core spirv-cross-glsl)
+if (SHADERC_SHARED_LIBRARY)
+    target_link_libraries(gpp PUBLIC ${SHADERC_SHARED_LIBRARY})
+else()
+    target_link_libraries(gpp PUBLIC Vulkan::shaderc_combined)
+endif()
 
 # ---- scratch -----
 

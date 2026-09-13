@@ -5,6 +5,7 @@ export module GPP.Graphics:Vulkan.Pipeline;
 import std;
 import GPP.Core;
 import :Vulkan.Device;
+import :Shader;
 
 namespace GPP
 {
@@ -18,6 +19,17 @@ namespace GPP
             vk::Format depthFormat,
             std::span<const uint32_t> vertexSpirv,
             std::span<const uint32_t> fragmentSpirv
+        ) : VulkanPipeline(device, colorFormat, depthFormat, vertexSpirv, fragmentSpirv, {})
+        {
+        }
+
+        VulkanPipeline(
+            const std::shared_ptr<VulkanDevice>& device,
+            vk::Format colorFormat,
+            vk::Format depthFormat,
+            std::span<const uint32_t> vertexSpirv,
+            std::span<const uint32_t> fragmentSpirv,
+            const ShaderReflection& reflection
         ) : m_Device(device)
         {
             if (!m_Device)
@@ -25,11 +37,15 @@ namespace GPP
                 throw std::runtime_error("VulkanPipeline requires a valid VulkanDevice instance.");
             }
 
-            CreatePipeline(colorFormat, depthFormat, vertexSpirv, fragmentSpirv);
+            CreatePipeline(colorFormat, depthFormat, vertexSpirv, fragmentSpirv, reflection);
         }
 
         ~VulkanPipeline()
         {
+            if (!m_Device)
+            {
+                return;
+            }
             auto logicalDevice = m_Device->GetDevice();
             if (m_Pipeline)
             {
@@ -39,6 +55,10 @@ namespace GPP
             {
                 logicalDevice.destroyPipelineLayout(m_PipelineLayout);
             }
+            for (auto layout : m_DescriptorSetLayouts)
+            {
+                if (layout) logicalDevice.destroyDescriptorSetLayout(layout);
+            }
         }
 
         VulkanPipeline(const VulkanPipeline&) = delete;
@@ -47,7 +67,8 @@ namespace GPP
         VulkanPipeline(VulkanPipeline&& other) noexcept
             : m_Device(std::move(other.m_Device)),
               m_PipelineLayout(other.m_PipelineLayout),
-              m_Pipeline(other.m_Pipeline)
+              m_Pipeline(other.m_Pipeline),
+              m_DescriptorSetLayouts(std::move(other.m_DescriptorSetLayouts))
         {
             other.m_PipelineLayout = nullptr;
             other.m_Pipeline = nullptr;
@@ -57,13 +78,21 @@ namespace GPP
         {
             if (this != &other)
             {
-                auto logicalDevice = m_Device->GetDevice();
-                if (m_Pipeline) logicalDevice.destroyPipeline(m_Pipeline);
-                if (m_PipelineLayout) logicalDevice.destroyPipelineLayout(m_PipelineLayout);
+                if (m_Device)
+                {
+                    auto logicalDevice = m_Device->GetDevice();
+                    if (m_Pipeline) logicalDevice.destroyPipeline(m_Pipeline);
+                    if (m_PipelineLayout) logicalDevice.destroyPipelineLayout(m_PipelineLayout);
+                    for (auto layout : m_DescriptorSetLayouts)
+                    {
+                        if (layout) logicalDevice.destroyDescriptorSetLayout(layout);
+                    }
+                }
 
                 m_Device = std::move(other.m_Device);
                 m_PipelineLayout = other.m_PipelineLayout;
                 m_Pipeline = other.m_Pipeline;
+                m_DescriptorSetLayouts = std::move(other.m_DescriptorSetLayouts);
 
                 other.m_PipelineLayout = nullptr;
                 other.m_Pipeline = nullptr;
@@ -73,13 +102,95 @@ namespace GPP
 
         [[nodiscard]] vk::Pipeline GetPipeline() const noexcept { return m_Pipeline; }
         [[nodiscard]] vk::PipelineLayout GetLayout() const noexcept { return m_PipelineLayout; }
+        [[nodiscard]] const std::vector<vk::DescriptorSetLayout>& GetDescriptorSetLayouts() const noexcept
+        {
+            return m_DescriptorSetLayouts;
+        }
 
     private:
+        static vk::DescriptorType ToVulkanDescriptorType(ShaderDescriptorType type)
+        {
+            switch (type)
+            {
+            case ShaderDescriptorType::Sampler: return vk::DescriptorType::eSampler;
+            case ShaderDescriptorType::CombinedImageSampler:
+                return vk::DescriptorType::eCombinedImageSampler;
+            case ShaderDescriptorType::SampledImage: return vk::DescriptorType::eSampledImage;
+            case ShaderDescriptorType::StorageImage: return vk::DescriptorType::eStorageImage;
+            case ShaderDescriptorType::UniformTexelBuffer:
+                return vk::DescriptorType::eUniformTexelBuffer;
+            case ShaderDescriptorType::StorageTexelBuffer:
+                return vk::DescriptorType::eStorageTexelBuffer;
+            case ShaderDescriptorType::UniformBuffer: return vk::DescriptorType::eUniformBuffer;
+            case ShaderDescriptorType::StorageBuffer: return vk::DescriptorType::eStorageBuffer;
+            case ShaderDescriptorType::InputAttachment: return vk::DescriptorType::eInputAttachment;
+            case ShaderDescriptorType::AccelerationStructure:
+                return vk::DescriptorType::eAccelerationStructureKHR;
+            default: throw std::runtime_error("Unsupported shader descriptor type.");
+            }
+        }
+
+        static vk::ShaderStageFlags ToVulkanShaderStages(ShaderStageFlags stages)
+        {
+            vk::ShaderStageFlags result{};
+            if (HasShaderStage(stages, ShaderStageFlags::Vertex)) result |= vk::ShaderStageFlagBits::eVertex;
+            if (HasShaderStage(stages, ShaderStageFlags::Fragment)) result |= vk::ShaderStageFlagBits::eFragment;
+            if (HasShaderStage(stages, ShaderStageFlags::Compute)) result |= vk::ShaderStageFlagBits::eCompute;
+            if (HasShaderStage(stages, ShaderStageFlags::Geometry)) result |= vk::ShaderStageFlagBits::eGeometry;
+            if (HasShaderStage(stages, ShaderStageFlags::TessellationControl))
+                result |= vk::ShaderStageFlagBits::eTessellationControl;
+            if (HasShaderStage(stages, ShaderStageFlags::TessellationEvaluation))
+                result |= vk::ShaderStageFlagBits::eTessellationEvaluation;
+            return result;
+        }
+
+        static vk::Format VertexFormat(const ShaderVertexInput& input)
+        {
+            if (input.bitWidth == 32)
+            {
+                if (input.scalarType == ShaderScalarType::Float)
+                {
+                    switch (input.components)
+                    {
+                    case 1: return vk::Format::eR32Sfloat;
+                    case 2: return vk::Format::eR32G32Sfloat;
+                    case 3: return vk::Format::eR32G32B32Sfloat;
+                    case 4: return vk::Format::eR32G32B32A32Sfloat;
+                    default: break;
+                    }
+                }
+                if (input.scalarType == ShaderScalarType::SignedInteger)
+                {
+                    switch (input.components)
+                    {
+                    case 1: return vk::Format::eR32Sint;
+                    case 2: return vk::Format::eR32G32Sint;
+                    case 3: return vk::Format::eR32G32B32Sint;
+                    case 4: return vk::Format::eR32G32B32A32Sint;
+                    default: break;
+                    }
+                }
+                if (input.scalarType == ShaderScalarType::UnsignedInteger)
+                {
+                    switch (input.components)
+                    {
+                    case 1: return vk::Format::eR32Uint;
+                    case 2: return vk::Format::eR32G32Uint;
+                    case 3: return vk::Format::eR32G32B32Uint;
+                    case 4: return vk::Format::eR32G32B32A32Uint;
+                    default: break;
+                    }
+                }
+            }
+            throw std::runtime_error("Unsupported reflected vertex input format.");
+        }
+
         void CreatePipeline(
             vk::Format colorFormat,
             vk::Format depthFormat,
             std::span<const uint32_t> vertexSpirv,
-            std::span<const uint32_t> fragmentSpirv
+            std::span<const uint32_t> fragmentSpirv,
+            const ShaderReflection& reflection
         ) {
             auto logicalDevice = m_Device->GetDevice();
 
@@ -96,8 +207,23 @@ namespace GPP
                 vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, fragModule, "main")
             };
 
-            // 2. Vertex Input State (Empty for hardcoded triangle shaders)
-            vk::PipelineVertexInputStateCreateInfo vertexInputInfo({}, 0, nullptr, 0, nullptr);
+            // 2. Vertex Input State (reflection keeps the legacy empty-input path intact)
+            std::vector<ShaderVertexInput> vertexInputs = reflection.vertexInputs;
+            std::ranges::sort(vertexInputs, {}, &ShaderVertexInput::location);
+            std::vector<vk::VertexInputAttributeDescription> attributes;
+            attributes.reserve(vertexInputs.size());
+            uint32_t vertexStride = 0;
+            for (const auto& input : vertexInputs)
+            {
+                attributes.emplace_back(input.location, 0, VertexFormat(input), vertexStride);
+                vertexStride += input.components * (input.bitWidth / 8);
+            }
+            vk::VertexInputBindingDescription binding(0, vertexStride, vk::VertexInputRate::eVertex);
+            vk::PipelineVertexInputStateCreateInfo vertexInputInfo(
+                {}, vertexStride == 0 ? 0u : 1u,
+                vertexStride == 0 ? nullptr : &binding,
+                static_cast<uint32_t>(attributes.size()),
+                attributes.data());
 
             // 3. Input Assembly State (Draw solid triangles)
             vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE);
@@ -163,8 +289,38 @@ namespace GPP
             };
             vk::PipelineDynamicStateCreateInfo dynamicState({}, static_cast<uint32_t>(dynamicStates.size()), dynamicStates.data());
 
-            // 10. Pipeline Layout Creation (Empty for now - no descriptor sets or push constants yet)
-            vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 0, nullptr, 0, nullptr);
+            // 10. Build reflected descriptor set and push-constant layout.
+            uint32_t setCount = 0;
+            for (const auto& descriptor : reflection.descriptorBindings)
+            {
+                setCount = std::max(setCount, descriptor.set + 1);
+            }
+            m_DescriptorSetLayouts.resize(setCount);
+            for (uint32_t set = 0; set < setCount; ++set)
+            {
+                std::vector<vk::DescriptorSetLayoutBinding> bindings;
+                for (const auto& descriptor : reflection.descriptorBindings)
+                {
+                    if (descriptor.set != set) continue;
+                    bindings.emplace_back(
+                        descriptor.binding, ToVulkanDescriptorType(descriptor.type),
+                        std::max(descriptor.descriptorCount, 1u),
+                        ToVulkanShaderStages(descriptor.stages));
+                }
+                vk::DescriptorSetLayoutCreateInfo setInfo(
+                    {}, static_cast<uint32_t>(bindings.size()), bindings.data());
+                m_DescriptorSetLayouts[set] = logicalDevice.createDescriptorSetLayout(setInfo);
+            }
+            std::vector<vk::PushConstantRange> pushConstants;
+            pushConstants.reserve(reflection.pushConstants.size());
+            for (const auto& range : reflection.pushConstants)
+            {
+                pushConstants.emplace_back(ToVulkanShaderStages(range.stages), range.offset, range.size);
+            }
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
+                {}, static_cast<uint32_t>(m_DescriptorSetLayouts.size()),
+                m_DescriptorSetLayouts.data(), static_cast<uint32_t>(pushConstants.size()),
+                pushConstants.data());
             m_PipelineLayout = logicalDevice.createPipelineLayout(pipelineLayoutInfo);
 
             // ====================================================================
@@ -220,5 +376,6 @@ namespace GPP
         std::shared_ptr<VulkanDevice> m_Device{ nullptr };
         vk::PipelineLayout m_PipelineLayout{ nullptr };
         vk::Pipeline m_Pipeline{ nullptr };
+        std::vector<vk::DescriptorSetLayout> m_DescriptorSetLayouts;
     };
 }
