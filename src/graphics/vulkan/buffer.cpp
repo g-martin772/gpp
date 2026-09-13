@@ -193,22 +193,25 @@ namespace GPP
         m_Buffer = nullptr;
         m_Allocation = nullptr;
         m_MappedData = nullptr;
-        m_Device.reset();
     }
 
     void VulkanBuffer::Resize(const vk::DeviceSize size)
     {
         if (size == 0)
             throw std::invalid_argument("VulkanBuffer size must be greater than zero");
+        const auto device = m_Device;
+        if (!device || !device->GetAllocator())
+            throw std::invalid_argument("Cannot resize an uninitialized VulkanBuffer");
         auto specification = m_Specification;
         specification.size = size;
-        Create(m_Device, specification);
+        Create(device, specification);
     }
 
     void VulkanBuffer::SetDebugName(std::string name)
     {
-        if (!name.empty() && m_Allocation)
-            vmaSetAllocationName(m_Device->GetAllocator(), m_Allocation, name.c_str());
+        if (name.empty() || !m_Allocation || !m_Device || !m_Device->GetAllocator())
+            return;
+        vmaSetAllocationName(m_Device->GetAllocator(), m_Allocation, name.c_str());
     }
 
     void* VulkanBuffer::Map()

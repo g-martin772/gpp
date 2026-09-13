@@ -11,23 +11,21 @@ namespace GPP
 {
     vk::ImageAspectFlags GetImageAspectMask(const vk::Format format, const vk::ImageLayout layout)
     {
-        const bool depthLayout = layout == vk::ImageLayout::eDepthAttachmentOptimal ||
-                                 layout == vk::ImageLayout::eDepthStencilAttachmentOptimal ||
-                                 layout == vk::ImageLayout::eDepthReadOnlyOptimal ||
-                                 layout == vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+        const bool stencilFormat = format == vk::Format::eD16UnormS8Uint ||
+                                   format == vk::Format::eD24UnormS8Uint ||
+                                   format == vk::Format::eD32SfloatS8Uint;
         const bool depthFormat = format == vk::Format::eD16Unorm ||
                                  format == vk::Format::eD32Sfloat ||
+                                 format == vk::Format::eD16UnormS8Uint ||
                                  format == vk::Format::eD24UnormS8Uint ||
-                                 format == vk::Format::eD32SfloatS8Uint ||
-                                 format == vk::Format::eD16UnormS8Uint;
-        if (!depthLayout && !depthFormat)
+                                 format == vk::Format::eD32SfloatS8Uint;
+        if (!depthFormat)
             return vk::ImageAspectFlagBits::eColor;
-        vk::ImageAspectFlags flags = vk::ImageAspectFlagBits::eDepth;
-        if (format == vk::Format::eD24UnormS8Uint ||
-            format == vk::Format::eD32SfloatS8Uint ||
-            format == vk::Format::eD16UnormS8Uint)
-            flags |= vk::ImageAspectFlagBits::eStencil;
-        return flags;
+
+        if (stencilFormat)
+            return vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+
+        return vk::ImageAspectFlagBits::eDepth;
     }
 
     vk::ImageView CreateImageView(const vk::Device device, const vk::Image image,
@@ -296,19 +294,22 @@ namespace GPP
         m_View = nullptr;
         m_Image = nullptr;
         m_Allocation = nullptr;
-        m_Device.reset();
     }
 
     void VulkanImage::Resize(const vk::Extent3D extent)
     {
+        const auto device = m_Device;
+        if (!device || !device->GetAllocator())
+            throw std::invalid_argument("Cannot resize an uninitialized VulkanImage");
         auto specification = m_Specification;
         specification.extent = extent;
-        Create(m_Device, specification);
+        Create(device, specification);
     }
 
     void VulkanImage::SetDebugName(std::string name)
     {
-        if (!name.empty() && m_Allocation)
-            vmaSetAllocationName(m_Device->GetAllocator(), m_Allocation, name.c_str());
+        if (name.empty() || !m_Allocation || !m_Device || !m_Device->GetAllocator())
+            return;
+        vmaSetAllocationName(m_Device->GetAllocator(), m_Allocation, name.c_str());
     }
 }

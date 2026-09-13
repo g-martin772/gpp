@@ -9,27 +9,23 @@ import :Shader;
 
 namespace GPP
 {
-    // ai_slop.please_work();
+    export struct VulkanPipelineSpecification
+    {
+        vk::Format colorFormat = vk::Format::eUndefined;
+        vk::Format depthFormat = vk::Format::eUndefined;
+        bool enableBlending = true;
+        vk::CullModeFlags cullMode = vk::CullModeFlagBits::eBack;
+        vk::FrontFace frontFace = vk::FrontFace::eCounterClockwise;
+    };
+
     export class VulkanPipeline
     {
     public:
         VulkanPipeline(
             const std::shared_ptr<VulkanDevice>& device,
-            vk::Format colorFormat,
-            vk::Format depthFormat,
-            std::span<const uint32_t> vertexSpirv,
-            std::span<const uint32_t> fragmentSpirv
-        ) : VulkanPipeline(device, colorFormat, depthFormat, vertexSpirv, fragmentSpirv, {})
-        {
-        }
-
-        VulkanPipeline(
-            const std::shared_ptr<VulkanDevice>& device,
-            vk::Format colorFormat,
-            vk::Format depthFormat,
-            std::span<const uint32_t> vertexSpirv,
-            std::span<const uint32_t> fragmentSpirv,
-            const ShaderReflection& reflection
+            const VulkanPipelineSpecification& specification,
+            const CompiledShader& vertexShader,
+            const CompiledShader& fragmentShader
         ) : m_Device(device)
         {
             if (!m_Device)
@@ -37,7 +33,7 @@ namespace GPP
                 throw std::runtime_error("VulkanPipeline requires a valid VulkanDevice instance.");
             }
 
-            CreatePipeline(colorFormat, depthFormat, vertexSpirv, fragmentSpirv, reflection);
+            CreatePipeline(specification, vertexShader, fragmentShader);
         }
 
         ~VulkanPipeline()
@@ -102,6 +98,7 @@ namespace GPP
 
         [[nodiscard]] vk::Pipeline GetPipeline() const noexcept { return m_Pipeline; }
         [[nodiscard]] vk::PipelineLayout GetLayout() const noexcept { return m_PipelineLayout; }
+
         [[nodiscard]] const std::vector<vk::DescriptorSetLayout>& GetDescriptorSetLayouts() const noexcept
         {
             return m_DescriptorSetLayouts;
@@ -186,25 +183,28 @@ namespace GPP
         }
 
         void CreatePipeline(
-            vk::Format colorFormat,
-            vk::Format depthFormat,
-            std::span<const uint32_t> vertexSpirv,
-            std::span<const uint32_t> fragmentSpirv,
-            const ShaderReflection& reflection
-        ) {
+            const VulkanPipelineSpecification& specification,
+            const CompiledShader& vertexShader,
+            const CompiledShader& fragmentShader
+        )
+        {
             auto logicalDevice = m_Device->GetDevice();
+            const auto reflection = MergeShaderReflections(vertexShader.reflection, fragmentShader.reflection);
 
-            // 1. Create Shader Modules from SPIR-V bytecode
-            vk::ShaderModuleCreateInfo vertCreateInfo({}, vertexSpirv.size() * sizeof(uint32_t), vertexSpirv.data());
-            vk::ShaderModuleCreateInfo fragCreateInfo({}, fragmentSpirv.size() * sizeof(uint32_t), fragmentSpirv.data());
+            vk::ShaderModuleCreateInfo vertCreateInfo(
+                {}, vertexShader.spirv.size() * sizeof(std::uint32_t), vertexShader.spirv.data());
+            vk::ShaderModuleCreateInfo fragCreateInfo(
+                {}, fragmentShader.spirv.size() * sizeof(std::uint32_t), fragmentShader.spirv.data());
 
             vk::ShaderModule vertModule = logicalDevice.createShaderModule(vertCreateInfo);
             vk::ShaderModule fragModule = logicalDevice.createShaderModule(fragCreateInfo);
 
             // Shader stage creations
             vk::PipelineShaderStageCreateInfo shaderStages[] = {
-                vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, vertModule, "main"),
-                vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, fragModule, "main")
+                vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex, vertModule,
+                                                  vertexShader.source.entryPoint.c_str()),
+                vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment, fragModule,
+                                                  fragmentShader.source.entryPoint.c_str())
             };
 
             // 2. Vertex Input State (reflection keeps the legacy empty-input path intact)
@@ -225,10 +225,10 @@ namespace GPP
                 static_cast<uint32_t>(attributes.size()),
                 attributes.data());
 
-            // 3. Input Assembly State (Draw solid triangles)
+            // 3. Input Assembly State
             vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE);
 
-            // 4. Viewport & Scissor State (Marked dynamic so we don't have to specify dimensions here)
+            // 4. Viewport & Scissor State
             vk::PipelineViewportStateCreateInfo viewportState({}, 1, nullptr, 1, nullptr);
 
             // 5. Rasterization State
@@ -237,18 +237,18 @@ namespace GPP
             rasterizer.rasterizerDiscardEnable = VK_FALSE;
             rasterizer.polygonMode = vk::PolygonMode::eFill;
             rasterizer.lineWidth = 1.0f;
-            rasterizer.cullMode = vk::CullModeFlagBits::eNone; // No culling to easily draw basic geometry
-            rasterizer.frontFace = vk::FrontFace::eClockwise;
+            rasterizer.cullMode = specification.cullMode;
+            rasterizer.frontFace = specification.frontFace;
             rasterizer.depthBiasEnable = VK_FALSE;
 
-            // 6. Multisample State (No multisampling)
+            // 6. Multisample State
             vk::PipelineMultisampleStateCreateInfo multisampling{};
             multisampling.sampleShadingEnable = VK_FALSE;
             multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
 
-            // 7. Depth/Stencil State (Only configured if a depth format is specified)
+            // 7. Depth/Stencil State
             vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-            if (depthFormat != vk::Format::eUndefined)
+            if (specification.depthFormat != vk::Format::eUndefined)
             {
                 depthStencil.depthTestEnable = VK_TRUE;
                 depthStencil.depthWriteEnable = VK_TRUE;
@@ -264,11 +264,11 @@ namespace GPP
 
             // 8. Color Blend Attachment State
             vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-            colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | 
-                                                  vk::ColorComponentFlagBits::eG | 
-                                                  vk::ColorComponentFlagBits::eB | 
-                                                  vk::ColorComponentFlagBits::eA;
-            colorBlendAttachment.blendEnable = VK_TRUE;
+            colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR |
+                vk::ColorComponentFlagBits::eG |
+                vk::ColorComponentFlagBits::eB |
+                vk::ColorComponentFlagBits::eA;
+            colorBlendAttachment.blendEnable = specification.enableBlending;
             colorBlendAttachment.srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
             colorBlendAttachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
             colorBlendAttachment.colorBlendOp = vk::BlendOp::eAdd;
@@ -287,7 +287,8 @@ namespace GPP
                 vk::DynamicState::eViewport,
                 vk::DynamicState::eScissor
             };
-            vk::PipelineDynamicStateCreateInfo dynamicState({}, static_cast<uint32_t>(dynamicStates.size()), dynamicStates.data());
+            vk::PipelineDynamicStateCreateInfo dynamicState({}, static_cast<uint32_t>(dynamicStates.size()),
+                                                            dynamicStates.data());
 
             // 10. Build reflected descriptor set and push-constant layout.
             uint32_t setCount = 0;
@@ -329,8 +330,8 @@ namespace GPP
             // ====================================================================
             vk::PipelineRenderingCreateInfo renderingCreateInfo{};
             renderingCreateInfo.colorAttachmentCount = 1;
-            renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
-            renderingCreateInfo.depthAttachmentFormat = depthFormat;
+            renderingCreateInfo.pColorAttachmentFormats = &specification.colorFormat;
+            renderingCreateInfo.depthAttachmentFormat = specification.depthFormat;
             renderingCreateInfo.stencilAttachmentFormat = vk::Format::eUndefined;
 
             // Chain the dynamic rendering info into the graphics pipeline's pNext chain
@@ -373,9 +374,9 @@ namespace GPP
         }
 
     private:
-        std::shared_ptr<VulkanDevice> m_Device{ nullptr };
-        vk::PipelineLayout m_PipelineLayout{ nullptr };
-        vk::Pipeline m_Pipeline{ nullptr };
+        std::shared_ptr<VulkanDevice> m_Device{nullptr};
+        vk::PipelineLayout m_PipelineLayout{nullptr};
+        vk::Pipeline m_Pipeline{nullptr};
         std::vector<vk::DescriptorSetLayout> m_DescriptorSetLayouts;
     };
 }

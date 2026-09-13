@@ -13,6 +13,7 @@ import :Vulkan.Swapchain;
 import :Vulkan.Command;
 import :Vulkan.Pipeline;
 import :Vulkan.Image;
+import :Vulkan.Buffer;
 import :Shader;
 import :HotReload;
 
@@ -50,8 +51,12 @@ namespace GPP
             return m_MainWindowResources.SwapChain;
         }
 
+        ShaderCompilationProgress GetShaderCompilationProgress() const;
+        ShaderPipelineMetadata GetShaderPipelineMetadata() const;
+        std::string GetShaderPipelineError() const;
+
     private:
-        Task<void> InitializeRenderSystem();
+        void InitializeRenderSystem();
         Task<void> StopRenderSystem();
         void RenderLoop(std::stop_token stopToken);
 
@@ -73,6 +78,8 @@ namespace GPP
             vk::SurfaceKHR Surface;
             std::shared_ptr<VulkanDevice> Device;
             std::shared_ptr<VulkanSwapChain> SwapChain;
+            VulkanImage DepthImage;
+            vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
             std::shared_ptr<VulkanCommandPool> CommandPool;
 
             ~WindowResources();
@@ -105,10 +112,13 @@ namespace GPP
         WindowResources m_MainWindowResources{};
         std::vector<FrameResources> m_FrameResources{};
         std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
+        std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};
         uint32_t m_FrameIndex = 0;
 
-        std::shared_ptr<VulkanPipeline> m_Pipeline;
-        std::shared_ptr<HotReloadablePipeline> m_HotReloadablePipeline;
+        std::shared_ptr<ShaderPipeline> m_ShaderPipeline;
+        VulkanBuffer m_VertexBuffer;
+        VulkanBuffer m_IndexBuffer;
+        std::uint32_t m_IndexCount = 0;
 
         std::thread m_RenderThread;
         std::atomic<bool> m_Running{true};

@@ -168,20 +168,23 @@ namespace GPP
                 });
             }
 
-            for (const auto& resource : resources.stage_inputs)
+            if (stage == ShaderStage::Vertex)
             {
-                if (!compiler.has_decoration(resource.id, spv::DecorationLocation))
+                for (const auto& resource : resources.stage_inputs)
                 {
-                    continue;
+                    if (!compiler.has_decoration(resource.id, spv::DecorationLocation))
+                    {
+                        continue;
+                    }
+                    const auto& type = compiler.get_type(resource.type_id);
+                    reflection.vertexInputs.push_back({
+                        .location = compiler.get_decoration(resource.id, spv::DecorationLocation),
+                        .components = type.vecsize,
+                        .bitWidth = type.width,
+                        .scalarType = ScalarType(type),
+                        .name = compiler.get_name(resource.id)
+                    });
                 }
-                const auto& type = compiler.get_type(resource.type_id);
-                reflection.vertexInputs.push_back({
-                    .location = compiler.get_decoration(resource.id, spv::DecorationLocation),
-                    .components = type.vecsize,
-                    .bitWidth = type.width,
-                    .scalarType = ScalarType(type),
-                    .name = compiler.get_name(resource.id)
-                });
             }
             return reflection;
         }
@@ -336,9 +339,17 @@ namespace GPP
         if (options.enableCache)
         {
             spirv = ReadCache(cachePath);
+            if (!spirv.empty() && m_Logger)
+            {
+                m_Logger->Debug("Shader cache hit: {} ({:016x})", resolvedPath.string(), hash);
+            }
         }
         if (spirv.empty())
         {
+            if (m_Logger)
+            {
+                m_Logger->Debug("Compiling shader: {} ({:016x})", resolvedPath.string(), hash);
+            }
             shaderc::Compiler compiler;
             shaderc::CompileOptions compileOptions;
             compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
@@ -367,16 +378,31 @@ namespace GPP
             {
                 WriteCache(cachePath, spirv);
             }
+            if (m_Logger)
+            {
+                m_Logger->Debug("Shader compiled: {} ({} SPIR-V words)",
+                                resolvedPath.string(), spirv.size());
+            }
         }
 
         try
         {
+            auto reflection = Reflect(spirv, source.stage);
+            if (m_Logger)
+            {
+                m_Logger->Debug("Compiled shader {}: {} SPIR-V words, {} descriptors, "
+                                "{} push constants, {} vertex inputs{}",
+                                resolvedPath.string(), spirv.size(),
+                                reflection.descriptorBindings.size(), reflection.pushConstants.size(),
+                                reflection.vertexInputs.size(),
+                                options.enableCache ? " (cache enabled)" : "");
+            }
             return CompiledShader{
                 .source = source,
                 .resolvedPath = resolvedPath,
                 .cachePath = cachePath,
                 .spirv = spirv,
-                .reflection = Reflect(spirv, source.stage),
+                .reflection = std::move(reflection),
                 .sourceHash = hash
             };
         }
