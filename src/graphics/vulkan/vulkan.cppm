@@ -5,3 +5,4 @@ export import :Vulkan.Swapchain;
 export import :Vulkan.Command;
 export import :Vulkan.Pipeline;
 export import :Vulkan.Image;
+export import :Vulkan.Buffer;
