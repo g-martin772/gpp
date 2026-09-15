@@ -1,0 +1,10 @@
+CompileFlags:
+  Add:
+    - -std=c++23
+    - -fmodules
+    - -Wno-experimental-header-units
+  Remove: [
+    -fmodules-ts,
+    -fmodule-mapper=*,
+    -fdeps-format=*
+  ]

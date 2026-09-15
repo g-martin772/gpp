@@ -1,10 +1,6 @@
-module;
-
-#include <vulkan/vulkan.hpp>
-
 export module GPP.Graphics:HotReload;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Shader;
 import :Vulkan.Pipeline;

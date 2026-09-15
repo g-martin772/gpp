@@ -1,9 +1,8 @@
 module;
-#include <vulkan/vulkan.hpp>
 #include <vk_mem_alloc.h>
 module GPP.Graphics;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Image;
 

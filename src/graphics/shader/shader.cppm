@@ -136,7 +136,7 @@ namespace GPP
     {
     public:
         explicit ShaderCompiler(std::shared_ptr<IFileSystem> fileSystem,
-                                std::shared_ptr<Logger> logger = {});
+                                std::shared_ptr<Logger> logger);
 
         CompiledShader Compile(const ShaderSource& source,
                                const ShaderCompileOptions& options = {}) const;
@@ -170,7 +170,7 @@ namespace GPP
 
         ShaderFileWatcher(std::shared_ptr<IFileSystem> fileSystem,
                           std::shared_ptr<EventDispatcher> dispatcher,
-                          std::shared_ptr<Logger> logger = {});
+                          std::shared_ptr<Logger> logger);
         ~ShaderFileWatcher() override;
 
         std::size_t Watch(const std::filesystem::path& path);

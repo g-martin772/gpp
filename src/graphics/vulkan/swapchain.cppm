@@ -1,9 +1,7 @@
-module;
-#include <vulkan/vulkan.hpp>
-#include <glm/glm.hpp>
 export module GPP.Graphics:Vulkan.Swapchain;
 
-import std;
+import glm;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Context;
 import :Vulkan.Image;
@@ -19,10 +17,10 @@ namespace GPP
                         const std::shared_ptr<Logger>& logger,
                         glm::uvec2 size,
                         vk::SurfaceKHR surface,
-                        uint32_t framesInFlight = 3);
+                        std::uint32_t framesInFlight = 3);
         ~VulkanSwapChain();
 
-        void AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence, uint64_t timeout = UINT64_MAX);
+        void AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence, std::uint64_t timeout = -1);
         void Present(vk::Queue presentQueue, vk::Semaphore waitSemaphore);
         void Update(glm::uvec2 size);
         void AdvanceSemaphoreIndex();
@@ -36,9 +34,9 @@ namespace GPP
         vk::Format GetImageFormat() const { return m_Format; }
         vk::Format GetDepthImageFormat() const { return m_DepthFormat; }
 
-        uint32_t GetImageCount() const { return m_Images.size(); }
-        uint32_t GetCurrentImageIndex() const { return m_CurrentFrame; }
-        uint32_t GetSemaphoreIndex() const { return m_SemaphoreIndex; }
+        std::uint32_t GetImageCount() const { return m_Images.size(); }
+        std::uint32_t GetCurrentImageIndex() const { return m_CurrentFrame; }
+        std::uint32_t GetSemaphoreIndex() const { return m_SemaphoreIndex; }
 
         vk::SwapchainKHR GetSwapChain() const { return m_SwapChain; }
 
@@ -50,7 +48,7 @@ namespace GPP
         glm::vec2 m_Size = {0.0f, 0.0f};
         vk::Extent2D m_Extent = {0, 0};
         vk::SurfaceKHR m_Surface;
-        uint32_t m_FramesInFlight = 3, m_CurrentFrame = 0, m_SemaphoreIndex = 0;
+        std::uint32_t m_FramesInFlight = 3, m_CurrentFrame = 0, m_SemaphoreIndex = 0;
         bool m_VSync = true;
         std::vector<vk::Image> m_Images{};
         std::vector<vk::ImageView> m_Views{};

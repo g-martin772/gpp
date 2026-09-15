@@ -39,6 +39,24 @@ target_sources(gpp
         PUBLIC FILE_SET public_modules TYPE CXX_MODULES FILES
         ${GPP_MODULES} "src/gpp.cppm"
 )
+target_sources(gpp
+        PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${glm_DIR}../../../include/glm
+        FILES ${glm_DIR}/../../include/glm/glm.cppm
+)
+target_sources(gpp
+        PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${glm_DIR}../../../include/glm
+        FILES ${glm_DIR}/../../include/glm/glm.cppm
+)
+target_sources(gpp
+        PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${glm_DIR}../../../include/vulkan
+        FILES ${glm_DIR}/../../include/vulkan/vulkan.cppm
+)
 target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json imgui::imgui glm::glm)
 target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Headers GPUOpen::VulkanMemoryAllocator
         spirv-cross-core spirv-cross-glsl)

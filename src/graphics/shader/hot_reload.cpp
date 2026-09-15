@@ -1,10 +1,6 @@
-module;
-
-#include <vulkan/vulkan.hpp>
-
 module GPP.Graphics;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Shader;
 import :HotReload;
@@ -223,7 +219,7 @@ namespace GPP
                 m_Progress.state = ShaderCompilationState::Failed;
                 m_Progress.message = error;
             }
-            if (m_Logger) m_Logger->Error("Shader pipeline initialization failed: {}", error);
+            m_Logger->Error("Shader pipeline initialization failed: {}", error);
             return false;
         }
     }
@@ -306,7 +302,7 @@ namespace GPP
             m_LastError = exception.what();
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
-            if (m_Logger) m_Logger->Error("Shader reload failed: {}", m_LastError);
+            m_Logger->Error("Shader reload failed: {}", m_LastError);
             return false;
         }
     }
@@ -334,7 +330,7 @@ namespace GPP
             m_LastError = exception.what();
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
-            if (m_Logger) m_Logger->Error("Shader reload failed: {}", m_LastError);
+            m_Logger->Error("Shader reload failed: {}", m_LastError);
         }
         {
             std::scoped_lock lock(m_Mutex);
@@ -380,7 +376,7 @@ namespace GPP
                 m_Progress.message = m_LastError;
                 m_Reloading = false;
                 m_CompilationInFlight = false;
-                if (m_Logger) m_Logger->Error("Shader reload failed: {}", m_LastError);
+                m_Logger->Error("Shader reload failed: {}", m_LastError);
                 m_ReloadCondition.notify_all();
             }
         });

@@ -1,9 +1,8 @@
 module;
-#include <vulkan/vulkan.hpp>
 #include <vk_mem_alloc.h>
 export module GPP.Graphics:Vulkan.Image;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Device;
 

@@ -6,3 +6,4 @@ export import :DI;
 export import :Application;
 export import :IO;
 export import :Events;
+export import :Math;

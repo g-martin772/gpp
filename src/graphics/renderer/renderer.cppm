@@ -1,19 +1,10 @@
-module;
-#include <vulkan/vulkan.hpp>
-#include <glm/glm.hpp>
 export module GPP.Graphics:Renderer;
 
-import std;
+import glm;
+import vulkan;
 import GPP.Core;
-import :Vulkan.Context;
-import :Vulkan.Device;
-import :Windowing.WindowManager;
-import :Windowing.Events;
-import :Vulkan.Swapchain;
-import :Vulkan.Command;
-import :Vulkan.Pipeline;
-import :Vulkan.Image;
-import :Vulkan.Buffer;
+import :Vulkan;
+import :Windowing;
 import :Shader;
 import :HotReload;
 
@@ -70,7 +61,7 @@ namespace GPP
         EventSubscription m_ResizeSubscription{};
         std::mutex m_RenderQueueMutex{};
         std::queue<std::move_only_function<void()>> m_RenderQueue{};
-        std::unordered_map<uint32_t, glm::uvec2> m_PendingResize{};
+        std::unordered_map<std::uint32_t, glm::uvec2> m_PendingResize{};
 
         struct WindowResources
         {
@@ -113,7 +104,7 @@ namespace GPP
         std::vector<FrameResources> m_FrameResources{};
         std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
         std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};
-        uint32_t m_FrameIndex = 0;
+        std::uint32_t m_FrameIndex = 0;
 
         std::shared_ptr<ShaderPipeline> m_ShaderPipeline;
         VulkanBuffer m_VertexBuffer;

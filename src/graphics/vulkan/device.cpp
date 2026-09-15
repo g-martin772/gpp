@@ -1,10 +1,8 @@
 module;
-#include <vulkan/vulkan.hpp>
 #include <vk_mem_alloc.h>
-//VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 module GPP.Graphics;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Device;
 

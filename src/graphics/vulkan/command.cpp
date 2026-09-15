@@ -1,8 +1,6 @@
-module;
-#include <vulkan/vulkan.hpp>
 module GPP.Graphics;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Command;
 
@@ -21,7 +19,7 @@ namespace GPP
           m_RenderPassContinue(renderPassContinue),
           m_SimultaneousUse(simultaneousUse)
     {
-        if (!m_Device || m_CommandPool == VK_NULL_HANDLE)
+        if (!m_Device || m_CommandPool == nullptr)
             throw std::invalid_argument("VulkanCommandBuffer::VulkanCommandBuffer: invalid device or pool");
 
         vk::CommandBufferAllocateInfo allocateInfo{};
@@ -37,7 +35,7 @@ namespace GPP
         {
             if (m_Logger)
                 m_Logger->Error("Failed to allocate vulkan command buffer: {}", err.what());
-            m_CommandBuffer = VK_NULL_HANDLE;
+            m_CommandBuffer = nullptr;
         }
     }
 
@@ -50,11 +48,11 @@ namespace GPP
           m_Device(std::move(other.m_Device)),
           m_Logger(std::move(other.m_Logger))
     {
-        other.m_CommandBuffer = VK_NULL_HANDLE;
+        other.m_CommandBuffer = nullptr;
         other.m_IsSingleUse = false;
         other.m_RenderPassContinue = false;
         other.m_SimultaneousUse = false;
-        other.m_CommandPool = VK_NULL_HANDLE;
+        other.m_CommandPool = nullptr;
         other.m_Device = nullptr;
         other.m_Logger = nullptr;
     }
@@ -64,7 +62,7 @@ namespace GPP
         if (this == &other)
             return *this;
 
-        if (m_CommandBuffer != VK_NULL_HANDLE && m_CommandPool != VK_NULL_HANDLE && m_Device)
+        if (m_CommandBuffer != nullptr && m_CommandPool != nullptr && m_Device)
             Free();
 
         m_CommandBuffer = other.m_CommandBuffer;
@@ -75,11 +73,11 @@ namespace GPP
         m_Device = std::move(other.m_Device);
         m_Logger = std::move(other.m_Logger);
 
-        other.m_CommandBuffer = VK_NULL_HANDLE;
+        other.m_CommandBuffer = nullptr;
         other.m_IsSingleUse = false;
         other.m_RenderPassContinue = false;
         other.m_SimultaneousUse = false;
-        other.m_CommandPool = VK_NULL_HANDLE;
+        other.m_CommandPool = nullptr;
         other.m_Device = nullptr;
         other.m_Logger = nullptr;
 
@@ -88,7 +86,7 @@ namespace GPP
 
     VulkanCommandPool::VulkanCommandPool(const std::shared_ptr<VulkanDevice>& device,
                                          const std::shared_ptr<Logger>& logger,
-                                         uint32_t queueFamilyIndex,
+                                         std::uint32_t queueFamilyIndex,
                                          vk::CommandPoolCreateFlags flags)
         : m_Device(device),
           m_Logger(logger)
@@ -105,7 +103,7 @@ namespace GPP
         {
             if (m_Logger)
                 m_Logger->Error("Failed to create vulkan command pool: {}", err.what());
-            m_CommandPool = VK_NULL_HANDLE;
+            m_CommandPool = nullptr;
             return;
         }
 
@@ -118,7 +116,7 @@ namespace GPP
           m_Logger(std::move(other.m_Logger)),
           m_CommandPool(other.m_CommandPool)
     {
-        other.m_CommandPool = VK_NULL_HANDLE;
+        other.m_CommandPool = nullptr;
         other.m_Device = nullptr;
         other.m_Logger = nullptr;
     }
@@ -128,17 +126,17 @@ namespace GPP
         if (this == &other)
             return *this;
 
-        if (m_CommandPool != VK_NULL_HANDLE && m_Device)
+        if (m_CommandPool != nullptr && m_Device)
         {
             m_Device->GetDevice().destroyCommandPool(m_CommandPool);
-            m_CommandPool = VK_NULL_HANDLE;
+            m_CommandPool = nullptr;
         }
 
         m_Device = std::move(other.m_Device);
         m_Logger = std::move(other.m_Logger);
         m_CommandPool = other.m_CommandPool;
 
-        other.m_CommandPool = VK_NULL_HANDLE;
+        other.m_CommandPool = nullptr;
         other.m_Device = nullptr;
         other.m_Logger = nullptr;
 
@@ -147,22 +145,22 @@ namespace GPP
 
     VulkanCommandBuffer::~VulkanCommandBuffer()
     {
-        if (m_CommandBuffer != VK_NULL_HANDLE)
+        if (m_CommandBuffer != nullptr)
             Free();
     }
 
     VulkanCommandPool::~VulkanCommandPool()
     {
-        if (m_CommandPool != VK_NULL_HANDLE && m_Device)
+        if (m_CommandPool != nullptr && m_Device)
         {
             m_Device->GetDevice().destroyCommandPool(m_CommandPool);
-            m_CommandPool = VK_NULL_HANDLE;
+            m_CommandPool = nullptr;
         }
     }
 
     void VulkanCommandBuffer::Begin() const
     {
-        if (m_CommandBuffer == VK_NULL_HANDLE || !m_Device)
+        if (m_CommandBuffer == nullptr || !m_Device)
         {
             m_Logger->Error("Tried to begin a uninitialized command buffer");
             return;
@@ -188,7 +186,7 @@ namespace GPP
 
     void VulkanCommandBuffer::End() const
     {
-        if (m_CommandBuffer == VK_NULL_HANDLE || !m_Device)
+        if (m_CommandBuffer == nullptr || !m_Device)
         {
             m_Logger->Error("Tried to end a uninitialized command buffer");
             return;
@@ -207,7 +205,7 @@ namespace GPP
 
     void VulkanCommandBuffer::Submit(vk::Queue target)
     {
-        if (m_CommandBuffer == VK_NULL_HANDLE || !m_Device)
+        if (m_CommandBuffer == nullptr || !m_Device)
         {
             m_Logger->Error("Tried to submit a uninitialized command buffer");
             return;
@@ -243,7 +241,7 @@ namespace GPP
 
     void VulkanCommandBuffer::Submit(vk::Queue target, vk::Fence fence)
     {
-        if (m_CommandBuffer == VK_NULL_HANDLE || !m_Device)
+        if (m_CommandBuffer == nullptr || !m_Device)
         {
             m_Logger->Error("Tried to submit a uninitialized command buffer");
             return;
@@ -282,7 +280,7 @@ namespace GPP
                                      vk::Fence fence,
                                      vk::PipelineStageFlags waitStage)
     {
-        if (m_CommandBuffer == VK_NULL_HANDLE || !m_Device)
+        if (m_CommandBuffer == nullptr || !m_Device)
         {
             m_Logger->Error("Tried to submit a uninitialized command buffer");
             return;
@@ -322,11 +320,11 @@ namespace GPP
 
     void VulkanCommandBuffer::Free()
     {
-        if (m_CommandBuffer == VK_NULL_HANDLE || m_CommandPool == VK_NULL_HANDLE || !m_Device)
+        if (m_CommandBuffer == nullptr || m_CommandPool == nullptr || !m_Device)
             return;
 
         m_Device->GetDevice().freeCommandBuffers(m_CommandPool, 1, &m_CommandBuffer);
-        m_CommandBuffer = VK_NULL_HANDLE;
+        m_CommandBuffer = nullptr;
     }
 
     VulkanCommandBuffer VulkanCommandPool::AllocateCommandBuffer(bool renderPassContinue, bool simultaneousUse) const

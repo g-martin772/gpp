@@ -1,8 +1,6 @@
-module;
-#include <vulkan/vulkan.hpp>
 export module GPP.Graphics:Vulkan.Context;
 
-import std;
+import vulkan;
 import GPP.Core;
 
 namespace GPP

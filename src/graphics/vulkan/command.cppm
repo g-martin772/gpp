@@ -1,8 +1,6 @@
-module;
-#include <vulkan/vulkan.hpp>
 export module GPP.Graphics:Vulkan.Command;
 
-import std;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Device;
 
@@ -38,7 +36,7 @@ namespace GPP
         vk::CommandBuffer GetCommandBuffer() const { return m_CommandBuffer; }
 
     private:
-        vk::CommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
+        vk::CommandBuffer m_CommandBuffer = nullptr;
         bool m_IsSingleUse = false, m_RenderPassContinue = false, m_SimultaneousUse = false;
         vk::CommandPool m_CommandPool;
         std::shared_ptr<VulkanDevice> m_Device = nullptr;
@@ -50,7 +48,7 @@ namespace GPP
     public:
         VulkanCommandPool(const std::shared_ptr<VulkanDevice>& device,
                           const std::shared_ptr<Logger>& logger,
-                          uint32_t queueFamilyIndex,
+                          std::uint32_t queueFamilyIndex,
                           vk::CommandPoolCreateFlags flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
         ~VulkanCommandPool();
 

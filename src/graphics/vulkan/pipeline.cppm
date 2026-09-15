@@ -1,8 +1,8 @@
 module;
-#include <vulkan/vulkan.hpp>
 export module GPP.Graphics:Vulkan.Pipeline;
 
 import std;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Device;
 import :Shader;
@@ -212,7 +212,7 @@ namespace GPP
             std::ranges::sort(vertexInputs, {}, &ShaderVertexInput::location);
             std::vector<vk::VertexInputAttributeDescription> attributes;
             attributes.reserve(vertexInputs.size());
-            uint32_t vertexStride = 0;
+            std::uint32_t vertexStride = 0;
             for (const auto& input : vertexInputs)
             {
                 attributes.emplace_back(input.location, 0, VertexFormat(input), vertexStride);
@@ -222,44 +222,44 @@ namespace GPP
             vk::PipelineVertexInputStateCreateInfo vertexInputInfo(
                 {}, vertexStride == 0 ? 0u : 1u,
                 vertexStride == 0 ? nullptr : &binding,
-                static_cast<uint32_t>(attributes.size()),
+                static_cast<std::uint32_t>(attributes.size()),
                 attributes.data());
 
             // 3. Input Assembly State
-            vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList, VK_FALSE);
+            vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList, false);
 
             // 4. Viewport & Scissor State
             vk::PipelineViewportStateCreateInfo viewportState({}, 1, nullptr, 1, nullptr);
 
             // 5. Rasterization State
             vk::PipelineRasterizationStateCreateInfo rasterizer{};
-            rasterizer.depthClampEnable = VK_FALSE;
-            rasterizer.rasterizerDiscardEnable = VK_FALSE;
+            rasterizer.depthClampEnable = false;
+            rasterizer.rasterizerDiscardEnable = false;
             rasterizer.polygonMode = vk::PolygonMode::eFill;
             rasterizer.lineWidth = 1.0f;
             rasterizer.cullMode = specification.cullMode;
             rasterizer.frontFace = specification.frontFace;
-            rasterizer.depthBiasEnable = VK_FALSE;
+            rasterizer.depthBiasEnable = false;
 
             // 6. Multisample State
             vk::PipelineMultisampleStateCreateInfo multisampling{};
-            multisampling.sampleShadingEnable = VK_FALSE;
+            multisampling.sampleShadingEnable = false;
             multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
 
             // 7. Depth/Stencil State
             vk::PipelineDepthStencilStateCreateInfo depthStencil{};
             if (specification.depthFormat != vk::Format::eUndefined)
             {
-                depthStencil.depthTestEnable = VK_TRUE;
-                depthStencil.depthWriteEnable = VK_TRUE;
+                depthStencil.depthTestEnable = true;
+                depthStencil.depthWriteEnable = true;
                 depthStencil.depthCompareOp = vk::CompareOp::eLess;
-                depthStencil.depthBoundsTestEnable = VK_FALSE;
-                depthStencil.stencilTestEnable = VK_FALSE;
+                depthStencil.depthBoundsTestEnable = false;
+                depthStencil.stencilTestEnable = false;
             }
             else
             {
-                depthStencil.depthTestEnable = VK_FALSE;
-                depthStencil.depthWriteEnable = VK_FALSE;
+                depthStencil.depthTestEnable = false;
+                depthStencil.depthWriteEnable = false;
             }
 
             // 8. Color Blend Attachment State
@@ -277,7 +277,7 @@ namespace GPP
             colorBlendAttachment.alphaBlendOp = vk::BlendOp::eAdd;
 
             vk::PipelineColorBlendStateCreateInfo colorBlending{};
-            colorBlending.logicOpEnable = VK_FALSE;
+            colorBlending.logicOpEnable = false;
             colorBlending.logicOp = vk::LogicOp::eCopy;
             colorBlending.attachmentCount = 1;
             colorBlending.pAttachments = &colorBlendAttachment;
@@ -287,17 +287,17 @@ namespace GPP
                 vk::DynamicState::eViewport,
                 vk::DynamicState::eScissor
             };
-            vk::PipelineDynamicStateCreateInfo dynamicState({}, static_cast<uint32_t>(dynamicStates.size()),
+            vk::PipelineDynamicStateCreateInfo dynamicState({}, static_cast<std::uint32_t>(dynamicStates.size()),
                                                             dynamicStates.data());
 
             // 10. Build reflected descriptor set and push-constant layout.
-            uint32_t setCount = 0;
+            std::uint32_t setCount = 0;
             for (const auto& descriptor : reflection.descriptorBindings)
             {
                 setCount = std::max(setCount, descriptor.set + 1);
             }
             m_DescriptorSetLayouts.resize(setCount);
-            for (uint32_t set = 0; set < setCount; ++set)
+            for (std::uint32_t set = 0; set < setCount; ++set)
             {
                 std::vector<vk::DescriptorSetLayoutBinding> bindings;
                 for (const auto& descriptor : reflection.descriptorBindings)
@@ -309,7 +309,7 @@ namespace GPP
                         ToVulkanShaderStages(descriptor.stages));
                 }
                 vk::DescriptorSetLayoutCreateInfo setInfo(
-                    {}, static_cast<uint32_t>(bindings.size()), bindings.data());
+                    {}, static_cast<std::uint32_t>(bindings.size()), bindings.data());
                 m_DescriptorSetLayouts[set] = logicalDevice.createDescriptorSetLayout(setInfo);
             }
             std::vector<vk::PushConstantRange> pushConstants;
@@ -319,8 +319,8 @@ namespace GPP
                 pushConstants.emplace_back(ToVulkanShaderStages(range.stages), range.offset, range.size);
             }
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
-                {}, static_cast<uint32_t>(m_DescriptorSetLayouts.size()),
-                m_DescriptorSetLayouts.data(), static_cast<uint32_t>(pushConstants.size()),
+                {}, static_cast<std::uint32_t>(m_DescriptorSetLayouts.size()),
+                m_DescriptorSetLayouts.data(), static_cast<std::uint32_t>(pushConstants.size()),
                 pushConstants.data());
             m_PipelineLayout = logicalDevice.createPipelineLayout(pipelineLayoutInfo);
 

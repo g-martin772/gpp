@@ -1,10 +1,9 @@
 module;
-#include <vulkan/vulkan.hpp>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 module GPP.Graphics;
 
 import std;
+import glm;
+import vulkan;
 import GPP.Core;
 import :Renderer;
 
@@ -79,8 +78,8 @@ namespace GPP
             {
                 std::scoped_lock lock(m_RenderQueueMutex);
                 m_PendingResize[event.Window] = glm::uvec2{
-                    static_cast<uint32_t>(std::max(event.Width, 1)),
-                    static_cast<uint32_t>(std::max(event.Height, 1))
+                    static_cast<std::uint32_t>(std::max(event.Width, 1)),
+                    static_cast<std::uint32_t>(std::max(event.Height, 1))
                 };
             }, EventDelivery::Async, EventTarget::Render);
         m_RenderThread = std::thread([this, stopToken]()
@@ -109,7 +108,7 @@ namespace GPP
         m_FileSystem->RegisterAssetDirectory("shaders", m_FileSystem->GetBinaryDirectory() / ".." / "shaders");
 
         m_MainWindowResources.Window = m_WindowManager->CreateWindow(*m_WindowOptions).get();
-        VkSurfaceKHR surface;
+        vk::SurfaceKHR surface;
         if (!m_MainWindowResources.Window->CreateVulkanSurface(
             m_VulkanContext->GetInstance(), &surface).get())
         {
@@ -165,10 +164,10 @@ namespace GPP
         }
 
         m_RenderFinishedSemaphores.clear();
-        const uint32_t imageCount = m_MainWindowResources.SwapChain->GetImageCount();
+        const std::uint32_t imageCount = m_MainWindowResources.SwapChain->GetImageCount();
         m_SwapchainImageLayouts.assign(imageCount, vk::ImageLayout::eUndefined);
         m_RenderFinishedSemaphores.reserve(imageCount);
-        for (uint32_t i = 0; i < imageCount; ++i)
+        for (std::uint32_t i = 0; i < imageCount; ++i)
         {
             m_RenderFinishedSemaphores.emplace_back(VulkanSemaphore(m_MainWindowResources.Device->GetDevice()));
         }
@@ -278,7 +277,7 @@ namespace GPP
 
             swapchain->AcquireNextImage(
                 frame.ImageAvailableSemaphore.GetSemaphore(),
-                VK_NULL_HANDLE
+                nullptr
             );
 
             auto imageIndex = swapchain->GetCurrentImageIndex();

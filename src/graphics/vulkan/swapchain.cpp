@@ -1,9 +1,7 @@
-module;
-#include <vulkan/vulkan.hpp>
-#include <glm/glm.hpp>
 module GPP.Graphics;
 
-import std;
+import glm;
+import vulkan;
 import GPP.Core;
 import :Vulkan.Swapchain;
 
@@ -13,7 +11,7 @@ namespace GPP
                                      const std::shared_ptr<Logger>& logger,
                                      glm::uvec2 size,
                                      vk::SurfaceKHR surface,
-                                     uint32_t framesInFlight)
+                                     std::uint32_t framesInFlight)
         : m_Extent(size.x, size.y), m_Surface(surface), m_FramesInFlight(framesInFlight),
           m_Device(device), m_Logger(logger)
     {
@@ -29,7 +27,7 @@ namespace GPP
         DestroySwapChain();
     }
 
-    void VulkanSwapChain::AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence, uint64_t timeout)
+    void VulkanSwapChain::AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence, std::uint64_t timeout)
     {
         const vk::Result result =
             m_Device->GetDevice()
@@ -43,7 +41,7 @@ namespace GPP
 
     void VulkanSwapChain::AdvanceSemaphoreIndex()
     {
-        m_SemaphoreIndex = (m_SemaphoreIndex + 1) % static_cast<uint32_t>(m_Images.size());
+        m_SemaphoreIndex = (m_SemaphoreIndex + 1) % static_cast<std::uint32_t>(m_Images.size());
     }
 
     void VulkanSwapChain::SetVSync(bool enabled)
@@ -128,7 +126,7 @@ namespace GPP
             }
         }
 
-        if (m_Device->GetSurfaceCapabilities().currentExtent.width != UINT32_MAX)
+        if (m_Device->GetSurfaceCapabilities().currentExtent.width != -1)
             m_Extent = m_Device->GetSurfaceCapabilities().currentExtent;
 
         if (m_FramesInFlight > m_Device->GetSurfaceCapabilities().maxImageCount)
@@ -146,7 +144,7 @@ namespace GPP
         if (m_Device->GetQueueIndices().Graphics != m_Device->GetQueueIndices().Present)
         {
             createInfo.imageSharingMode = vk::SharingMode::eConcurrent;
-            const uint32_t queueIndices[] = {m_Device->GetQueueIndices().Graphics, m_Device->GetQueueIndices().Present};
+            const std::uint32_t queueIndices[] = {m_Device->GetQueueIndices().Graphics, m_Device->GetQueueIndices().Present};
             createInfo.queueFamilyIndexCount = 2;
             createInfo.pQueueFamilyIndices = queueIndices;
         }
@@ -162,7 +160,7 @@ namespace GPP
         createInfo.preTransform = m_Device->GetSurfaceCapabilities().currentTransform;
         createInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         createInfo.presentMode = presentMode;
-        createInfo.clipped = VK_TRUE;
+        createInfo.clipped = false;
         createInfo.oldSwapchain = oldSwapchain;
         // Is this worth being checked out? -- later me: YES, 10x-15x faster then full recreation
 
@@ -227,6 +225,6 @@ namespace GPP
         m_Views.clear();
         m_Images.clear();
         m_Device->GetDevice().destroySwapchainKHR(m_SwapChain);
-        m_SwapChain = VK_NULL_HANDLE;
+        m_SwapChain = nullptr;
     }
 }

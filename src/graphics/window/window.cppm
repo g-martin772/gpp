@@ -5,6 +5,7 @@ module;
 export module GPP.Graphics:Windowing.Window;
 
 import std;
+import vulkan;
 import GPP.Core;
 import :Windowing.Events;
 
@@ -50,7 +51,7 @@ namespace GPP
         [[nodiscard]] Task<void> SetSize(int width, int height) noexcept;
         [[nodiscard]] Task<std::string> GetTitle() const noexcept;
         [[nodiscard]] Task<void> SetTitle(const std::string& title) noexcept;
-        [[nodiscard]] Task<bool> CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* outSurface) const noexcept;
+        [[nodiscard]] Task<bool> CreateVulkanSurface(VkInstance instance, vk::SurfaceKHR* outSurface) const noexcept;
     private:
         explicit Window(SDL_Window* window);
         friend class WindowManager;

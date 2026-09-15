@@ -79,10 +79,12 @@ namespace GPP
         co_return;
     }
 
-    Task<bool> Window::CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* outSurface) const noexcept
+    Task<bool> Window::CreateVulkanSurface(VkInstance instance, vk::SurfaceKHR* outSurface) const noexcept
     {
         co_await ResumeOn(Application::Instance());
-        co_return SDL_Vulkan_CreateSurface(m_Window, instance, nullptr, outSurface);
+        const auto oldOutSurface = reinterpret_cast<VkSurfaceKHR*>(outSurface);
+        auto result = SDL_Vulkan_CreateSurface(m_Window, instance, nullptr, oldOutSurface);
+        co_return result;
     }
 
     Task<void> Window::DestroyWindow()
