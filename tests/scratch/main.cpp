@@ -27,8 +27,10 @@ public:
 private:
     Task<void> Run()
     {
+        co_await ResumeOn(ThreadPool::Instance());
         co_await m_WM->AwaitReady();
         //co_await m_WM->CreateWindow(*m_WO);
+        co_await DelayAsync(std::chrono::seconds(1));
         //co_await m_WM->ShowMessageBox("Test", "This is a test message.");
         co_return;
     }
@@ -43,17 +45,16 @@ int main(int argc, char* argv[])
     Logger::LogInfo("[App] Starting Scratch");
     Logger::LogInfo("[App] Main Thread ID: {}", std::this_thread::get_id());
 
-    auto builder = GuiApplication::CreateBuilder();
+    auto builder = GuiApplicationBuilder();
 
     builder.Configuration
-           .AddJsonFile("config.json", &builder.FS)
+           .AddJsonFile("tests/scratch/config.json")
            .AddCommandLine(argc, argv)
            .AddEnvironmentVariables();
 
-    builder.Services.Configure<WindowOptions>("Graphics:Window");
     builder.Services.AddHostedService<TestService>();
 
     auto app = builder.Build();
 
-    return app.Run();
+    return app->Run();
 }

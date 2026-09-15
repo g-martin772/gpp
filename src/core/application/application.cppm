@@ -6,10 +6,9 @@ import :Logger;
 import :IO.File;
 export import :Application.Config;
 
+
 namespace GPP
 {
-    export class ApplicationBuilder;
-
     export class Application
     {
     public:
@@ -43,7 +42,8 @@ namespace GPP
         std::mutex m_Mutex;
         bool m_Running;
 
-        friend class ApplicationBuilder;
+        template <typename U> requires std::is_base_of_v<Application, U>
+        friend class builder;
     };
 
     export struct ResumeOnApplicationAwaiter
@@ -56,50 +56,5 @@ namespace GPP
 
     export ResumeOnApplicationAwaiter ResumeOn(Application& app);
 
-    class ApplicationBuilder
-    {
-    public:
-        ApplicationBuilder();
-        virtual ~ApplicationBuilder() = default;
 
-        ServiceCollection Services{};
-        ConfigurationBuilder Configuration{};
-        FileSystem FS{};
-
-        virtual Application Build();
-    };
-
-
-    export class CliApplicationBuilder : public ApplicationBuilder
-    {
-    public:
-        CliApplicationBuilder();
-        Application Build() override;
-    };
-
-    export class WebApplicationBuilder : public ApplicationBuilder
-    {
-    public:
-        WebApplicationBuilder();
-        Application Build() override;
-    };
-
-    export class App
-    {
-    public:
-        static ApplicationBuilder CreateBuilder()
-        {
-            return ApplicationBuilder();
-        }
-
-        static CliApplicationBuilder CreateCliBuilder()
-        {
-            return CliApplicationBuilder();
-        }
-
-        static WebApplicationBuilder CreateWebBuilder()
-        {
-            return WebApplicationBuilder();
-        }
-    };
 }

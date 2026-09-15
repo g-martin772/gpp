@@ -13,15 +13,15 @@ namespace GPP
 
         Services.AddHostedService<WindowManager>();
         Services.AddHostedService<Renderer>();
+
+        Services.Configure<WindowOptions>("GPP:Graphics:Window");
     }
 
-    Application GuiApplicationBuilder::Build()
+    std::shared_ptr<GuiApplication> GuiApplicationBuilder::Build()
     {
-        return ApplicationBuilder::Build();
-    }
-
-    GuiApplicationBuilder GuiApplication::CreateBuilder()
-    {
-        return GuiApplicationBuilder();
+        auto config = Configuration.Build();
+        Services.ApplyConfiguration(*config);
+        auto app = std::make_shared<GuiApplication>(Services.Build(), std::move(config));
+        return app;
     }
 }

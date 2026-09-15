@@ -4,6 +4,7 @@ export import :Threading;
 export import :Types;
 export import :DI;
 export import :Application;
+export import :Application.Builder;
 export import :IO;
 export import :Events;
 export import :Math;

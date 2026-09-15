@@ -212,50 +212,21 @@ namespace GPP
         return ResumeOnApplicationAwaiter{.app = &app};
     }
 
-    ApplicationBuilder::ApplicationBuilder()
-    {
-        Services.AddSingleton<Logger>([](ServiceProvider& _)
-        {
-            auto logger = std::make_shared<Logger>();
-            logger->CreateConsoleLogger("GPP APP");
-#ifdef NDEBUG
-            logger->SetLevel(LogLevel::Info);
-#else
-            logger->SetLevel(LogLevel::Trace);
-#endif
-            return logger;
-        });
-
-        Services.AddSingleton<IFileSystem, FileSystem>([this](ServiceProvider& _)
-        {
-            return std::make_shared<FileSystem>(FS);
-        });
-        Services.AddSingleton<EventDispatcher>();
-    }
-
-    Application ApplicationBuilder::Build()
-    {
-        auto config = Configuration.Build();
-        Services.ApplyConfiguration(*config);
-        return Application(Services.Build(), std::move(config));
-    }
-
-
     CliApplicationBuilder::CliApplicationBuilder()
     {
     }
 
-    Application CliApplicationBuilder::Build()
+    std::shared_ptr<Application> CliApplicationBuilder::Build()
     {
-        return ApplicationBuilder::Build();
+        return builder::Build();
     }
 
     WebApplicationBuilder::WebApplicationBuilder()
     {
     }
 
-    Application WebApplicationBuilder::Build()
+    std::shared_ptr<Application> WebApplicationBuilder::Build()
     {
-        return ApplicationBuilder::Build();
+        return builder::Build();
     }
 }

@@ -86,14 +86,14 @@ namespace GPP
         }
     }
 
-    void CommandLineProvider::Load(std::unordered_map<std::string, std::string>& data)
+    void CommandLineProvider::Load(std::unordered_map<std::string, std::string>& data, IFileSystem* fs)
     {
         for (const auto& [key, val] : m_Args) {
             data[key] = val;
         }
     }
 
-    void EnvironmentVariablesProvider::Load(std::unordered_map<std::string, std::string>& data)
+    void EnvironmentVariablesProvider::Load(std::unordered_map<std::string, std::string>& data, IFileSystem* fs)
     {
 #ifdef _WIN32
         char** envs = _environ;
@@ -124,12 +124,12 @@ namespace GPP
         }
     }
 
-    void JsonConfigurationProvider::Load(std::unordered_map<std::string, std::string>& data)
+    void JsonConfigurationProvider::Load(std::unordered_map<std::string, std::string>& data, IFileSystem* fs)
     {
         auto path = m_FilePath;
 
-        if (m_FileSystem) {
-            path = m_FileSystem->ResolvePath(m_FilePath);
+        if (fs) {
+            path = fs->ResolvePath(m_FilePath);
         }
 
         std::ifstream file(m_FilePath);
@@ -182,13 +182,13 @@ namespace GPP
         return *this;
     }
 
-    ConfigurationBuilder& ConfigurationBuilder::AddJsonFile(std::string filePath, IFileSystem* fs)
+    ConfigurationBuilder& ConfigurationBuilder::AddJsonFile(std::string filePath)
     {
-        m_Providers.push_back(std::make_unique<JsonConfigurationProvider>(std::move(filePath), fs));
+        m_Providers.push_back(std::make_unique<JsonConfigurationProvider>(std::move(filePath)));
         return *this;
     }
 
-    std::unique_ptr<IConfiguration> ConfigurationBuilder::Build()
+    std::unique_ptr<IConfiguration> ConfigurationBuilder::Build(IFileSystem* fs)
     {
         auto mergedData = std::make_shared<std::unordered_map<std::string, std::string>>();
         for (const auto& provider : m_Providers) {

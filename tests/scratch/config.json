@@ -1,10 +1,12 @@
 {
-  "Graphics": {
-    "Window": {
-      "Width": 1600,
-      "Height": 900,
-      "Fullscreen": true,
-      "Title": "Scratch"
+  "GPP": {
+    "Graphics": {
+      "Window": {
+        "Width": 1600,
+        "Height": 900,
+        "Fullscreen": false,
+        "Title": "Scratch"
+      }
     }
   }
 }
