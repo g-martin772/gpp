@@ -1,7 +1,3 @@
-module;
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
-
 export module GPP.Graphics:Windowing.WindowManager;
 
 import std;
@@ -14,6 +10,8 @@ namespace GPP
     export class WindowManager : public IHostedService
     {
     public:
+        static constexpr WindowId MainWindowId = 6;
+
         using Dependencies = std::tuple<Logger, EventDispatcher>;
         WindowManager(std::shared_ptr<Logger> logger, std::shared_ptr<EventDispatcher> dispatcher);
         ~WindowManager() override;

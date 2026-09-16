@@ -7,6 +7,7 @@ import :Vulkan;
 import :Windowing;
 import :Shader;
 import :HotReload;
+import :Application.Layer;
 
 namespace GPP
 {
@@ -46,6 +47,9 @@ namespace GPP
         ShaderPipelineMetadata GetShaderPipelineMetadata() const;
         std::string GetShaderPipelineError() const;
 
+        void AttachLayerStackToWindow(GuiLayerStack& layerStack, const std::shared_ptr<Window>& window);
+        void AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId);
+
     private:
         void InitializeRenderSystem();
         Task<void> StopRenderSystem();
@@ -84,14 +88,7 @@ namespace GPP
             VulkanFence InFlightFence;
 
             FrameResources() = default;
-
-            explicit FrameResources(VulkanCommandBuffer commandBuffer, vk::Device device) noexcept
-                : CommandBuffer(std::move(commandBuffer)),
-                  ImageAvailableSemaphore(device),
-                  RenderFinishedSemaphore(device),
-                  InFlightFence(device, true)
-            {
-            }
+            FrameResources(VulkanCommandBuffer commandBuffer, vk::Device device) noexcept;
 
             FrameResources(const FrameResources&) = delete;
             FrameResources& operator=(const FrameResources&) = delete;
@@ -115,5 +112,8 @@ namespace GPP
         std::atomic<bool> m_Running{true};
         std::promise<void> m_ReadyPromise;
         std::shared_future<void> m_SharedFuture{m_ReadyPromise.get_future().share()};
+
+        // TODO
+        GuiLayerStack* m_MainLayerStack = nullptr;
     };
 }

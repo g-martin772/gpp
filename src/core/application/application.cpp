@@ -98,6 +98,8 @@ namespace GPP
         const auto logger = m_ServiceProvider.GetRequiredService<Logger>();
         logger->Info("Starting application...");
 
+        OnBoot();
+
         std::vector<Task<void>> startTasks;
         for (auto service : m_HostedServices)
         {
@@ -106,6 +108,9 @@ namespace GPP
         WhenAll(std::move(startTasks)).get();
 
         logger->Info("Application running");
+        OnStart();
+
+        auto lastUpdateTime = std::chrono::high_resolution_clock::now();
 
         while (m_Running)
         {
@@ -123,7 +128,7 @@ namespace GPP
                 }
                 else
                 {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    //std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
 
                 if (!m_Running)
@@ -153,10 +158,13 @@ namespace GPP
             {
                 task();
             }
+
+            OnUpdate(std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - lastUpdateTime).count());
+            lastUpdateTime = std::chrono::high_resolution_clock::now();
         }
 
         logger->Info("Shutdown signal received! Stopping application...");
-
+        OnStop();
         m_StopSource.request_stop();
         std::vector<Task<void>> stopTasks;
         for (auto service : m_HostedServices)

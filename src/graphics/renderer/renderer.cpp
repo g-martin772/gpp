@@ -26,6 +26,13 @@ namespace GPP
         Window = nullptr;
     }
 
+    Renderer::FrameResources::FrameResources(VulkanCommandBuffer commandBuffer, vk::Device device) noexcept: CommandBuffer(std::move(commandBuffer)),
+        ImageAvailableSemaphore(device),
+        RenderFinishedSemaphore(device),
+        InFlightFence(device, true)
+    {
+    }
+
     Renderer::FrameResources::~FrameResources()
     {
     }
@@ -64,6 +71,19 @@ namespace GPP
     std::string Renderer::GetShaderPipelineError() const
     {
         return m_ShaderPipeline ? m_ShaderPipeline->LastError() : std::string{};
+    }
+
+    void Renderer::AttachLayerStackToWindow(GuiLayerStack& layerStack, const std::shared_ptr<Window>& window)
+    {
+        if (window->GetID() != WindowManager::MainWindowId) return;
+
+        m_MainLayerStack = &layerStack;
+        m_MainLayerStack->OnAttach();
+    }
+
+    void Renderer::AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId)
+    {
+        // TODO
     }
 
     Task<void> Renderer::StartAsync(std::stop_token stopToken)
@@ -221,6 +241,9 @@ namespace GPP
 
     Task<void> Renderer::StopRenderSystem()
     {
+        // TODO?
+        if (m_MainLayerStack)
+            m_MainLayerStack->OnDetach();
         co_return;
     }
 
@@ -345,6 +368,10 @@ namespace GPP
                     vk::Rect2D scissor{{0, 0}, swapchain->GetExtent()};
                     rawCmd.setViewport(0, 1, &viewport);
                     rawCmd.setScissor(0, 1, &scissor);
+
+                    // TODO
+                    if (m_MainLayerStack)
+                        m_MainLayerStack->OnRender();
 
                     auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
                     if (pipeline)

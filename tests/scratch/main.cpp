@@ -40,11 +40,56 @@ private:
     std::shared_ptr<Logger> m_Logger;
 };
 
+struct MainLayer : public GuiLayer
+{
+    using Dependencies = std::tuple<Logger>;
+
+    MainLayer(const std::shared_ptr<Logger>& logger) : GuiLayer(logger)
+    {
+    }
+
+    void OnAttach() override
+    {
+        m_Logger->Info("MainLayer attached");
+    }
+
+    void OnRender() override
+    {
+        //m_Logger->Info("Rendering MainLayer");
+    }
+
+    void OnDetach() override
+    {
+        m_Logger->Info("MainLayer detached");
+    }
+};
+
+struct ViewportLayer : public GuiLayer
+{
+    using Dependencies = std::tuple<Logger>;
+
+    ViewportLayer(const std::shared_ptr<Logger>& logger) : GuiLayer(logger)
+    {
+    }
+
+    void OnAttach() override
+    {
+        m_Logger->Info("ViewportLayer attached");
+    }
+
+    void OnRender() override
+    {
+        //m_Logger->Info("Rendering ViewportLayer");
+    }
+
+    void OnDetach() override
+    {
+        m_Logger->Info("ViewportLayer detached");
+    }
+};
+
 int main(int argc, char* argv[])
 {
-    Logger::LogInfo("[App] Starting Scratch");
-    Logger::LogInfo("[App] Main Thread ID: {}", std::this_thread::get_id());
-
     auto builder = GuiApplicationBuilder();
 
     builder.Configuration
@@ -54,7 +99,13 @@ int main(int argc, char* argv[])
 
     builder.Services.AddHostedService<TestService>();
 
+    builder.AddGuiLayer<MainLayer>()
+           .SetWindowTarget(WindowManager::MainWindowId);
+    builder.AddGuiLayer<ViewportLayer>()
+           .SetBufferTarget(5);
+
     auto app = builder.Build();
+
 
     return app->Run();
 }

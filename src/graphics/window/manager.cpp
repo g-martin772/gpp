@@ -95,7 +95,9 @@ namespace GPP
         }
 
         auto wrappedWindow = std::shared_ptr<Window>(new Window(sdlWindow));
-        m_Windows[wrappedWindow->GetID()] = wrappedWindow;
+        auto id = wrappedWindow->GetID();
+        m_Windows[id] = wrappedWindow;
+        m_Logger->Debug("Created window with ID {}: {}x{}, Title: '{}'", id, options.Width, options.Height, options.Title);
 
         co_return wrappedWindow;
     }

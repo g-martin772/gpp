@@ -27,7 +27,12 @@ namespace GPP
         ServiceProvider& GetServiceProvider() noexcept;
         IConfiguration& GetConfiguration();
 
-    private:
+    protected:
+        virtual void OnBoot() {}
+        virtual void OnStart() {}
+        virtual void OnUpdate(float deltaTime) {}
+        virtual void OnStop() {}
+
         static Application* s_Instance;
         static void HandleSignal(int signal);
 
