@@ -7,6 +7,12 @@
         "Fullscreen": false,
         "Title": "Scratch"
       }
+      ,
+      "Render": {
+        "ShaderAssetDirectories": ["shaders"],
+        "EnableShaderHotReload": false,
+        "ShaderHotReloadIntervalMilliseconds": 250
+      }
     }
   }
 }

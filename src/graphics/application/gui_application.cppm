@@ -4,6 +4,8 @@ export import :Application.Layer;
 
 import std;
 import GPP.Core;
+import :RenderConfig;
+import :ShaderAssets;
 
 namespace GPP
 {

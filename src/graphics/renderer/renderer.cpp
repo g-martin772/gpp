@@ -40,6 +40,7 @@ namespace GPP
     Renderer::Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                        const std::shared_ptr<WindowManager>& windowManager,
                        const std::shared_ptr<WindowOptions>& windowOptions,
+                       const std::shared_ptr<RenderOptions>& renderOptions,
                        const std::shared_ptr<Logger>& logger,
                        const std::shared_ptr<IFileSystem>& fileSystem,
                        const std::shared_ptr<InputState>& inputState,
@@ -47,6 +48,7 @@ namespace GPP
         : m_VulkanContext(std::move(vulkanContext)),
           m_WindowManager(std::move(windowManager)),
           m_WindowOptions(std::move(windowOptions)),
+          m_RenderOptions(std::move(renderOptions)),
           m_Logger(std::move(logger)),
           m_FileSystem(std::move(fileSystem)),
           m_InputState(std::move(inputState)),
@@ -206,7 +208,8 @@ namespace GPP
             ShaderPipelineDescription{
                 .vertex = ShaderSource{.path = vertexSource, .stage = ShaderStage::Vertex},
                 .fragment = ShaderSource{.path = fragmentSource, .stage = ShaderStage::Fragment},
-                .enableHotReload = true
+                .pollingInterval = m_RenderOptions->ShaderHotReloadInterval,
+                .enableHotReload = m_RenderOptions->EnableShaderHotReload
             },
             m_FileSystem, m_Dispatcher, m_Logger);
         if (!m_ShaderPipeline->StartOnRenderThread())

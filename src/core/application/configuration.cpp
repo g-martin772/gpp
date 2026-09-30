@@ -132,7 +132,7 @@ namespace GPP
             path = fs->ResolvePath(m_FilePath);
         }
 
-        std::ifstream file(m_FilePath);
+        std::ifstream file(path);
         if (!file.is_open()) throw std::runtime_error("Failed to open JSON configuration file: " + m_FilePath);
 
         try {

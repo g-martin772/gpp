@@ -223,6 +223,16 @@ namespace GPP
             return words;
         }
 
+        std::uint64_t HashBinary(std::span<const std::byte> bytes, const ShaderSource& shader)
+        {
+            std::string key(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            key.push_back('\0');
+            key += std::to_string(static_cast<int>(shader.stage));
+            key.push_back('\0');
+            key += shader.entryPoint;
+            return HashBytes(key);
+        }
+
         void WriteCache(const std::filesystem::path& path, std::span<const std::uint32_t> words)
         {
             std::error_code error;
@@ -231,6 +241,7 @@ namespace GPP
             {
                 return;
             }
+
             const auto temporary = path.string() + ".tmp";
             std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
             if (!file)
@@ -322,6 +333,45 @@ namespace GPP
             throw std::invalid_argument("Shader source path cannot be empty.");
         }
         const auto resolvedPath = m_FileSystem->ResolvePath(source.path);
+        if (resolvedPath.extension() == ".spv")
+        {
+            const auto bytes = m_FileSystem->ReadAllBytes(resolvedPath);
+            if (bytes.empty() || bytes.size() % sizeof(std::uint32_t) != 0)
+            {
+                throw std::runtime_error(
+                    std::format("Precompiled shader is not valid SPIR-V: {}", resolvedPath.string()));
+            }
+            std::vector<std::uint32_t> spirv(bytes.size() / sizeof(std::uint32_t));
+            std::memcpy(spirv.data(), bytes.data(), bytes.size());
+            if (spirv.front() != 0x07230203u)
+            {
+                throw std::runtime_error(
+                    std::format("Precompiled shader has an invalid SPIR-V header: {}",
+                                resolvedPath.string()));
+            }
+            try
+            {
+                auto reflection = Reflect(spirv, source.stage);
+                if (m_Logger)
+                {
+                    m_Logger->Info("Loaded precompiled shader: {} ({} SPIR-V words)",
+                                   resolvedPath.string(), spirv.size());
+                }
+                return CompiledShader{
+                    .source = source,
+                    .resolvedPath = resolvedPath,
+                    .cachePath = {},
+                    .spirv = std::move(spirv),
+                    .reflection = std::move(reflection),
+                    .sourceHash = HashBinary(bytes, source)
+                };
+            }
+            catch (const std::exception& exception)
+            {
+                throw std::runtime_error(std::format("Shader reflection failed for {}: {}",
+                                                     resolvedPath.string(), exception.what()));
+            }
+        }
         const auto sourceText = m_FileSystem->ReadAllText(resolvedPath);
         return CompileText(source, options, resolvedPath, sourceText);
     }
@@ -417,6 +467,10 @@ namespace GPP
                                                        ShaderCompileOptions options) const
     {
         co_await ResumeOn(ThreadPool::Instance());
+        if (m_FileSystem->ResolvePath(source.path).extension() == ".spv")
+        {
+            co_return Compile(source, options);
+        }
         const auto resolvedPath = m_FileSystem->ResolvePath(source.path);
         const auto sourceText = co_await m_FileSystem->ReadAllTextAsync(resolvedPath);
         co_return CompileText(source, options, resolvedPath, sourceText);

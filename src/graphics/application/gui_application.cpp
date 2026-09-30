@@ -62,9 +62,11 @@ namespace GPP
         Services.AddSingleton<InputState>();
 
         Services.AddHostedService<WindowManager>();
+        Services.AddHostedService<ShaderAssetCatalog>();
         Services.AddHostedService<Renderer>();
 
         Services.Configure<WindowOptions>("GPP:Graphics:Window");
+        Services.Configure<RenderOptions>("GPP:Graphics:Render");
     }
 
     std::shared_ptr<GuiApplication> GuiApplicationBuilder::Build()

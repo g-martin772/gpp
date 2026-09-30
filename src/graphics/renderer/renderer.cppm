@@ -7,6 +7,7 @@ import :Vulkan;
 import :Windowing;
 import :Shader;
 import :HotReload;
+import :RenderConfig;
 import :Application.Layer;
 
 namespace GPP
@@ -17,11 +18,13 @@ namespace GPP
     export class Renderer : public IHostedService
     {
     public:
-        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, Logger, IFileSystem, InputState, EventDispatcher>;
+        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, RenderOptions,
+                                         Logger, IFileSystem, InputState, EventDispatcher>;
 
         Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                  const std::shared_ptr<WindowManager>& windowManager,
                  const std::shared_ptr<WindowOptions>& windowOptions,
+                 const std::shared_ptr<RenderOptions>& renderOptions,
                  const std::shared_ptr<Logger>& logger,
                  const std::shared_ptr<IFileSystem>& fileSystem,
                  const std::shared_ptr<InputState>& inputState,
@@ -58,6 +61,7 @@ namespace GPP
         std::shared_ptr<VulkanContext> m_VulkanContext;
         std::shared_ptr<WindowManager> m_WindowManager;
         std::shared_ptr<WindowOptions> m_WindowOptions;
+        std::shared_ptr<RenderOptions> m_RenderOptions;
         std::shared_ptr<IFileSystem> m_FileSystem;
         std::shared_ptr<Logger> m_Logger;
         std::shared_ptr<InputState> m_InputState;

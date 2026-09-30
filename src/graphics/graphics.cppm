@@ -3,5 +3,7 @@ export import :Windowing;
 export import :Application;
 export import :Vulkan;
 export import :Renderer;
+export import :RenderConfig;
 export import :Shader;
+export import :ShaderAssets;
 export import :HotReload;

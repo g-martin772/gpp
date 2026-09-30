@@ -110,4 +110,5 @@ namespace GPP
         bool m_CompilationInFlight = false;
     };
 
+    export using ShaderProgram = ShaderPipeline;
 }
