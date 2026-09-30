@@ -6,18 +6,14 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
 layout(location = 0) out vec3 fragColor;
 
-struct PushConstants
+layout(push_constant) uniform PushConstants
 {
-    mat4 viewProjection;
-    mat4 model;
-    float time;
-};
-
-layout(push_constant) uniform PushConstants pc;
+    FrameData data;
+} pc;
 
 void main()
 {
-    gl_Position = pc.viewProjection * pc.model * vec4(inPosition, 1.0);
-    float pulse = ShaderPulse(pc.time);
+    gl_Position = pc.data.viewProjection * pc.data.model * vec4(inPosition, 1.0);
+    float pulse = ShaderPulse(pc.data.time);
     fragColor = inColor * pulse;
 }

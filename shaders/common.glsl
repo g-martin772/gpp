@@ -1,4 +1,9 @@
-
+struct FrameData
+{
+    mat4 viewProjection;
+    mat4 model;
+    float time;
+};
 
 float ShaderPulse(float time)
 {

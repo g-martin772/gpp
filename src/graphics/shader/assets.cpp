@@ -8,15 +8,19 @@ namespace GPP
 {
     ShaderAssetCatalog::ShaderAssetCatalog(std::shared_ptr<IFileSystem> fileSystem,
                                            std::shared_ptr<RenderOptions> options,
-                                           std::shared_ptr<Logger> logger)
+                                           std::shared_ptr<Logger> logger,
+                                           std::shared_ptr<EventDispatcher> dispatcher)
         : m_FileSystem(std::move(fileSystem)),
           m_Options(std::move(options)),
           m_Logger(std::move(logger)),
+          m_Dispatcher(std::move(dispatcher)),
+          m_Watcher(m_FileSystem, m_Dispatcher, m_Logger),
           m_Compiler(m_FileSystem, m_Logger)
     {
-        if (!m_FileSystem || !m_Options)
+        if (!m_FileSystem || !m_Options || !m_Dispatcher)
         {
-            throw std::invalid_argument("ShaderAssetCatalog requires file system and render options.");
+            throw std::invalid_argument(
+                "ShaderAssetCatalog requires file system, render options, and dispatcher.");
         }
     }
 
@@ -54,6 +58,7 @@ namespace GPP
             if (m_Logger) m_Logger->Warn("Shader asset directory does not exist: {}", directory.string());
             return;
         }
+
         for (const auto& entry : std::filesystem::recursive_directory_iterator(directory, error))
         {
             if (error)
@@ -80,6 +85,16 @@ namespace GPP
         }
     }
 
+    ShaderCompileOptions ShaderAssetCatalog::GetCompileOptions() const
+    {
+        ShaderCompileOptions options;
+        for (const auto& directory : m_Options->ShaderAssetDirectories)
+        {
+            options.includeDirectories.push_back(m_FileSystem->ResolvePath(directory));
+        }
+        return options;
+    }
+
     Task<void> ShaderAssetCatalog::StartAsync(std::stop_token stopToken)
     {
         co_await ResumeOn(ThreadPool::Instance());
@@ -89,12 +104,7 @@ namespace GPP
         }
         try
         {
-            ShaderCompileOptions compileOptions;
-            for (const auto& directory : m_Options->ShaderAssetDirectories)
-            {
-                compileOptions.includeDirectories.push_back(
-                    m_FileSystem->ResolvePath(directory));
-            }
+            const auto compileOptions = GetCompileOptions();
             for (const auto& directory : m_Options->ShaderAssetDirectories)
             {
                 const auto resolved = m_FileSystem->ResolvePath(directory);
@@ -103,8 +113,42 @@ namespace GPP
             {
                 std::scoped_lock lock(m_Mutex);
                 m_Ready = true;
+                RefreshMetadataLocked();
+                ++m_Generation;
             }
             m_Condition.notify_all();
+            if (m_Options->EnableShaderHotReload)
+            {
+                for (const auto& path : GetShaderPaths())
+                {
+                    m_Watcher.Watch(path);
+                }
+                for (const auto& metadata : GetAvailableShaders())
+                {
+                    if (const CompiledShader* shader = nullptr;
+                        TryGetShader(metadata.path, shader))
+                    {
+                        for (const auto& dependency : shader->dependencies)
+                        {
+                            m_Watcher.Watch(dependency);
+                        }
+                    }
+                }
+                m_FileSubscription = m_Dispatcher->Subscribe<ShaderFileChangedEvent>(
+                    [this](const ShaderFileChangedEvent& event)
+                    {
+                        ThreadPool::Instance().Submit([this, path = event.path]
+                        {
+                            ReloadChanged(path);
+                        });
+                    });
+                m_Watcher.StartAsync(m_Options->ShaderHotReloadInterval,
+                                    stopToken).get();
+            }
+            m_Dispatcher->Publish(ShaderAssetsUpdatedEvent{
+                .generation = m_Generation,
+                .changedPaths = GetShaderPaths()
+            });
             if (m_Logger)
             {
                 m_Logger->Info("Shader asset catalog ready: {} shaders compiled",
@@ -126,6 +170,8 @@ namespace GPP
 
     Task<void> ShaderAssetCatalog::StopAsync()
     {
+        m_FileSubscription.Reset();
+        m_Watcher.StopAsync().get();
         std::scoped_lock lock(m_Mutex);
         m_Stopping = true;
         m_Condition.notify_all();
@@ -168,21 +214,7 @@ namespace GPP
     std::vector<ShaderAssetMetadata> ShaderAssetCatalog::GetAvailableShaders() const
     {
         std::scoped_lock lock(m_Mutex);
-        std::vector<ShaderAssetMetadata> result;
-        result.reserve(m_Shaders.size());
-        for (const auto& entry : m_Shaders)
-        {
-            const auto& shader = entry.second;
-            result.push_back({
-                .path = shader.resolvedPath,
-                .stage = shader.source.stage,
-                .entryPoint = shader.source.entryPoint,
-                .sourceHash = shader.sourceHash,
-                .reflection = shader.reflection
-            });
-        }
-        std::ranges::sort(result, {}, &ShaderAssetMetadata::path);
-        return result;
+        return m_Metadata;
     }
 
     std::vector<std::filesystem::path> ShaderAssetCatalog::GetShaderPaths() const
@@ -195,5 +227,61 @@ namespace GPP
     {
         std::scoped_lock lock(m_Mutex);
         return m_Ready;
+    }
+
+    void ShaderAssetCatalog::ReloadChanged(const std::filesystem::path& changedPath)
+    {
+        std::vector<std::filesystem::path> changed{changedPath};
+        std::vector<std::pair<std::string, CompiledShader>> replacements;
+        const auto normalizedChangedPath = changedPath.lexically_normal();
+        {
+            std::scoped_lock lock(m_Mutex);
+            for (const auto& [key, shader] : m_Shaders)
+            {
+                const auto matches = std::ranges::find(
+                    shader.dependencies, normalizedChangedPath) != shader.dependencies.end() ||
+                    shader.resolvedPath.lexically_normal() == normalizedChangedPath;
+                if (matches)
+                {
+                    replacements.emplace_back(key, m_Compiler.Compile(
+                        shader.source, GetCompileOptions()));
+                }
+            }
+        }
+        if (replacements.empty())
+        {
+            return;
+        }
+        {
+            std::scoped_lock lock(m_Mutex);
+            for (auto& [key, shader] : replacements)
+            {
+                m_Shaders[key] = std::move(shader);
+            }
+            RefreshMetadataLocked();
+            ++m_Generation;
+        }
+        m_Dispatcher->Publish(ShaderAssetsUpdatedEvent{
+            .generation = m_Generation,
+            .changedPaths = std::move(changed)
+        });
+    }
+
+    void ShaderAssetCatalog::RefreshMetadataLocked()
+    {
+        m_Metadata.clear();
+        m_Metadata.reserve(m_Shaders.size());
+        for (const auto& entry : m_Shaders)
+        {
+            const auto& shader = entry.second;
+            m_Metadata.push_back({
+                .path = shader.resolvedPath,
+                .stage = shader.source.stage,
+                .entryPoint = shader.source.entryPoint,
+                .sourceHash = shader.sourceHash,
+                .reflection = shader.reflection
+            });
+        }
+        std::ranges::sort(m_Metadata, {}, &ShaderAssetMetadata::path);
     }
 }

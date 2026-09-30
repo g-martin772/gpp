@@ -16,14 +16,21 @@ namespace GPP
         ShaderReflection reflection;
     };
 
+    export struct ShaderAssetsUpdatedEvent
+    {
+        std::uint64_t generation = 0;
+        std::vector<std::filesystem::path> changedPaths;
+    };
+
     export class ShaderAssetCatalog : public IHostedService
     {
     public:
-        using Dependencies = std::tuple<IFileSystem, RenderOptions, Logger>;
+        using Dependencies = std::tuple<IFileSystem, RenderOptions, Logger, EventDispatcher>;
 
         ShaderAssetCatalog(std::shared_ptr<IFileSystem> fileSystem,
                            std::shared_ptr<RenderOptions> options,
-                           std::shared_ptr<Logger> logger);
+                           std::shared_ptr<Logger> logger,
+                           std::shared_ptr<EventDispatcher> dispatcher);
 
         Task<void> StartAsync(std::stop_token stopToken) override;
         Task<void> StopAsync() override;
@@ -38,17 +45,25 @@ namespace GPP
     private:
         void CompileDirectory(const std::filesystem::path& directory,
                               const ShaderCompileOptions& compileOptions);
+        void ReloadChanged(const std::filesystem::path& changedPath);
+        [[nodiscard]] ShaderCompileOptions GetCompileOptions() const;
+        void RefreshMetadataLocked();
         static std::optional<ShaderStage> GetStage(const std::filesystem::path& path);
 
         std::shared_ptr<IFileSystem> m_FileSystem;
         std::shared_ptr<RenderOptions> m_Options;
         std::shared_ptr<Logger> m_Logger;
+        std::shared_ptr<EventDispatcher> m_Dispatcher;
         ShaderCompiler m_Compiler;
+        ShaderFileWatcher m_Watcher;
+        EventSubscription m_FileSubscription;
         mutable std::mutex m_Mutex;
         mutable std::condition_variable m_Condition;
         std::unordered_map<std::string, CompiledShader> m_Shaders;
         std::vector<std::filesystem::path> m_ShaderPaths;
+        std::vector<ShaderAssetMetadata> m_Metadata;
         std::exception_ptr m_StartError;
+        std::uint64_t m_Generation = 0;
         bool m_Ready = false;
         bool m_Stopping = false;
     };
