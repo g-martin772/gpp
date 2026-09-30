@@ -24,6 +24,31 @@ find_package(glm CONFIG REQUIRED)
 find_package(Vulkan REQUIRED COMPONENTS shaderc_combined)
 find_library(SHADERC_SHARED_LIBRARY NAMES shaderc_shared)
 
+include(FetchContent)
+option(GPP_USE_IMGUI_DOCKING "Build ImGui from the official docking branch" ON)
+if (GPP_USE_IMGUI_DOCKING)
+    FetchContent_Declare(
+            imgui_docking
+            GIT_REPOSITORY https://github.com/ocornut/imgui.git
+            GIT_TAG docking
+            GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(imgui_docking)
+    add_library(gpp_imgui STATIC
+            ${imgui_docking_SOURCE_DIR}/imgui.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_tables.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_widgets.cpp
+            ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+            ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
+    target_include_directories(gpp_imgui PUBLIC
+            ${imgui_docking_SOURCE_DIR}
+            ${imgui_docking_SOURCE_DIR}/backends)
+    set_target_properties(gpp_imgui PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(gpp_imgui PUBLIC SDL3::SDL3 Vulkan::Headers)
+else()
+    add_library(gpp_imgui ALIAS imgui::imgui)
+endif()
+
 # ------------------ my stuff ------------------
 
 set(CMAKE_CXX_MODULE_STD 1)
@@ -57,7 +82,8 @@ target_sources(gpp
         BASE_DIRS ${glm_DIR}../../../include/vulkan
         FILES ${glm_DIR}/../../include/vulkan/vulkan.cppm
 )
-target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json imgui::imgui glm::glm)
+target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json gpp_imgui glm::glm)
+target_link_libraries(gpp PUBLIC Vulkan::Vulkan)
 target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Headers GPUOpen::VulkanMemoryAllocator
         spirv-cross-core spirv-cross-glsl)
 if (SHADERC_SHARED_LIBRARY)

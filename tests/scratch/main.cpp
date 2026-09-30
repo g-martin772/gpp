@@ -1,3 +1,5 @@
+#include <imgui.h>
+
 import GPP;
 import std;
 
@@ -6,10 +8,13 @@ using namespace GPP;
 class TestService : public IHostedService
 {
 public:
-    using Dependencies = std::tuple<WindowManager, WindowOptions, Logger>;
+    using Dependencies = std::tuple<WindowManager, WindowOptions, Logger, Renderer>;
 
-    TestService(std::shared_ptr<WindowManager> wm, std::shared_ptr<WindowOptions> wo, std::shared_ptr<Logger> logger)
-        : m_WM(wm), m_WO(wo), m_Logger(logger)
+    TestService(std::shared_ptr<WindowManager> wm,
+                std::shared_ptr<WindowOptions> wo,
+                std::shared_ptr<Logger> logger,
+                std::shared_ptr<Renderer> renderer)
+        : m_WM(wm), m_WO(wo), m_Logger(logger), m_Renderer(renderer)
     {
     }
 
@@ -29,7 +34,13 @@ private:
     {
         co_await ResumeOn(ThreadPool::Instance());
         co_await m_WM->AwaitReady();
-        //co_await m_WM->CreateWindow(*m_WO);
+        co_await m_Renderer->AwaitReady();
+        WindowOptions secondOptions = *m_WO;
+        secondOptions.Title = "GPP Secondary Window";
+        secondOptions.Width = 800;
+        secondOptions.Height = 600;
+        m_SecondaryWindow = co_await m_WM->CreateWindow(secondOptions);
+        m_Logger->Info("Secondary engine window created with ID {}", m_SecondaryWindow->GetID());
         co_await DelayAsync(std::chrono::seconds(1));
         //co_await m_WM->ShowMessageBox("Test", "This is a test message.");
         co_return;
@@ -38,13 +49,16 @@ private:
     std::shared_ptr<WindowManager> m_WM;
     std::shared_ptr<WindowOptions> m_WO;
     std::shared_ptr<Logger> m_Logger;
+    std::shared_ptr<Renderer> m_Renderer;
+    std::shared_ptr<Window> m_SecondaryWindow;
 };
 
 struct MainLayer : public GuiLayer
 {
-    using Dependencies = std::tuple<Logger>;
+    using Dependencies = std::tuple<Logger, Renderer>;
 
-    MainLayer(const std::shared_ptr<Logger>& logger) : GuiLayer(logger)
+    MainLayer(const std::shared_ptr<Logger>& logger, const std::shared_ptr<Renderer>& renderer)
+        : GuiLayer(logger), m_Renderer(renderer)
     {
     }
 
@@ -62,6 +76,26 @@ struct MainLayer : public GuiLayer
     {
         m_Logger->Info("MainLayer detached");
     }
+
+    void OnUiRender() override
+    {
+        ImGui::Begin("GPP Dockspace");
+        ImGui::TextUnformatted("Main engine window");
+        ImGui::TextUnformatted("The installed ImGui build lacks docking support.");
+        if (const auto target = m_Renderer->GetRenderTargetInfo(5))
+        {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Offscreen cube render target");
+            ImGui::Image(
+                reinterpret_cast<ImTextureID>(target->ImGuiTexture),
+                ImVec2(static_cast<float>(target->Extent.width),
+                       static_cast<float>(target->Extent.height)));
+        }
+        ImGui::End();
+    }
+
+private:
+    std::shared_ptr<Renderer> m_Renderer;
 };
 
 struct ViewportLayer : public GuiLayer

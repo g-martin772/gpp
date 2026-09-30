@@ -1,4 +1,9 @@
 module;
+#include <SDL3/SDL.h>
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_vulkan.h>
+
 module GPP.Graphics;
 
 import std;
@@ -9,6 +14,52 @@ import :Renderer;
 
 namespace GPP
 {
+    namespace
+    {
+        ImGuiKey ToImGuiKey(const KeyCode key)
+        {
+            switch (key)
+            {
+                case KeyCode::Return: return ImGuiKey_Enter;
+                case KeyCode::Escape: return ImGuiKey_Escape;
+                case KeyCode::Backspace: return ImGuiKey_Backspace;
+                case KeyCode::Tab: return ImGuiKey_Tab;
+                case KeyCode::Space: return ImGuiKey_Space;
+                case KeyCode::Left: return ImGuiKey_LeftArrow;
+                case KeyCode::Right: return ImGuiKey_RightArrow;
+                case KeyCode::Up: return ImGuiKey_UpArrow;
+                case KeyCode::Down: return ImGuiKey_DownArrow;
+                case KeyCode::A: return ImGuiKey_A;
+                case KeyCode::B: return ImGuiKey_B;
+                case KeyCode::C: return ImGuiKey_C;
+                case KeyCode::D: return ImGuiKey_D;
+                case KeyCode::E: return ImGuiKey_E;
+                case KeyCode::F: return ImGuiKey_F;
+                case KeyCode::G: return ImGuiKey_G;
+                case KeyCode::H: return ImGuiKey_H;
+                case KeyCode::I: return ImGuiKey_I;
+                case KeyCode::J: return ImGuiKey_J;
+                case KeyCode::K: return ImGuiKey_K;
+                case KeyCode::L: return ImGuiKey_L;
+                case KeyCode::M: return ImGuiKey_M;
+                case KeyCode::N: return ImGuiKey_N;
+                case KeyCode::O: return ImGuiKey_O;
+                case KeyCode::P: return ImGuiKey_P;
+                case KeyCode::Q: return ImGuiKey_Q;
+                case KeyCode::R: return ImGuiKey_R;
+                case KeyCode::S: return ImGuiKey_S;
+                case KeyCode::T: return ImGuiKey_T;
+                case KeyCode::U: return ImGuiKey_U;
+                case KeyCode::V: return ImGuiKey_V;
+                case KeyCode::W: return ImGuiKey_W;
+                case KeyCode::X: return ImGuiKey_X;
+                case KeyCode::Y: return ImGuiKey_Y;
+                case KeyCode::Z: return ImGuiKey_Z;
+                default: return ImGuiKey_None;
+            }
+        }
+    }
+
     Renderer::WindowResources::~WindowResources()
     {
         if (Device)
@@ -80,12 +131,66 @@ namespace GPP
         if (window->GetID() != WindowManager::MainWindowId) return;
 
         m_MainLayerStack = &layerStack;
-        m_MainLayerStack->OnAttach();
+        std::scoped_lock lock(m_RenderQueueMutex);
+        m_RenderQueue.push([this]
+        {
+            if (m_MainLayerStack)
+                m_MainLayerStack->OnAttach();
+        });
     }
 
     void Renderer::AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId)
     {
-        // TODO
+        std::scoped_lock lock(m_RenderQueueMutex);
+        m_RenderQueue.push([this, &layerStack, bufferId]
+        {
+            if (m_BufferTargets.contains(bufferId))
+                return;
+
+            auto& target = m_BufferTargets[bufferId];
+            target.LayerStack = &layerStack;
+            target.ColorImage.Create(
+                m_MainWindowResources.Device,
+                VulkanImageSpecification{
+                    .extent = {target.Extent.x, target.Extent.y, 1},
+                    .format = m_MainWindowResources.SwapChain->GetImageFormat(),
+                    .usage = vk::ImageUsageFlagBits::eColorAttachment |
+                             vk::ImageUsageFlagBits::eSampled,
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .createSampler = true,
+                    .debugName = "BufferTargetColor"
+                });
+            const auto depthFormat = m_MainWindowResources.SwapChain->GetDepthImageFormat();
+            target.DepthImage.Create(
+                m_MainWindowResources.Device,
+                VulkanImageSpecification{
+                    .extent = {target.Extent.x, target.Extent.y, 1},
+                    .format = depthFormat,
+                    .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                    .aspectMask = GetImageAspectMask(depthFormat),
+                    .debugName = "BufferTargetDepth"
+                });
+            target.ImGuiTexture = reinterpret_cast<void*>(
+                ImGui_ImplVulkan_AddTexture(
+                    target.ColorImage.GetSampler(),
+                    target.ColorImage.GetImageView(),
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+            target.LayerStack->OnAttach();
+            m_Logger->Info("Created render target {}", bufferId);
+        });
+    }
+
+    std::optional<Renderer::RenderTargetInfo> Renderer::GetRenderTargetInfo(
+        const std::uint32_t bufferId) const
+    {
+        const auto it = m_BufferTargets.find(bufferId);
+        if (it == m_BufferTargets.end())
+            return std::nullopt;
+        return RenderTargetInfo{
+            vk::Extent2D{it->second.Extent.x, it->second.Extent.y},
+            it->second.ColorImage.GetImageView(),
+            it->second.ColorImage.GetSampler(),
+            it->second.ImGuiTexture};
     }
 
     Task<void> Renderer::StartAsync(std::stop_token stopToken)
@@ -104,6 +209,65 @@ namespace GPP
                     static_cast<std::uint32_t>(std::max(event.Height, 1))
                 };
             }, EventDelivery::Async, EventTarget::Render);
+        m_ImGuiInputSubscriptions.push_back(m_Dispatcher->Subscribe<ImGuiRawEvent>(
+            [this](const ImGuiRawEvent& source)
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                m_RenderQueue.push([this, source]
+                {
+                    if (!m_ImGuiContext)
+                        return;
+                    ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+                    SDL_Event event{};
+                    event.type = source.Type;
+                    switch (source.Type)
+                    {
+                    case SDL_EVENT_KEY_DOWN:
+                    case SDL_EVENT_KEY_UP:
+                        event.key.windowID = source.Window;
+                        event.key.key = static_cast<SDL_Keycode>(source.Key);
+                        event.key.scancode = static_cast<SDL_Scancode>(source.Scan);
+                        event.key.mod = static_cast<SDL_Keymod>(source.Modifiers);
+                        event.key.repeat = source.Repeat;
+                        break;
+                    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    case SDL_EVENT_MOUSE_BUTTON_UP:
+                        event.button.windowID = source.Window;
+                        event.button.button = static_cast<Uint8>(source.Button);
+                        break;
+                    case SDL_EVENT_MOUSE_MOTION:
+                        event.motion.windowID = source.Window;
+                        event.motion.x = source.X;
+                        event.motion.y = source.Y;
+                        event.motion.xrel = source.DeltaX;
+                        event.motion.yrel = source.DeltaY;
+                        break;
+                    case SDL_EVENT_MOUSE_WHEEL:
+                        event.wheel.windowID = source.Window;
+                        event.wheel.x = source.X;
+                        event.wheel.y = source.Y;
+                        break;
+                    case SDL_EVENT_TEXT_INPUT:
+                        event.text.windowID = source.Window;
+                        event.text.text = source.Text.c_str();
+                        break;
+                    case SDL_EVENT_WINDOW_MOUSE_ENTER:
+                    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+                    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                    case SDL_EVENT_WINDOW_FOCUS_LOST:
+                    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                    case SDL_EVENT_WINDOW_MOVED:
+                    case SDL_EVENT_WINDOW_RESIZED:
+                        event.window.windowID = source.Window;
+                        event.window.data1 = static_cast<int>(source.X);
+                        event.window.data2 = static_cast<int>(source.Y);
+                        break;
+                    default:
+                        break;
+                    }
+                    ImGui_ImplSDL3_ProcessEvent(&event);
+                });
+            }));
         m_RenderThread = std::thread([this, stopToken]()
         {
             RenderLoop(stopToken);
@@ -113,6 +277,7 @@ namespace GPP
 
     Task<void> Renderer::StopAsync()
     {
+        m_ImGuiInputSubscriptions.clear();
         m_ResizeSubscription.Reset();
         m_Dispatcher->SetRenderExecutor({});
         m_Running = false;
@@ -176,6 +341,49 @@ namespace GPP
             m_Logger,
             m_MainWindowResources.Device->GetQueueIndices().Graphics
         );
+
+        ImGui::SetCurrentContext(ImGui::CreateContext());
+        auto* imguiContext = ImGui::GetCurrentContext();
+        auto& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+        ImGui::StyleColorsDark();
+        if (!ImGui_ImplSDL3_InitForVulkan(
+                static_cast<SDL_Window*>(m_MainWindowResources.Window->GetNativeHandle())))
+        {
+            ImGui::DestroyContext(imguiContext);
+            throw std::runtime_error("Failed to initialize ImGui SDL3 backend.");
+        }
+        ImGui_ImplVulkan_InitInfo imguiInfo{};
+        imguiInfo.ApiVersion = VK_API_VERSION_1_3;
+        imguiInfo.Instance = m_MainWindowResources.Device->GetInstance();
+        imguiInfo.PhysicalDevice = m_MainWindowResources.Device->GetPhysicalDevice();
+        imguiInfo.Device = m_MainWindowResources.Device->GetDevice();
+        imguiInfo.QueueFamily = m_MainWindowResources.Device->GetQueueIndices().Graphics;
+        imguiInfo.Queue = m_MainWindowResources.Device->GetGraphicsQueue();
+        imguiInfo.DescriptorPoolSize = 1024;
+        imguiInfo.MinImageCount = 2;
+        imguiInfo.ImageCount = m_MainWindowResources.SwapChain->GetImageCount();
+        imguiInfo.UseDynamicRendering = true;
+        imguiInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+        const auto colorFormat = static_cast<VkFormat>(
+            m_MainWindowResources.SwapChain->GetImageFormat());
+        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats =
+            &colorFormat;
+        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.depthAttachmentFormat =
+            static_cast<VkFormat>(m_MainWindowResources.SwapChain->GetDepthImageFormat());
+        imguiInfo.PipelineInfoForViewports.PipelineRenderingCreateInfo.depthAttachmentFormat =
+            VK_FORMAT_UNDEFINED;
+        if (!ImGui_ImplVulkan_Init(&imguiInfo))
+        {
+            ImGui_ImplSDL3_Shutdown();
+            ImGui::DestroyContext(imguiContext);
+            throw std::runtime_error("Failed to initialize ImGui Vulkan backend.");
+        }
+        m_ImGuiContext = imguiContext;
 
         m_FrameResources.reserve(2);
         for (int i = 0; i < 2; i++)
@@ -326,8 +534,118 @@ namespace GPP
 
             auto& cmd = frame.CommandBuffer;
             cmd.Begin();
+            ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplSDL3_NewFrame();
+            ImGui::NewFrame();
+            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
+                ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
             {
                 vk::CommandBuffer rawCmd = cmd.GetCommandBuffer();
+                for (auto& [bufferId, target] : m_BufferTargets)
+                {
+                    TransitionImageLayout(
+                        rawCmd,
+                        target.ColorImage.GetImage(),
+                        target.ColorImage.GetSpecification().format,
+                        target.ColorLayout,
+                        vk::ImageLayout::eColorAttachmentOptimal);
+                    const auto targetDepthFormat = target.DepthImage.GetSpecification().format;
+                    const auto targetDepthAspect = GetImageAspectMask(targetDepthFormat);
+                    const auto targetDepthLayout =
+                        (targetDepthAspect & vk::ImageAspectFlagBits::eStencil) !=
+                                vk::ImageAspectFlags{}
+                            ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                            : vk::ImageLayout::eDepthAttachmentOptimal;
+                    TransitionImageLayout(
+                        rawCmd,
+                        target.DepthImage.GetImage(),
+                        targetDepthFormat,
+                        target.DepthLayout,
+                        targetDepthLayout);
+                    target.ColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
+                    target.DepthLayout = targetDepthLayout;
+
+                    vk::RenderingAttachmentInfo targetColor{};
+                    targetColor.imageView = target.ColorImage.GetImageView();
+                    targetColor.imageLayout = target.ColorLayout;
+                    targetColor.loadOp = vk::AttachmentLoadOp::eClear;
+                    targetColor.storeOp = vk::AttachmentStoreOp::eStore;
+                    targetColor.clearValue = vk::ClearValue(
+                        vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f));
+                    vk::RenderingAttachmentInfo targetDepth{};
+                    targetDepth.imageView = target.DepthImage.GetImageView();
+                    targetDepth.imageLayout = target.DepthLayout;
+                    targetDepth.loadOp = vk::AttachmentLoadOp::eClear;
+                    targetDepth.storeOp = vk::AttachmentStoreOp::eDontCare;
+                    targetDepth.clearValue = vk::ClearValue(
+                        vk::ClearDepthStencilValue(1.0f, 0));
+                    vk::RenderingInfo targetRendering{};
+                    targetRendering.renderArea = vk::Rect2D{
+                        vk::Offset2D{0, 0},
+                        vk::Extent2D{target.Extent.x, target.Extent.y}};
+                    targetRendering.layerCount = 1;
+                    targetRendering.colorAttachmentCount = 1;
+                    targetRendering.pColorAttachments = &targetColor;
+                    targetRendering.pDepthAttachment = &targetDepth;
+                    rawCmd.beginRendering(targetRendering);
+                    vk::Viewport targetViewport{
+                        0.0f, 0.0f,
+                        static_cast<float>(target.Extent.x),
+                        static_cast<float>(target.Extent.y),
+                        0.0f, 1.0f};
+                    vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
+                    rawCmd.setViewport(0, 1, &targetViewport);
+                    rawCmd.setScissor(0, 1, &targetScissor);
+                    if (target.LayerStack)
+                    {
+                        target.LayerStack->OnRender();
+                        target.LayerStack->OnUiRender();
+                    }
+                    auto targetPipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
+                    if (targetPipeline)
+                    {
+                        rawCmd.bindPipeline(
+                            vk::PipelineBindPoint::eGraphics,
+                            targetPipeline->GetPipeline());
+                        BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
+                        BindIndexBuffer(
+                            rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
+                        struct PushConstants
+                        {
+                            glm::mat4 viewProjection;
+                            glm::mat4 model;
+                            float time;
+                        } pushConstants{};
+                        const float elapsed = static_cast<float>(
+                            std::chrono::duration<double>(
+                                std::chrono::high_resolution_clock::now() - start).count());
+                        pushConstants.viewProjection = glm::perspective(
+                            glm::radians(45.0f),
+                            static_cast<float>(target.Extent.x) /
+                                static_cast<float>(target.Extent.y),
+                            0.1f, 100.0f);
+                        pushConstants.viewProjection[1][1] *= -1.0f;
+                        pushConstants.model = glm::translate(
+                            glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
+                        pushConstants.model = glm::rotate(
+                            pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
+                        pushConstants.time = elapsed;
+                        rawCmd.pushConstants(
+                            targetPipeline->GetLayout(),
+                            vk::ShaderStageFlagBits::eVertex,
+                            0, sizeof(pushConstants), &pushConstants);
+                        rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+                    }
+                    rawCmd.endRendering();
+                    TransitionImageLayout(
+                        rawCmd,
+                        target.ColorImage.GetImage(),
+                        target.ColorImage.GetSpecification().format,
+                        target.ColorLayout,
+                        vk::ImageLayout::eShaderReadOnlyOptimal);
+                    target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                }
                 const auto depthFormat = swapchain->GetDepthImageFormat();
                 const bool depthHasStencil = (GetImageAspectMask(depthFormat) & vk::ImageAspectFlagBits::eStencil) != vk::ImageAspectFlags{};
                 const auto depthTargetLayout = depthHasStencil
@@ -360,7 +678,7 @@ namespace GPP
                 colorAttachment.clearValue = vk::ClearValue(vk::ClearColorValue(0.05f, 0.05f, 0.05f, 1.00f));
                 vk::RenderingAttachmentInfo depthAttachment{};
                 depthAttachment.imageView = m_MainWindowResources.DepthImage.GetImageView();
-                depthAttachment.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+                depthAttachment.imageLayout = depthTargetLayout;
                 depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
                 depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
                 depthAttachment.clearValue = vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
@@ -387,6 +705,8 @@ namespace GPP
                     // TODO
                     if (m_MainLayerStack)
                         m_MainLayerStack->OnRender();
+                    if (m_MainLayerStack)
+                        m_MainLayerStack->OnUiRender();
 
                     auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
                     if (pipeline)
@@ -419,6 +739,9 @@ namespace GPP
                             0, sizeof(pushConstants), &pushConstants);
                         rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
                     }
+                    ImGui::Render();
+                    ImGui_ImplVulkan_RenderDrawData(
+                        ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
                 }
                 rawCmd.endRendering();
 
@@ -460,6 +783,11 @@ namespace GPP
                 m_MainWindowResources.Device->GetPresentQueue(),
                 renderFinishedSemaphore.GetSemaphore()
             );
+            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+            {
+                ImGui::UpdatePlatformWindows();
+                ImGui::RenderPlatformWindowsDefault();
+            }
 
             // m_Logger->Trace("W key pressed: {}", m_InputState->IsKeyDown(ScanCode::W));
         }
@@ -480,6 +808,20 @@ namespace GPP
             }
             m_ShaderPipeline.reset();
         }
+        if (m_ImGuiContext)
+        {
+            ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplSDL3_Shutdown();
+            ImGui::DestroyContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+            m_ImGuiContext = nullptr;
+        }
+        for (auto& [bufferId, target] : m_BufferTargets)
+        {
+            if (target.LayerStack)
+                target.LayerStack->OnDetach();
+        }
+        m_BufferTargets.clear();
         m_VertexBuffer.Destroy();
         m_IndexBuffer.Destroy();
         m_RenderFinishedSemaphores.clear();

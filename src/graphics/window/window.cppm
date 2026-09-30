@@ -46,6 +46,7 @@ namespace GPP
         Window& operator=(Window&& other) noexcept;
 
         [[nodiscard]] WindowId GetID() const noexcept;
+        [[nodiscard]] void* GetNativeHandle() const noexcept;
         [[nodiscard]] Task<void> DestroyWindow();
         [[nodiscard]] Task<void> GetSize(int* width, int* height) const noexcept;
         [[nodiscard]] Task<void> SetSize(int width, int height) noexcept;

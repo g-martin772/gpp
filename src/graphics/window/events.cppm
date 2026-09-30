@@ -124,6 +124,22 @@ namespace GPP
         std::string Text;
     };
 
+    export struct ImGuiRawEvent
+    {
+        std::uint32_t Type{};
+        WindowId Window{};
+        KeyCode Key{};
+        ScanCode Scan{};
+        std::uint16_t Modifiers{};
+        bool Repeat{};
+        MouseButton Button{};
+        float X{};
+        float Y{};
+        float DeltaX{};
+        float DeltaY{};
+        std::string Text;
+    };
+
     export class InputState : public IService
     {
     public:

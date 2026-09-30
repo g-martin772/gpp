@@ -52,6 +52,11 @@ namespace GPP
         return SDL_GetWindowID(m_Window);
     }
 
+    void* Window::GetNativeHandle() const noexcept
+    {
+        return m_Window;
+    }
+
     Task<void> Window::GetSize(int* width, int* height) const noexcept
     {
         co_await ResumeOn(Application::Instance());

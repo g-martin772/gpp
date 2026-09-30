@@ -22,6 +22,7 @@ namespace GPP
 
         Task<std::shared_ptr<Window>> CreateWindow(const WindowOptions& options);
         std::shared_ptr<Window> GetWindow(WindowId id) const;
+        std::vector<std::shared_ptr<Window>> GetWindows() const;
 
         void TriggerWindowClose(WindowId id);
 
@@ -30,6 +31,7 @@ namespace GPP
 
         Task<void> ShowMessageBox(std::string_view title, std::string_view message, bool isError = false);
     private:
+        mutable std::mutex m_WindowsMutex;
         std::unordered_map<WindowId, std::shared_ptr<Window>> m_Windows;
         bool m_ShouldQuit{false}, m_Quitting{false}, m_IsInitialized{false};
         std::shared_ptr<Logger> m_Logger;

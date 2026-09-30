@@ -53,6 +53,17 @@ namespace GPP
         void AttachLayerStackToWindow(GuiLayerStack& layerStack, const std::shared_ptr<Window>& window);
         void AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId);
 
+        struct RenderTargetInfo
+        {
+            vk::Extent2D Extent{};
+            vk::ImageView ImageView{};
+            vk::Sampler Sampler{};
+            void* ImGuiTexture = nullptr;
+        };
+
+        [[nodiscard]] std::optional<RenderTargetInfo> GetRenderTargetInfo(
+            std::uint32_t bufferId) const;
+
     private:
         void InitializeRenderSystem();
         Task<void> StopRenderSystem();
@@ -67,7 +78,8 @@ namespace GPP
         std::shared_ptr<InputState> m_InputState;
         std::shared_ptr<EventDispatcher> m_Dispatcher;
         EventSubscription m_ResizeSubscription{};
-        std::mutex m_RenderQueueMutex{};
+        std::vector<EventSubscription> m_ImGuiInputSubscriptions{};
+        mutable std::mutex m_RenderQueueMutex{};
         std::queue<std::move_only_function<void()>> m_RenderQueue{};
         std::unordered_map<std::uint32_t, glm::uvec2> m_PendingResize{};
 
@@ -101,6 +113,17 @@ namespace GPP
             ~FrameResources();
         };
 
+        struct BufferTargetResources
+        {
+            GuiLayerStack* LayerStack = nullptr;
+            VulkanImage ColorImage;
+            VulkanImage DepthImage;
+            vk::ImageLayout ColorLayout = vk::ImageLayout::eUndefined;
+            vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
+            void* ImGuiTexture = nullptr;
+            glm::uvec2 Extent{640, 360};
+        };
+
         WindowResources m_MainWindowResources{};
         std::vector<FrameResources> m_FrameResources{};
         std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
@@ -108,6 +131,8 @@ namespace GPP
         std::uint32_t m_FrameIndex = 0;
 
         std::shared_ptr<ShaderPipeline> m_ShaderPipeline;
+        void* m_ImGuiContext = nullptr;
+        std::unordered_map<std::uint32_t, BufferTargetResources> m_BufferTargets;
         VulkanBuffer m_VertexBuffer;
         VulkanBuffer m_IndexBuffer;
         std::uint32_t m_IndexCount = 0;
@@ -117,7 +142,6 @@ namespace GPP
         std::promise<void> m_ReadyPromise;
         std::shared_future<void> m_SharedFuture{m_ReadyPromise.get_future().share()};
 
-        // TODO
         GuiLayerStack* m_MainLayerStack = nullptr;
     };
 }
