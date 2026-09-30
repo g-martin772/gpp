@@ -89,10 +89,16 @@ namespace GPP
         }
         try
         {
+            ShaderCompileOptions compileOptions;
+            for (const auto& directory : m_Options->ShaderAssetDirectories)
+            {
+                compileOptions.includeDirectories.push_back(
+                    m_FileSystem->ResolvePath(directory));
+            }
             for (const auto& directory : m_Options->ShaderAssetDirectories)
             {
                 const auto resolved = m_FileSystem->ResolvePath(directory);
-                CompileDirectory(resolved, {});
+                CompileDirectory(resolved, compileOptions);
             }
             {
                 std::scoped_lock lock(m_Mutex);

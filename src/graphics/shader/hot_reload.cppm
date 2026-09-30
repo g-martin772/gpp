@@ -95,6 +95,7 @@ namespace GPP
         EventSubscription m_CompiledSubscription;
         std::filesystem::path m_VertexPath;
         std::filesystem::path m_FragmentPath;
+        std::vector<std::filesystem::path> m_Dependencies;
 
         mutable std::mutex m_Mutex;
         std::condition_variable m_ReloadCondition;

@@ -41,7 +41,162 @@ namespace GPP
             }
             key += options.generateDebugInfo ? ":debug" : ":release";
             key += options.optimize ? ":optimized" : ":unoptimized";
+            for (const auto& includeDirectory : options.includeDirectories)
+            {
+                key.push_back('\0');
+                key += includeDirectory.lexically_normal().string();
+            }
             return HashBytes(key);
+        }
+
+        struct IncludeData
+        {
+            shaderc_include_result result{};
+            std::string sourceName;
+            std::string content;
+            std::filesystem::path path;
+        };
+
+        class ShaderIncluder final : public shaderc::CompileOptions::IncluderInterface
+        {
+        public:
+            ShaderIncluder(std::shared_ptr<IFileSystem> fileSystem,
+                           std::vector<std::filesystem::path> includeDirectories)
+                : m_FileSystem(std::move(fileSystem)),
+                  m_IncludeDirectories(std::move(includeDirectories))
+            {
+            }
+
+            shaderc_include_result* GetInclude(const char* requestedSource,
+                                               shaderc_include_type type,
+                                               const char* requestingSource,
+                                               size_t) override
+            {
+                const auto requested = std::filesystem::path(requestedSource);
+                std::vector<std::filesystem::path> candidates;
+                if (type == shaderc_include_type_relative)
+                {
+                    candidates.emplace_back(
+                        std::filesystem::path(requestingSource).parent_path() / requested);
+                }
+                for (const auto& root : m_IncludeDirectories)
+                {
+                    candidates.emplace_back(root / requested);
+                }
+
+                for (const auto& candidate : candidates)
+                {
+                    const auto resolved = m_FileSystem->ResolvePath(candidate);
+                    std::error_code error;
+                    if (!std::filesystem::is_regular_file(resolved, error) || error)
+                    {
+                        continue;
+                    }
+                    try
+                    {
+                        const auto normalized = resolved.lexically_normal();
+                        if (std::ranges::find(m_ActiveIncludes, normalized) != m_ActiveIncludes.end())
+                        {
+                            return MakeError(std::format(
+                                "Cyclic shader include detected at '{}'.", normalized.string()));
+                        }
+                        auto data = std::make_unique<IncludeData>();
+                        data->sourceName = std::filesystem::weakly_canonical(resolved, error).string();
+                        if (error) data->sourceName = resolved.lexically_normal().string();
+                        data->content = m_FileSystem->ReadAllText(resolved);
+                        data->result.source_name = data->sourceName.c_str();
+                        data->result.source_name_length = data->sourceName.size();
+                        data->result.content = data->content.c_str();
+                        data->result.content_length = data->content.size();
+                        data->result.user_data = data.get();
+                        data->path = normalized;
+                        m_Dependencies.push_back(normalized);
+                        m_ActiveIncludes.push_back(normalized);
+                        return &data.release()->result;
+                    }
+                    catch (const std::exception& exception)
+                    {
+                        return MakeError(std::format("Failed to read shader include '{}': {}",
+                                                     requestedSource, exception.what()));
+                    }
+                }
+                return MakeError(std::format(
+                    "Shader include '{}' not found while compiling '{}'.",
+                    requestedSource, requestingSource));
+            }
+
+            void ReleaseInclude(shaderc_include_result* result) override
+            {
+                const auto path = static_cast<IncludeData*>(result->user_data)->path;
+                std::erase(m_ActiveIncludes, path);
+                delete static_cast<IncludeData*>(result->user_data);
+            }
+
+            const std::vector<std::filesystem::path>& Dependencies() const noexcept
+            {
+                return m_Dependencies;
+            }
+
+        private:
+            static shaderc_include_result* MakeError(std::string message)
+            {
+                auto data = std::make_unique<IncludeData>();
+                data->content = std::move(message);
+                data->result.content = data->content.c_str();
+                data->result.content_length = data->content.size();
+                data->result.user_data = data.get();
+                return &data.release()->result;
+            }
+
+            std::shared_ptr<IFileSystem> m_FileSystem;
+            std::vector<std::filesystem::path> m_IncludeDirectories;
+            std::vector<std::filesystem::path> m_Dependencies;
+            std::vector<std::filesystem::path> m_ActiveIncludes;
+        };
+
+        std::filesystem::path DependencyManifestPath(const std::filesystem::path& cachePath)
+        {
+            return cachePath.string() + ".deps";
+        }
+
+        void WriteDependencyManifest(const std::filesystem::path& path,
+                                     const std::shared_ptr<IFileSystem>& fileSystem,
+                                     const std::vector<std::filesystem::path>& dependencies)
+        {
+            std::ofstream file(path, std::ios::trunc);
+            if (!file) return;
+            for (const auto& dependency : dependencies)
+            {
+                file << dependency.lexically_normal().string() << '\n';
+                file << HashBytes(fileSystem->ReadAllText(dependency)) << '\n';
+            }
+        }
+
+        bool DependenciesUnchanged(const std::filesystem::path& path,
+                                   const std::shared_ptr<IFileSystem>& fileSystem,
+                                   std::vector<std::filesystem::path>* dependencies = nullptr)
+        {
+            std::ifstream file(path);
+            if (!file) return false;
+            std::string dependencyPath;
+            std::string dependencyHash;
+            while (std::getline(file, dependencyPath) && std::getline(file, dependencyHash))
+            {
+                try
+                {
+                    const auto resolved = std::filesystem::path(dependencyPath);
+                    if (std::to_string(HashBytes(fileSystem->ReadAllText(resolved))) != dependencyHash)
+                    {
+                        return false;
+                    }
+                    if (dependencies) dependencies->push_back(resolved);
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            }
+            return !file.bad();
         }
 
         shaderc_shader_kind ShaderKind(const ShaderStage stage)
@@ -363,7 +518,8 @@ namespace GPP
                     .cachePath = {},
                     .spirv = std::move(spirv),
                     .reflection = std::move(reflection),
-                    .sourceHash = HashBinary(bytes, source)
+                    .sourceHash = HashBinary(bytes, source),
+                    .dependencies = {}
                 };
             }
             catch (const std::exception& exception)
@@ -386,7 +542,9 @@ namespace GPP
                                (std::format("{:016x}.spv", hash));
 
         std::vector<std::uint32_t> spirv;
-        if (options.enableCache)
+        std::vector<std::filesystem::path> dependencies;
+        if (options.enableCache &&
+            DependenciesUnchanged(DependencyManifestPath(cachePath), m_FileSystem, &dependencies))
         {
             spirv = ReadCache(cachePath);
             if (!spirv.empty() && m_Logger)
@@ -402,6 +560,10 @@ namespace GPP
             }
             shaderc::Compiler compiler;
             shaderc::CompileOptions compileOptions;
+            auto includer = std::make_unique<ShaderIncluder>(
+                m_FileSystem, options.includeDirectories);
+            auto* includerPtr = includer.get();
+            compileOptions.SetIncluder(std::move(includer));
             compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
             if (options.generateDebugInfo)
             {
@@ -424,9 +586,12 @@ namespace GPP
                                                      resolvedPath.string(), result.GetErrorMessage()));
             }
             spirv.assign(result.cbegin(), result.cend());
+            dependencies = includerPtr->Dependencies();
             if (options.enableCache)
             {
                 WriteCache(cachePath, spirv);
+                WriteDependencyManifest(DependencyManifestPath(cachePath), m_FileSystem,
+                                        dependencies);
             }
             if (m_Logger)
             {
@@ -453,7 +618,8 @@ namespace GPP
                 .cachePath = cachePath,
                 .spirv = spirv,
                 .reflection = std::move(reflection),
-                .sourceHash = hash
+                .sourceHash = hash,
+                .dependencies = std::move(dependencies)
             };
         }
         catch (const std::exception& exception)

@@ -208,6 +208,18 @@ namespace GPP
             ShaderPipelineDescription{
                 .vertex = ShaderSource{.path = vertexSource, .stage = ShaderStage::Vertex},
                 .fragment = ShaderSource{.path = fragmentSource, .stage = ShaderStage::Fragment},
+                .compileOptions = ShaderCompileOptions{
+                    .includeDirectories = [&]
+                    {
+                        std::vector<std::filesystem::path> directories;
+                        directories.reserve(m_RenderOptions->ShaderAssetDirectories.size());
+                        for (const auto& directory : m_RenderOptions->ShaderAssetDirectories)
+                        {
+                            directories.push_back(m_FileSystem->ResolvePath(directory));
+                        }
+                        return directories;
+                    }()
+                },
                 .pollingInterval = m_RenderOptions->ShaderHotReloadInterval,
                 .enableHotReload = m_RenderOptions->EnableShaderHotReload
             },

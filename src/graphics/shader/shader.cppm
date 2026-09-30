@@ -120,6 +120,7 @@ namespace GPP
         bool enableCache = true;
         bool generateDebugInfo = false;
         bool optimize = true;
+        std::vector<std::filesystem::path> includeDirectories;
     };
 
     export struct CompiledShader
@@ -130,6 +131,7 @@ namespace GPP
         std::vector<std::uint32_t> spirv;
         ShaderReflection reflection;
         std::uint64_t sourceHash = 0;
+        std::vector<std::filesystem::path> dependencies;
     };
 
     export class ShaderCompiler

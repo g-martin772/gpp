@@ -128,6 +128,10 @@ namespace GPP
             m_RetiredPipelines.push_back(std::move(m_CurrentPipeline));
         }
         m_CurrentPipeline = std::move(pipeline);
+        m_Dependencies = compiled->vertex.dependencies;
+        m_Dependencies.insert(m_Dependencies.end(),
+                              compiled->fragment.dependencies.begin(),
+                              compiled->fragment.dependencies.end());
         m_Reflection = reflection;
         m_Metadata = ShaderPipelineMetadata{
             .vertexSourceHash = compiled->vertex.sourceHash,
@@ -146,6 +150,17 @@ namespace GPP
             "pipeline",
             "ready"
         };
+        if (m_Description.enableHotReload)
+        {
+            for (const auto& dependency : compiled->vertex.dependencies)
+            {
+                m_Watcher.Watch(dependency);
+            }
+            for (const auto& dependency : compiled->fragment.dependencies)
+            {
+                m_Watcher.Watch(dependency);
+            }
+        }
 
         if (m_Logger)
         {
@@ -388,8 +403,22 @@ namespace GPP
         const auto changed = std::filesystem::weakly_canonical(event.path, error);
         const auto vertex = std::filesystem::weakly_canonical(m_VertexPath, error);
         const auto fragment = std::filesystem::weakly_canonical(m_FragmentPath, error);
+        auto matches = [&](const std::vector<std::filesystem::path>& dependencies)
+        {
+            return std::ranges::any_of(dependencies, [&](const auto& dependency)
+            {
+                std::error_code dependencyError;
+                return changed == std::filesystem::weakly_canonical(dependency, dependencyError);
+            });
+        };
+        std::vector<std::filesystem::path> dependencies;
+        {
+            std::scoped_lock lock(m_Mutex);
+            dependencies = m_Dependencies;
+        }
+        const bool dependencyChanged = matches(dependencies);
         if (event.path == m_VertexPath || event.path == m_FragmentPath ||
-            changed == vertex || changed == fragment)
+            changed == vertex || changed == fragment || dependencyChanged)
         {
             QueueReload();
         }

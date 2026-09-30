@@ -10,7 +10,7 @@
       ,
       "Render": {
         "ShaderAssetDirectories": ["shaders"],
-        "EnableShaderHotReload": false,
+        "EnableShaderHotReload": true,
         "ShaderHotReloadIntervalMilliseconds": 250
       }
     }
