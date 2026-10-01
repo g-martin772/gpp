@@ -64,6 +64,19 @@ namespace GPP
         [[nodiscard]] std::optional<RenderTargetInfo> GetRenderTargetInfo(
             std::uint32_t bufferId) const;
 
+        struct WindowResources
+        {
+            std::shared_ptr<GPP::Window> Window;
+            vk::SurfaceKHR Surface;
+            std::shared_ptr<VulkanDevice> Device;
+            std::shared_ptr<VulkanSwapChain> SwapChain;
+            VulkanImage DepthImage;
+            vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
+            std::shared_ptr<VulkanCommandPool> CommandPool;
+
+            ~WindowResources();
+        };
+
     private:
         void InitializeRenderSystem();
         Task<void> StopRenderSystem();
@@ -82,19 +95,6 @@ namespace GPP
         mutable std::mutex m_RenderQueueMutex{};
         std::queue<std::move_only_function<void()>> m_RenderQueue{};
         std::unordered_map<std::uint32_t, glm::uvec2> m_PendingResize{};
-
-        struct WindowResources
-        {
-            std::shared_ptr<GPP::Window> Window;
-            vk::SurfaceKHR Surface;
-            std::shared_ptr<VulkanDevice> Device;
-            std::shared_ptr<VulkanSwapChain> SwapChain;
-            VulkanImage DepthImage;
-            vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
-            std::shared_ptr<VulkanCommandPool> CommandPool;
-
-            ~WindowResources();
-        };
 
         struct FrameResources
         {

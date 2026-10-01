@@ -37,6 +37,7 @@ if (GPP_USE_IMGUI_DOCKING)
             ${imgui_docking_SOURCE_DIR}/imgui.cpp
             ${imgui_docking_SOURCE_DIR}/imgui_draw.cpp
             ${imgui_docking_SOURCE_DIR}/imgui_tables.cpp
+            ${imgui_docking_SOURCE_DIR}/imgui_demo.cpp
             ${imgui_docking_SOURCE_DIR}/imgui_widgets.cpp
             ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
             ${imgui_docking_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)

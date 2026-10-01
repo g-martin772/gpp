@@ -1,9 +1,6 @@
 module;
 #include <SDL3/SDL.h>
-#include <imgui.h>
-#include <imgui_impl_sdl3.h>
-#include <imgui_impl_vulkan.h>
-
+#include <SDL3/SDL_vulkan.h>
 module GPP.Graphics;
 
 import std;
@@ -11,55 +8,10 @@ import glm;
 import vulkan;
 import GPP.Core;
 import :Renderer;
+import :UI;
 
 namespace GPP
 {
-    namespace
-    {
-        ImGuiKey ToImGuiKey(const KeyCode key)
-        {
-            switch (key)
-            {
-                case KeyCode::Return: return ImGuiKey_Enter;
-                case KeyCode::Escape: return ImGuiKey_Escape;
-                case KeyCode::Backspace: return ImGuiKey_Backspace;
-                case KeyCode::Tab: return ImGuiKey_Tab;
-                case KeyCode::Space: return ImGuiKey_Space;
-                case KeyCode::Left: return ImGuiKey_LeftArrow;
-                case KeyCode::Right: return ImGuiKey_RightArrow;
-                case KeyCode::Up: return ImGuiKey_UpArrow;
-                case KeyCode::Down: return ImGuiKey_DownArrow;
-                case KeyCode::A: return ImGuiKey_A;
-                case KeyCode::B: return ImGuiKey_B;
-                case KeyCode::C: return ImGuiKey_C;
-                case KeyCode::D: return ImGuiKey_D;
-                case KeyCode::E: return ImGuiKey_E;
-                case KeyCode::F: return ImGuiKey_F;
-                case KeyCode::G: return ImGuiKey_G;
-                case KeyCode::H: return ImGuiKey_H;
-                case KeyCode::I: return ImGuiKey_I;
-                case KeyCode::J: return ImGuiKey_J;
-                case KeyCode::K: return ImGuiKey_K;
-                case KeyCode::L: return ImGuiKey_L;
-                case KeyCode::M: return ImGuiKey_M;
-                case KeyCode::N: return ImGuiKey_N;
-                case KeyCode::O: return ImGuiKey_O;
-                case KeyCode::P: return ImGuiKey_P;
-                case KeyCode::Q: return ImGuiKey_Q;
-                case KeyCode::R: return ImGuiKey_R;
-                case KeyCode::S: return ImGuiKey_S;
-                case KeyCode::T: return ImGuiKey_T;
-                case KeyCode::U: return ImGuiKey_U;
-                case KeyCode::V: return ImGuiKey_V;
-                case KeyCode::W: return ImGuiKey_W;
-                case KeyCode::X: return ImGuiKey_X;
-                case KeyCode::Y: return ImGuiKey_Y;
-                case KeyCode::Z: return ImGuiKey_Z;
-                default: return ImGuiKey_None;
-            }
-        }
-    }
-
     Renderer::WindowResources::~WindowResources()
     {
         if (Device)
@@ -77,7 +29,8 @@ namespace GPP
         Window = nullptr;
     }
 
-    Renderer::FrameResources::FrameResources(VulkanCommandBuffer commandBuffer, vk::Device device) noexcept: CommandBuffer(std::move(commandBuffer)),
+    Renderer::FrameResources::FrameResources(VulkanCommandBuffer commandBuffer, vk::Device device) noexcept :
+        CommandBuffer(std::move(commandBuffer)),
         ImageAvailableSemaphore(device),
         RenderFinishedSemaphore(device),
         InFlightFence(device, true)
@@ -155,7 +108,7 @@ namespace GPP
                     .extent = {target.Extent.x, target.Extent.y, 1},
                     .format = m_MainWindowResources.SwapChain->GetImageFormat(),
                     .usage = vk::ImageUsageFlagBits::eColorAttachment |
-                             vk::ImageUsageFlagBits::eSampled,
+                    vk::ImageUsageFlagBits::eSampled,
                     .aspectMask = vk::ImageAspectFlagBits::eColor,
                     .createSampler = true,
                     .debugName = "BufferTargetColor"
@@ -174,7 +127,7 @@ namespace GPP
                 ImGui_ImplVulkan_AddTexture(
                     target.ColorImage.GetSampler(),
                     target.ColorImage.GetImageView(),
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+                    static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
             target.LayerStack->OnAttach();
             m_Logger->Info("Created render target {}", bufferId);
         });
@@ -190,7 +143,8 @@ namespace GPP
             vk::Extent2D{it->second.Extent.x, it->second.Extent.y},
             it->second.ColorImage.GetImageView(),
             it->second.ColorImage.GetSampler(),
-            it->second.ImGuiTexture};
+            it->second.ImGuiTexture
+        };
     }
 
     Task<void> Renderer::StartAsync(std::stop_token stopToken)
@@ -342,48 +296,8 @@ namespace GPP
             m_MainWindowResources.Device->GetQueueIndices().Graphics
         );
 
-        ImGui::SetCurrentContext(ImGui::CreateContext());
-        auto* imguiContext = ImGui::GetCurrentContext();
-        auto& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-        ImGui::StyleColorsDark();
-        if (!ImGui_ImplSDL3_InitForVulkan(
-                static_cast<SDL_Window*>(m_MainWindowResources.Window->GetNativeHandle())))
-        {
-            ImGui::DestroyContext(imguiContext);
-            throw std::runtime_error("Failed to initialize ImGui SDL3 backend.");
-        }
-        ImGui_ImplVulkan_InitInfo imguiInfo{};
-        imguiInfo.ApiVersion = VK_API_VERSION_1_3;
-        imguiInfo.Instance = m_MainWindowResources.Device->GetInstance();
-        imguiInfo.PhysicalDevice = m_MainWindowResources.Device->GetPhysicalDevice();
-        imguiInfo.Device = m_MainWindowResources.Device->GetDevice();
-        imguiInfo.QueueFamily = m_MainWindowResources.Device->GetQueueIndices().Graphics;
-        imguiInfo.Queue = m_MainWindowResources.Device->GetGraphicsQueue();
-        imguiInfo.DescriptorPoolSize = 1024;
-        imguiInfo.MinImageCount = 2;
-        imguiInfo.ImageCount = m_MainWindowResources.SwapChain->GetImageCount();
-        imguiInfo.UseDynamicRendering = true;
-        imguiInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType =
-            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-        const auto colorFormat = static_cast<VkFormat>(
-            m_MainWindowResources.SwapChain->GetImageFormat());
-        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats =
-            &colorFormat;
-        imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.depthAttachmentFormat =
-            static_cast<VkFormat>(m_MainWindowResources.SwapChain->GetDepthImageFormat());
-        imguiInfo.PipelineInfoForViewports.PipelineRenderingCreateInfo.depthAttachmentFormat =
-            VK_FORMAT_UNDEFINED;
-        if (!ImGui_ImplVulkan_Init(&imguiInfo))
-        {
-            ImGui_ImplSDL3_Shutdown();
-            ImGui::DestroyContext(imguiContext);
-            throw std::runtime_error("Failed to initialize ImGui Vulkan backend.");
-        }
-        m_ImGuiContext = imguiContext;
+
+        m_ImGuiContext = InitializeImGui(m_MainWindowResources.Device, &m_MainWindowResources, m_Logger);
 
         m_FrameResources.reserve(2);
         for (int i = 0; i < 2; i++)
@@ -432,6 +346,7 @@ namespace GPP
                 .enableHotReload = m_RenderOptions->EnableShaderHotReload
             },
             m_FileSystem, m_Dispatcher, m_Logger);
+
         if (!m_ShaderPipeline->StartOnRenderThread())
         {
             throw std::runtime_error(m_ShaderPipeline->LastError());
@@ -540,6 +455,7 @@ namespace GPP
             ImGui::NewFrame();
             if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
                 ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+
             {
                 vk::CommandBuffer rawCmd = cmd.GetCommandBuffer();
                 for (auto& [bufferId, target] : m_BufferTargets)
@@ -554,7 +470,7 @@ namespace GPP
                     const auto targetDepthAspect = GetImageAspectMask(targetDepthFormat);
                     const auto targetDepthLayout =
                         (targetDepthAspect & vk::ImageAspectFlagBits::eStencil) !=
-                                vk::ImageAspectFlags{}
+                        vk::ImageAspectFlags{}
                             ? vk::ImageLayout::eDepthStencilAttachmentOptimal
                             : vk::ImageLayout::eDepthAttachmentOptimal;
                     TransitionImageLayout(
@@ -583,7 +499,8 @@ namespace GPP
                     vk::RenderingInfo targetRendering{};
                     targetRendering.renderArea = vk::Rect2D{
                         vk::Offset2D{0, 0},
-                        vk::Extent2D{target.Extent.x, target.Extent.y}};
+                        vk::Extent2D{target.Extent.x, target.Extent.y}
+                    };
                     targetRendering.layerCount = 1;
                     targetRendering.colorAttachmentCount = 1;
                     targetRendering.pColorAttachments = &targetColor;
@@ -593,7 +510,8 @@ namespace GPP
                         0.0f, 0.0f,
                         static_cast<float>(target.Extent.x),
                         static_cast<float>(target.Extent.y),
-                        0.0f, 1.0f};
+                        0.0f, 1.0f
+                    };
                     vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
                     rawCmd.setViewport(0, 1, &targetViewport);
                     rawCmd.setScissor(0, 1, &targetScissor);
@@ -623,7 +541,7 @@ namespace GPP
                         pushConstants.viewProjection = glm::perspective(
                             glm::radians(45.0f),
                             static_cast<float>(target.Extent.x) /
-                                static_cast<float>(target.Extent.y),
+                            static_cast<float>(target.Extent.y),
                             0.1f, 100.0f);
                         pushConstants.viewProjection[1][1] *= -1.0f;
                         pushConstants.model = glm::translate(
@@ -647,11 +565,12 @@ namespace GPP
                     target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
                 }
                 const auto depthFormat = swapchain->GetDepthImageFormat();
-                const bool depthHasStencil = (GetImageAspectMask(depthFormat) & vk::ImageAspectFlagBits::eStencil) != vk::ImageAspectFlags{};
+                const bool depthHasStencil = (GetImageAspectMask(depthFormat) & vk::ImageAspectFlagBits::eStencil) !=
+                    vk::ImageAspectFlags{};
                 const auto depthTargetLayout = depthHasStencil
-                    ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                    : vk::ImageLayout::eDepthAttachmentOptimal;
- 
+                                                   ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                                                   : vk::ImageLayout::eDepthAttachmentOptimal;
+
                 TransitionImageLayout(
                     rawCmd,
                     swapchain->GetImages()[imageIndex],
@@ -783,7 +702,7 @@ namespace GPP
                 m_MainWindowResources.Device->GetPresentQueue(),
                 renderFinishedSemaphore.GetSemaphore()
             );
-            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable || true)
             {
                 ImGui::UpdatePlatformWindows();
                 ImGui::RenderPlatformWindowsDefault();

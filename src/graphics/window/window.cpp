@@ -5,6 +5,7 @@ module;
 module GPP.Graphics;
 
 import :Windowing.Window;
+import :UI;
 
 namespace GPP
 {

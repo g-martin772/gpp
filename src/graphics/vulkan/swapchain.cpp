@@ -62,11 +62,18 @@ namespace GPP
         presentInfo.pImageIndices = &m_CurrentFrame;
         presentInfo.pResults = nullptr;
 
-        const vk::Result result = presentQueue.presentKHR(presentInfo);
-        if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR)
-            Update(m_Size); // TODO: Get current framebuffer size!
-        else if (result != vk::Result::eSuccess)
-            m_Logger->Error("Failed to present swapchain image: {}", vk::to_string(result));
+        try
+        {
+            const vk::Result result = presentQueue.presentKHR(presentInfo);
+            if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR)
+                Update(m_Size); // TODO: Get current framebuffer size!
+            else if (result != vk::Result::eSuccess)
+                m_Logger->Error("Failed to present swapchain image: {}", vk::to_string(result));
+        }
+        catch (const vk::OutOfDateKHRError& err)
+        {
+            Update(m_Size);
+        }
     }
 
     void VulkanSwapChain::Update(glm::uvec2 size)

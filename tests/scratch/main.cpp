@@ -1,5 +1,3 @@
-#include <imgui.h>
-
 import GPP;
 import std;
 
@@ -79,6 +77,37 @@ struct MainLayer : public GuiLayer
 
     void OnUiRender() override
     {
+        ImGui::ShowDebugLogWindow(&m_ShowDebugLogWindow);
+        ImGui::ShowDemoWindow(&m_ShowDemoWindow);
+        ImGui::ShowMetricsWindow(&m_ShowMetricsWindow);
+    }
+
+private:
+    bool m_ShowDemoWindow = true, m_ShowDebugLogWindow = true, m_ShowMetricsWindow = true;
+    std::shared_ptr<Renderer> m_Renderer;
+};
+
+struct ViewportLayer : public GuiLayer
+{
+    using Dependencies = std::tuple<Logger, Renderer>;
+
+    ViewportLayer(const std::shared_ptr<Logger>& logger, const std::shared_ptr<Renderer>& renderer)
+        : GuiLayer(logger), m_Renderer(renderer)
+    {
+    }
+
+    void OnAttach() override
+    {
+        m_Logger->Info("ViewportLayer attached");
+    }
+
+    void OnRender() override
+    {
+        //m_Logger->Info("Rendering ViewportLayer");
+    }
+
+    void OnUiRender() override
+    {
         ImGui::Begin("GPP Dockspace");
         ImGui::TextUnformatted("Main engine window");
         ImGui::TextUnformatted("The installed ImGui build lacks docking support.");
@@ -94,32 +123,12 @@ struct MainLayer : public GuiLayer
         ImGui::End();
     }
 
-private:
-    std::shared_ptr<Renderer> m_Renderer;
-};
-
-struct ViewportLayer : public GuiLayer
-{
-    using Dependencies = std::tuple<Logger>;
-
-    ViewportLayer(const std::shared_ptr<Logger>& logger) : GuiLayer(logger)
-    {
-    }
-
-    void OnAttach() override
-    {
-        m_Logger->Info("ViewportLayer attached");
-    }
-
-    void OnRender() override
-    {
-        //m_Logger->Info("Rendering ViewportLayer");
-    }
-
     void OnDetach() override
     {
         m_Logger->Info("ViewportLayer detached");
     }
+private:
+    std::shared_ptr<Renderer> m_Renderer;
 };
 
 int main(int argc, char* argv[])
