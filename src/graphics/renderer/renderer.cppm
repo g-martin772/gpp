@@ -80,6 +80,8 @@ namespace GPP
             std::vector<VulkanSemaphore> ImageAvailableSemaphores;
             std::vector<VulkanSemaphore> RenderFinishedSemaphores;
             std::vector<vk::ImageLayout> ImageLayouts;
+            void* ImGuiContext = nullptr;
+            std::string ImGuiIniPath;
 
             ~WindowResources();
         };
@@ -89,6 +91,8 @@ namespace GPP
         void InitializeWindowResources(const std::shared_ptr<Window>& window,
                                        WindowResources& resources);
         void InitializeWindowSync(WindowResources& resources);
+        void InitializeImGuiForWindow(WindowResources& resources);
+        void ShutdownImGuiForWindow(WindowResources& resources);
         void RenderWindow(WindowResources& resources, vk::CommandBuffer commandBuffer,
                           float elapsed, bool renderTargets);
         Task<void> StopRenderSystem();
@@ -108,7 +112,6 @@ namespace GPP
         EventSubscription m_ResizeSubscription{};
         EventSubscription m_WindowCloseSubscription{};
         std::vector<EventSubscription> m_ImGuiInputSubscriptions{};
-        std::optional<WindowId> m_ImGuiInputWindow;
         mutable std::mutex m_RenderQueueMutex{};
         std::queue<std::move_only_function<void()>> m_RenderQueue{};
         std::unordered_map<std::uint32_t, glm::uvec2> m_PendingResize{};
@@ -149,7 +152,7 @@ namespace GPP
         std::uint32_t m_FrameIndex = 0;
 
         std::shared_ptr<ShaderPipeline> m_ShaderPipeline;
-        void* m_ImGuiContext = nullptr;
+        bool m_ImGuiEnabled = false;
         std::unordered_map<std::uint32_t, BufferTargetResources> m_BufferTargets;
         VulkanBuffer m_VertexBuffer;
         VulkanBuffer m_IndexBuffer;

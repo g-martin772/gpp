@@ -116,6 +116,10 @@ namespace GPP
                 resources.Window = window;
                 InitializeWindowResources(window, resources);
                 InitializeWindowSync(resources);
+                if (m_ImGuiEnabled)
+                {
+                    InitializeImGuiForWindow(resources);
+                }
             });
         }
         co_return window;
@@ -156,13 +160,15 @@ namespace GPP
                     .aspectMask = GetImageAspectMask(depthFormat),
                     .debugName = "BufferTargetDepth"
                 });
-            target.ImGuiTexture = reinterpret_cast<void*>(
-                m_ImGuiContext
-                    ? reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
-                        target.ColorImage.GetSampler(),
-                        target.ColorImage.GetImageView(),
-                        static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)))
-                    : nullptr);
+            if (m_MainWindowResources.ImGuiContext)
+            {
+                ImGui::SetCurrentContext(
+                    static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
+                target.ImGuiTexture = reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
+                    target.ColorImage.GetSampler(),
+                    target.ColorImage.GetImageView(),
+                    static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
+            }
             target.LayerStack->OnAttach();
             m_Logger->Info("Created render target {}", bufferId);
         });
@@ -211,6 +217,7 @@ namespace GPP
                     if (m_MainWindowResources.Window &&
                         m_MainWindowResources.Window->GetID() == id)
                     {
+                        ShutdownImGuiForWindow(m_MainWindowResources);
                         m_MainWindowResources.SwapChain.reset();
                         if (m_MainWindowResources.Surface)
                         {
@@ -228,6 +235,7 @@ namespace GPP
                     const auto it = m_WindowResources.find(id);
                     if (it != m_WindowResources.end())
                     {
+                        ShutdownImGuiForWindow(it->second);
                         it->second.SwapChain.reset();
                         if (it->second.Surface)
                         {
@@ -248,27 +256,22 @@ namespace GPP
                 std::scoped_lock lock(m_RenderQueueMutex);
                 m_RenderQueue.push([this, source]
                 {
-                    if (!m_ImGuiContext)
-                        return;
-                    ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
-                    if (source.Type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+                    WindowResources* resources = nullptr;
+                    if (m_MainWindowResources.Window &&
+                        m_MainWindowResources.Window->GetID() == source.Window)
                     {
-                        m_ImGuiInputWindow = source.Window;
-                        return;
+                        resources = &m_MainWindowResources;
                     }
-                    if (source.Type == SDL_EVENT_WINDOW_FOCUS_LOST)
+                    else if (const auto it = m_WindowResources.find(source.Window);
+                             it != m_WindowResources.end())
                     {
-                        if (m_ImGuiInputWindow == source.Window)
-                            m_ImGuiInputWindow.reset();
+                        resources = &it->second;
+                    }
+                    if (!resources || !resources->ImGuiContext)
                         return;
-                    }
-                    if (source.Window != 0)
-                    {
-                        if (!m_ImGuiInputWindow)
-                            m_ImGuiInputWindow = source.Window;
-                        if (m_ImGuiInputWindow != source.Window)
-                            return;
-                    }
+                    // Each window owns its own ImGuiContext, so input is naturally
+                    // scoped to whichever window the originating SDL event targeted.
+                    ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources->ImGuiContext));
                     SDL_Event event{};
                     event.type = source.Type;
                     switch (source.Type)
@@ -440,7 +443,12 @@ namespace GPP
         {
             return;
         }
-        m_ImGuiContext = InitializeImGui(m_Device, &m_MainWindowResources, m_Logger);
+        m_ImGuiEnabled = true;
+        InitializeImGuiForWindow(m_MainWindowResources);
+        for (auto& [windowId, resources] : m_WindowResources)
+        {
+            InitializeImGuiForWindow(resources);
+        }
 
         m_FrameResources.reserve(2);
         for (int i = 0; i < 2; i++)
@@ -565,6 +573,27 @@ namespace GPP
         }
         resources.ImageLayouts.assign(
             resources.SwapChain->GetImageCount(), vk::ImageLayout::eUndefined);
+    }
+
+    void Renderer::InitializeImGuiForWindow(WindowResources& resources)
+    {
+        if (!resources.Window || !resources.SwapChain || resources.ImGuiContext)
+            return;
+        const auto name = m_WindowManager->GetWindowName(resources.Window->GetID());
+        resources.ImGuiIniPath = std::format(
+            ".gpp/imgui_{}.ini", name.empty() ? std::to_string(resources.Window->GetID()) : name);
+        resources.ImGuiContext = InitializeImGui(m_Device, &resources, m_Logger);
+    }
+
+    void Renderer::ShutdownImGuiForWindow(WindowResources& resources)
+    {
+        if (!resources.ImGuiContext)
+            return;
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
+        resources.ImGuiContext = nullptr;
     }
 
     void Renderer::RenderWindow(WindowResources& resources,
@@ -731,7 +760,7 @@ namespace GPP
                 0, sizeof(pushConstants), &pushConstants);
             rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
         }
-        if (m_ImGuiContext)
+        if (resources.ImGuiContext)
             ImGui_ImplVulkan_RenderDrawData(
                 ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
         rawCmd.endRendering();
@@ -840,40 +869,48 @@ namespace GPP
                     std::chrono::high_resolution_clock::now() - start).count());
             const auto rawMultiWindowCommandBuffer =
                 multiWindowCommandBuffer.GetCommandBuffer();
-            if (m_ImGuiContext)
+            // Buffer-target UI (e.g. ImGui::Image widgets showing offscreen render targets)
+            // is hosted inside the main window's ImGui frame.
+            if (m_MainWindowResources.ImGuiContext)
             {
-                ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
-                auto& io = ImGui::GetIO();
-                io.DisplaySize = ImVec2(
-                    static_cast<float>(activeWindows.front()->SwapChain->GetExtent().width),
-                    static_cast<float>(activeWindows.front()->SwapChain->GetExtent().height));
-                io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-                auto* viewport = ImGui::GetMainViewport();
-                viewport->Pos = ImVec2(0.0f, 0.0f);
-                viewport->Size = io.DisplaySize;
+                ImGui::SetCurrentContext(
+                    static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
                 ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
-                if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
-                    ImGui::DockSpaceOverViewport(0, viewport);
-            }
-            for (auto& [bufferId, target] : m_BufferTargets)
-            {
-                if (target.LayerStack)
+                if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
+                    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+                for (auto& [bufferId, target] : m_BufferTargets)
                 {
-                    target.LayerStack->OnRender();
-                    target.LayerStack->OnUiRender();
+                    if (target.LayerStack)
+                    {
+                        target.LayerStack->OnRender();
+                        target.LayerStack->OnUiRender();
+                    }
                 }
+                if (m_MainWindowResources.LayerStack)
+                    m_MainWindowResources.LayerStack->OnUiRender();
+                ImGui::Render();
             }
+            // Every other window owns its own independent ImGuiContext, so each one gets
+            // its own NewFrame/UiRender/Render cycle and draw data.
             for (auto* resources : activeWindows)
             {
+                if (resources == &m_MainWindowResources || !resources->ImGuiContext)
+                    continue;
+                ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources->ImGuiContext));
+                ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplSDL3_NewFrame();
+                ImGui::NewFrame();
                 if (resources->LayerStack)
                     resources->LayerStack->OnUiRender();
-            }
-            if (m_ImGuiContext)
                 ImGui::Render();
+            }
             bool renderTargets = true;
             for (auto* resources : activeWindows)
             {
+                if (resources->ImGuiContext)
+                    ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources->ImGuiContext));
                 RenderWindow(
                     *resources, rawMultiWindowCommandBuffer, elapsed, renderTargets);
                 renderTargets = false;
@@ -924,301 +961,7 @@ namespace GPP
                 resources->SwapChain->Present(
                     m_Device->GetPresentQueue(), multiSignalSemaphores[index]);
             }
-            if (m_ImGuiContext &&
-                (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable))
-            {
-                ImGui::UpdatePlatformWindows();
-                ImGui::RenderPlatformWindowsDefault();
-            }
             continue;
-
-            FrameResources& frame = m_FrameResources[m_FrameIndex];
-
-            vk::Device device = m_Device->GetDevice();
-            const auto& swapchain = m_MainWindowResources.SwapChain;
-
-            frame.InFlightFence.WaitAndReset();
-
-            swapchain->AcquireNextImage(
-                frame.ImageAvailableSemaphore.GetSemaphore(),
-                nullptr
-            );
-
-            auto imageIndex = swapchain->GetCurrentImageIndex();
-            // maybe cancel early when aquire fails or something
-
-            // once we know we are taking the frame
-            m_FrameIndex = (m_FrameIndex + 1) % m_FrameResources.size();
-
-            auto& cmd = frame.CommandBuffer;
-            cmd.Begin();
-            if (m_ImGuiContext)
-            {
-                ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
-                ImGui_ImplVulkan_NewFrame();
-                ImGui_ImplSDL3_NewFrame();
-                ImGui::NewFrame();
-                if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
-                    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-            }
-
-            {
-                vk::CommandBuffer rawCmd = cmd.GetCommandBuffer();
-                for (auto& [bufferId, target] : m_BufferTargets)
-                {
-                    TransitionImageLayout(
-                        rawCmd,
-                        target.ColorImage.GetImage(),
-                        target.ColorImage.GetSpecification().format,
-                        target.ColorLayout,
-                        vk::ImageLayout::eColorAttachmentOptimal);
-                    const auto targetDepthFormat = target.DepthImage.GetSpecification().format;
-                    const auto targetDepthAspect = GetImageAspectMask(targetDepthFormat);
-                    const auto targetDepthLayout =
-                        (targetDepthAspect & vk::ImageAspectFlagBits::eStencil) !=
-                        vk::ImageAspectFlags{}
-                            ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                            : vk::ImageLayout::eDepthAttachmentOptimal;
-                    TransitionImageLayout(
-                        rawCmd,
-                        target.DepthImage.GetImage(),
-                        targetDepthFormat,
-                        target.DepthLayout,
-                        targetDepthLayout);
-                    target.ColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                    target.DepthLayout = targetDepthLayout;
-
-                    vk::RenderingAttachmentInfo targetColor{};
-                    targetColor.imageView = target.ColorImage.GetImageView();
-                    targetColor.imageLayout = target.ColorLayout;
-                    targetColor.loadOp = vk::AttachmentLoadOp::eClear;
-                    targetColor.storeOp = vk::AttachmentStoreOp::eStore;
-                    targetColor.clearValue = vk::ClearValue(
-                        vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f));
-                    vk::RenderingAttachmentInfo targetDepth{};
-                    targetDepth.imageView = target.DepthImage.GetImageView();
-                    targetDepth.imageLayout = target.DepthLayout;
-                    targetDepth.loadOp = vk::AttachmentLoadOp::eClear;
-                    targetDepth.storeOp = vk::AttachmentStoreOp::eDontCare;
-                    targetDepth.clearValue = vk::ClearValue(
-                        vk::ClearDepthStencilValue(1.0f, 0));
-                    vk::RenderingInfo targetRendering{};
-                    targetRendering.renderArea = vk::Rect2D{
-                        vk::Offset2D{0, 0},
-                        vk::Extent2D{target.Extent.x, target.Extent.y}
-                    };
-                    targetRendering.layerCount = 1;
-                    targetRendering.colorAttachmentCount = 1;
-                    targetRendering.pColorAttachments = &targetColor;
-                    targetRendering.pDepthAttachment = &targetDepth;
-                    rawCmd.beginRendering(targetRendering);
-                    vk::Viewport targetViewport{
-                        0.0f, 0.0f,
-                        static_cast<float>(target.Extent.x),
-                        static_cast<float>(target.Extent.y),
-                        0.0f, 1.0f
-                    };
-                    vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
-                    rawCmd.setViewport(0, 1, &targetViewport);
-                    rawCmd.setScissor(0, 1, &targetScissor);
-                    if (target.LayerStack)
-                    {
-                        target.LayerStack->OnRender();
-                        target.LayerStack->OnUiRender();
-                    }
-                    auto targetPipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
-                    if (targetPipeline)
-                    {
-                        rawCmd.bindPipeline(
-                            vk::PipelineBindPoint::eGraphics,
-                            targetPipeline->GetPipeline());
-                        BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
-                        BindIndexBuffer(
-                            rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
-                        struct PushConstants
-                        {
-                            glm::mat4 viewProjection;
-                            glm::mat4 model;
-                            float time;
-                        } pushConstants{};
-                        const float elapsed = static_cast<float>(
-                            std::chrono::duration<double>(
-                                std::chrono::high_resolution_clock::now() - start).count());
-                        pushConstants.viewProjection = glm::perspective(
-                            glm::radians(45.0f),
-                            static_cast<float>(target.Extent.x) /
-                            static_cast<float>(target.Extent.y),
-                            0.1f, 100.0f);
-                        pushConstants.viewProjection[1][1] *= -1.0f;
-                        pushConstants.model = glm::translate(
-                            glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
-                        pushConstants.model = glm::rotate(
-                            pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
-                        pushConstants.time = elapsed;
-                        rawCmd.pushConstants(
-                            targetPipeline->GetLayout(),
-                            vk::ShaderStageFlagBits::eVertex,
-                            0, sizeof(pushConstants), &pushConstants);
-                        rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
-                    }
-                    rawCmd.endRendering();
-                    TransitionImageLayout(
-                        rawCmd,
-                        target.ColorImage.GetImage(),
-                        target.ColorImage.GetSpecification().format,
-                        target.ColorLayout,
-                        vk::ImageLayout::eShaderReadOnlyOptimal);
-                    target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-                }
-                const auto depthFormat = swapchain->GetDepthImageFormat();
-                const bool depthHasStencil = (GetImageAspectMask(depthFormat) & vk::ImageAspectFlagBits::eStencil) !=
-                    vk::ImageAspectFlags{};
-                const auto depthTargetLayout = depthHasStencil
-                                                   ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                                                   : vk::ImageLayout::eDepthAttachmentOptimal;
-
-                TransitionImageLayout(
-                    rawCmd,
-                    swapchain->GetImages()[imageIndex],
-                    swapchain->GetImageFormat(),
-                    m_SwapchainImageLayouts[imageIndex],
-                    vk::ImageLayout::eColorAttachmentOptimal
-                );
-                TransitionImageLayout(
-                    rawCmd,
-                    m_MainWindowResources.DepthImage.GetImage(),
-                    depthFormat,
-                    m_MainWindowResources.DepthLayout,
-                    depthTargetLayout
-                );
-                m_SwapchainImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
-                m_MainWindowResources.DepthLayout = depthTargetLayout;
-
-                // Begin dynamic rendering directly inside the command buffer
-                vk::RenderingAttachmentInfo colorAttachment{};
-                colorAttachment.imageView = swapchain->GetImageViews()[imageIndex];
-                colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-                colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-                colorAttachment.clearValue = vk::ClearValue(vk::ClearColorValue(0.05f, 0.05f, 0.05f, 1.00f));
-                vk::RenderingAttachmentInfo depthAttachment{};
-                depthAttachment.imageView = m_MainWindowResources.DepthImage.GetImageView();
-                depthAttachment.imageLayout = depthTargetLayout;
-                depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-                depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
-                depthAttachment.clearValue = vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
-
-                vk::RenderingInfo renderingInfo{};
-                renderingInfo.renderArea = vk::Rect2D({0, 0}, swapchain->GetExtent());
-                renderingInfo.layerCount = 1;
-                renderingInfo.colorAttachmentCount = 1;
-                renderingInfo.pColorAttachments = &colorAttachment;
-                renderingInfo.pDepthAttachment = &depthAttachment;
-
-                rawCmd.beginRendering(renderingInfo);
-                {
-                    vk::Viewport viewport{
-                        0.0f, 0.0f,
-                        static_cast<float>(swapchain->GetExtent().width),
-                        static_cast<float>(swapchain->GetExtent().height),
-                        0.0f, 1.0f
-                    };
-                    vk::Rect2D scissor{{0, 0}, swapchain->GetExtent()};
-                    rawCmd.setViewport(0, 1, &viewport);
-                    rawCmd.setScissor(0, 1, &scissor);
-
-                    // TODO
-                    if (m_MainLayerStack)
-                        m_MainLayerStack->OnRender();
-                    if (m_MainLayerStack)
-                        m_MainLayerStack->OnUiRender();
-
-                    auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
-                    if (pipeline)
-                    {
-                        rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
-                        BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
-                        BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
-
-                        struct PushConstants
-                        {
-                            glm::mat4 viewProjection;
-                            glm::mat4 model;
-                            float time;
-                        } pushConstants{};
-                        const float elapsed = static_cast<float>(
-                            std::chrono::duration<double>(
-                                std::chrono::high_resolution_clock::now() - start).count());
-                        const float aspect = static_cast<float>(swapchain->GetExtent().width) /
-                            static_cast<float>(swapchain->GetExtent().height);
-                        pushConstants.viewProjection = glm::perspective(
-                            glm::radians(45.0f), aspect, 0.1f, 100.0f);
-                        pushConstants.viewProjection[1][1] *= -1.0f;
-                        pushConstants.model = glm::translate(
-                            glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
-                        pushConstants.model = glm::rotate(
-                            pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
-                        pushConstants.time = elapsed;
-                        rawCmd.pushConstants(
-                            pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
-                            0, sizeof(pushConstants), &pushConstants);
-                        rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
-                    }
-                    if (m_ImGuiContext)
-                    {
-                        ImGui::Render();
-                        ImGui_ImplVulkan_RenderDrawData(
-                            ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
-                    }
-                }
-                rawCmd.endRendering();
-
-                TransitionImageLayout(
-                    rawCmd,
-                    swapchain->GetImages()[imageIndex],
-                    swapchain->GetImageFormat(),
-                    vk::ImageLayout::eColorAttachmentOptimal,
-                    vk::ImageLayout::ePresentSrcKHR
-                );
-                m_SwapchainImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
-            }
-            cmd.End();
-
-            vk::SubmitInfo submitInfo{};
-
-            // wait for swapchain
-            vk::Semaphore waitSemaphores[] = {frame.ImageAvailableSemaphore.GetSemaphore()};
-            vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
-            submitInfo.waitSemaphoreCount = 1;
-            submitInfo.pWaitSemaphores = waitSemaphores;
-            submitInfo.pWaitDstStageMask = waitStages;
-
-            // signal render finished using one semaphore per swapchain image so the
-            // previous present operation cannot still be using the same semaphore.
-            auto& renderFinishedSemaphore = m_RenderFinishedSemaphores[imageIndex];
-            vk::Semaphore signalSemaphores[] = {renderFinishedSemaphore.GetSemaphore()};
-            submitInfo.signalSemaphoreCount = 1;
-            submitInfo.pSignalSemaphores = signalSemaphores;
-
-            vk::CommandBuffer commandBuffers[] = {cmd.GetCommandBuffer()};
-            submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers = commandBuffers;
-
-            auto result = m_Device->GetGraphicsQueue().submit(
-                1, &submitInfo, frame.InFlightFence.GetFence());
-
-            swapchain->Present(
-                m_Device->GetPresentQueue(),
-                renderFinishedSemaphore.GetSemaphore()
-            );
-            if (m_ImGuiContext &&
-                (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable))
-            {
-                ImGui::UpdatePlatformWindows();
-                ImGui::RenderPlatformWindowsDefault();
-            }
-
-            // m_Logger->Trace("W key pressed: {}", m_InputState->IsKeyDown(ScanCode::W));
         }
         if (m_Device)
             m_Device->WaitIdle();
@@ -1238,13 +981,10 @@ namespace GPP
             }
             m_ShaderPipeline.reset();
         }
-        if (m_ImGuiContext)
+        ShutdownImGuiForWindow(m_MainWindowResources);
+        for (auto& [windowId, resources] : m_WindowResources)
         {
-            ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
-            ImGui_ImplVulkan_Shutdown();
-            ImGui_ImplSDL3_Shutdown();
-            ImGui::DestroyContext(static_cast<ImGuiContext*>(m_ImGuiContext));
-            m_ImGuiContext = nullptr;
+            ShutdownImGuiForWindow(resources);
         }
         for (auto& [bufferId, target] : m_BufferTargets)
         {

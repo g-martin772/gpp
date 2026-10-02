@@ -20,8 +20,11 @@ namespace GPP
         auto* imguiContext = ImGui::GetCurrentContext();
         auto& io = ImGui::GetIO();
         //io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-        io.IniFilename = ".gpp/imgui.ini"; // TODO Why do you refuse my asset path and use some obfuscated idkw
+        // Each window gets its own ImGuiContext/backend pair, so platform viewports
+        // (which spawn additional native windows outside of WindowManager) are left disabled.
+        io.IniFilename = windowResources->ImGuiIniPath.empty()
+                             ? nullptr
+                             : windowResources->ImGuiIniPath.c_str();
         ImGui::StyleColorsDark();
         if (!ImGui_ImplSDL3_InitForVulkan(
             static_cast<SDL_Window*>(windowResources->Window->GetNativeHandle())))
