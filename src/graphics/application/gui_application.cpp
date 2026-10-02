@@ -72,8 +72,23 @@ namespace GPP
         Services.AddHostedService<ShaderAssetCatalog>();
         Services.AddHostedService<Renderer>();
 
+        Services.AddSingleton<HotReloadLayerRegistrations>(
+            [this](ServiceProvider& provider) -> std::shared_ptr<IService>
+            {
+                auto registrations = std::make_shared<HotReloadLayerRegistrations>();
+                registrations->Items.reserve(m_HotReloadLayerDescriptions.size());
+                for (auto& layerBuilder : m_HotReloadLayerDescriptions)
+                {
+                    registrations->Items.push_back(HotReloadLayerRegistration{
+                        layerBuilder.Description, ActivateService<HotReloadLayerProxy>(provider)});
+                }
+                return registrations;
+            });
+        Services.AddHostedService<HotReloadLayerManager>();
+
         Services.Configure<WindowOptions>("GPP:Graphics:Window");
         Services.Configure<RenderOptions>("GPP:Graphics:Render");
+        Services.Configure<LayerHotReloadOptions>("GPP:Graphics:LayerHotReload");
     }
 
     std::shared_ptr<GuiApplication> GuiApplicationBuilder::Build()
@@ -124,6 +139,25 @@ namespace GPP
                 auto layerStack = GuiLayerStack();
                 layerStack.PushLayer(layer);
                 layerStacks[layerBuilder.Target] = layerStack;
+            }
+        }
+
+        if (!m_HotReloadLayerDescriptions.empty())
+        {
+            const auto registrations = sp.GetRequiredService<HotReloadLayerRegistrations>();
+            for (auto& registration : registrations->Items)
+            {
+                const auto& target = registration.Description.Target;
+                if (auto it = layerStacks.find(target); it != layerStacks.end())
+                {
+                    it->second.PushLayer(registration.Proxy);
+                }
+                else
+                {
+                    auto layerStack = GuiLayerStack();
+                    layerStack.PushLayer(registration.Proxy);
+                    layerStacks[target] = layerStack;
+                }
             }
         }
 

@@ -8,3 +8,4 @@ export import :Application.Builder;
 export import :IO;
 export import :Events;
 export import :Math;
+export import :HotReload;

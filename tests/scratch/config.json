@@ -12,6 +12,10 @@
         "ShaderAssetDirectories": ["shaders"],
         "EnableShaderHotReload": true,
         "ShaderHotReloadIntervalMilliseconds": 250
+      },
+      "LayerHotReload": {
+        "Enabled": true,
+        "PollingIntervalMilliseconds": 300
       }
     }
   }

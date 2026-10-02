@@ -1,6 +1,8 @@
 export module GPP.Graphics;
 export import :Windowing;
 export import :Application;
+export import :Application.HotReloadLayer;
+export import :Application.HotReloadLayerManager;
 export import :Vulkan;
 export import :Renderer;
 export import :RenderConfig;

@@ -41,7 +41,7 @@ TEST_CASE("Application lifecycle and main-thread scheduling", "[application][mai
 
     std::thread appThread([&]() {
         appThreadId = std::this_thread::get_id();
-        app.Run();
+        app->Run();
     });
 
     std::this_thread::sleep_for(100ms);

@@ -83,6 +83,7 @@ target_sources(gpp
         BASE_DIRS ${glm_DIR}../../../include/vulkan
         FILES ${glm_DIR}/../../include/vulkan/vulkan.cppm
 )
+target_include_directories(gpp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json gpp_imgui glm::glm)
 target_link_libraries(gpp PUBLIC Vulkan::Vulkan)
 target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Headers GPUOpen::VulkanMemoryAllocator
@@ -92,6 +93,8 @@ if (SHADERC_SHARED_LIBRARY)
 else()
     target_link_libraries(gpp PUBLIC Vulkan::shaderc_combined)
 endif()
+
+include(cmake/GppHotReload.cmake)
 
 # ---- scratch -----
 
@@ -108,6 +111,10 @@ target_link_libraries(scratch PRIVATE gpp)
 #         "${SCRATCH_CONFIG_OUTPUT}")
 # target_sources(scratch PRIVATE "${SCRATCH_CONFIG_OUTPUT}")
 
+gpp_add_hot_reload_layer(demo_hot_reload_layer
+        SOURCES tests/scratch/plugins/demo_hot_reload_layer.cpp
+        OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:scratch>")
+
 # ------ tests -------
 
 add_executable(unit_tests)
@@ -117,6 +124,11 @@ target_sources(unit_tests
         ${TEST_SOURCES})
 target_link_libraries(unit_tests PRIVATE gpp)
 target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain Vulkan::Vulkan)
+
+gpp_add_hot_reload_layer(gpp_test_hot_reload_plugin
+        SOURCES tests/fixtures/hotreload/test_hot_reload_plugin.cpp
+        OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:unit_tests>")
+add_dependencies(unit_tests gpp_test_hot_reload_plugin)
 
 include(CTest)
 include(Catch)

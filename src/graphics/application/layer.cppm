@@ -7,7 +7,7 @@ import :Windowing;
 
 namespace GPP
 {
-    struct LayerTarget
+    export struct LayerTarget
     {
         LayerTarget() = default;
 
@@ -64,7 +64,7 @@ namespace GPP
         friend struct GuiLayerBuilder;
     };
 
-    struct GuiLayerBuilder
+    export struct GuiLayerBuilder
     {
         std::type_index LayerType;
         std::string LayerName;

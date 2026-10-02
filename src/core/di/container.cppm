@@ -15,8 +15,8 @@ namespace GPP
     template <typename T>
     constexpr bool has_dependencies = has_dependencies_impl<T>::value;
 
-    template <typename T, typename Tuple, std::size_t... I, typename Container>
-    std::shared_ptr<T> createInstanceWithDepsImpl(Container& container, std::index_sequence<I...>)
+    template <typename Tuple, std::size_t... I, typename Container, typename MakeFn>
+    auto createWithDepsImpl(Container& container, MakeFn&& makeFn, std::index_sequence<I...>)
     {
         auto resolveDep = [&container]<typename TDep>() -> decltype(auto)
         {
@@ -31,15 +31,14 @@ namespace GPP
             }
         };
 
-        return std::make_shared<T>(
-            resolveDep.template operator()<std::tuple_element_t<I, Tuple>>()...
-        );
+        return makeFn(resolveDep.template operator()<std::tuple_element_t<I, Tuple>>()...);
     }
 
-    template <typename T, typename Tuple, typename Container>
-    std::shared_ptr<T> createInstanceWithDeps(Container& container)
+    template <typename Tuple, typename Container, typename MakeFn>
+    auto createWithDeps(Container& container, MakeFn&& makeFn)
     {
-        return createInstanceWithDepsImpl<T, Tuple>(container, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+        return createWithDepsImpl<Tuple>(
+            container, std::forward<MakeFn>(makeFn), std::make_index_sequence<std::tuple_size_v<Tuple>>{});
     }
 
     template <typename T, typename Container>
@@ -48,11 +47,37 @@ namespace GPP
         if constexpr (has_dependencies<T>)
         {
             using Deps = typename T::Dependencies;
-            return createInstanceWithDeps<T, Deps>(container);
+            return createWithDeps<Deps>(container, [](auto&&... args)
+            {
+                return std::make_shared<T>(std::forward<decltype(args)>(args)...);
+            });
         }
         else
         {
             return std::make_shared<T>();
+        }
+    }
+
+    export template <typename T, typename Container>
+    std::shared_ptr<T> ActivateService(Container& container)
+    {
+        return createInstance<T>(container);
+    }
+
+    export template <typename T, typename Container>
+    T* ActivateRaw(Container& container)
+    {
+        if constexpr (has_dependencies<T>)
+        {
+            using Deps = typename T::Dependencies;
+            return createWithDeps<Deps>(container, [](auto&&... args)
+            {
+                return new T(std::forward<decltype(args)>(args)...);
+            });
+        }
+        else
+        {
+            return new T();
         }
     }
 

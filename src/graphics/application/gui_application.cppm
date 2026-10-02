@@ -1,6 +1,8 @@
 export module GPP.Graphics:Application;
 
 export import :Application.Layer;
+export import :Application.HotReloadLayer;
+export import :Application.HotReloadLayerManager;
 
 import std;
 import GPP.Core;
@@ -63,8 +65,15 @@ namespace GPP
             return m_LayerDescriptions.back();
         }
 
+        HotReloadLayerBuilder& AddHotReloadableLayer(std::string id, std::filesystem::path libraryPath)
+        {
+            m_HotReloadLayerDescriptions.emplace_back(std::move(id), std::move(libraryPath));
+            return m_HotReloadLayerDescriptions.back();
+        }
+
     private:
         std::vector<GuiLayerBuilder> m_LayerDescriptions;
+        std::vector<HotReloadLayerBuilder> m_HotReloadLayerDescriptions;
         WindowDefinitions m_WindowDefinitions;
         bool m_Headless = false;
     };

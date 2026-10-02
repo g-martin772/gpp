@@ -188,6 +188,9 @@ int main(int argc, char* argv[])
     builder.AddGuiLayer<ViewportLayer>()
            .SetBufferTarget(5);
 
+    builder.AddHotReloadableLayer("demo-layer", "demo_hot_reload_layer.so")
+           .SetWindowTarget("main");
+
     auto app = builder.Build();
 
 

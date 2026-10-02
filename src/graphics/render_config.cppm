@@ -39,4 +39,24 @@ namespace GPP
             return options;
         }
     };
+
+    export struct LayerHotReloadOptions : public IService
+    {
+        bool Enabled = false;
+        std::chrono::milliseconds PollingInterval{300};
+        std::filesystem::path ShadowDirectory{".gpp/hot-reload-cache"};
+        bool ShadowCopy = true;
+
+        static LayerHotReloadOptions FromConfig(const IConfigurationSection& config)
+        {
+            LayerHotReloadOptions options;
+            options.Enabled = config.GetValue<bool>("Enabled", false);
+            options.PollingInterval = std::chrono::milliseconds(
+                std::max(1, config.GetValue<int>("PollingIntervalMilliseconds", 300)));
+            options.ShadowDirectory = config.GetValue<std::string>(
+                "ShadowDirectory", ".gpp/hot-reload-cache");
+            options.ShadowCopy = config.GetValue<bool>("ShadowCopy", true);
+            return options;
+        }
+    };
 }

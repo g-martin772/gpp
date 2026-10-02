@@ -52,7 +52,7 @@ TEST_CASE("Configuration supports JSON file mapping and typed parsing", "[applic
     });
 
     auto app = builder.Build();
-    const auto& config = app.GetConfiguration();
+    const auto& config = app->GetConfiguration();
 
     CHECK(config.GetSection("Graphics:Window")->GetValue<int>("Width", 0) == 1600);
     CHECK(config.GetSection("Graphics:Window")->GetValue<int>("Height", 0) == 900);
@@ -60,7 +60,7 @@ TEST_CASE("Configuration supports JSON file mapping and typed parsing", "[applic
     CHECK(config.GetSection("Graphics:Adapters")->GetValue<std::string>("0", "") == "vk0");
     CHECK(config.GetSection("Graphics:Adapters")->GetValue<std::string>("1", "") == "vk1");
 
-    const auto options = app.GetServiceProvider().GetRequiredService<WindowOptions>();
+    const auto options = app->GetServiceProvider().GetRequiredService<WindowOptions>();
     CHECK(options->Width == 1600);
     CHECK(options->Height == 900);
     CHECK(options->Fullscreen);
@@ -89,14 +89,14 @@ TEST_CASE("Configuration supports prefixed environment variables and defaults", 
     });
 
     auto app = builder.Build();
-    auto section = app.GetConfiguration().GetSection("Graphics:Window");
+    auto section = app->GetConfiguration().GetSection("Graphics:Window");
     CHECK(section->GetValue<int>("Width", 0) == 1920);
     CHECK(section->GetValue<int>("Height", 0) == 1080);
     CHECK(section->GetValue<bool>("Fullscreen", false));
     CHECK(section->GetValue<std::string>("Title", "") == "FromEnv");
-    CHECK(app.GetConfiguration().GetSection("Missing:Path")->GetValue<int>("Width", 77) == 77);
+    CHECK(app->GetConfiguration().GetSection("Missing:Path")->GetValue<int>("Width", 77) == 77);
 
-    const auto options = app.GetServiceProvider().GetRequiredService<WindowOptions>();
+    const auto options = app->GetServiceProvider().GetRequiredService<WindowOptions>();
     CHECK(options->Width == 1920);
     CHECK(options->Height == 1080);
     CHECK(options->Fullscreen);
@@ -134,15 +134,15 @@ TEST_CASE("Configuration supports command line forms and precedence", "[applicat
     });
 
     auto app = builder.Build();
-    auto section = app.GetConfiguration().GetSection("Graphics:Window");
+    auto section = app->GetConfiguration().GetSection("Graphics:Window");
 
     CHECK(section->GetValue<int>("Width", 0) == 1280);
     CHECK(section->GetValue<std::string>("Title", "") == "CLI Window");
     CHECK(section->GetValue<int>("Height", 720) == 720);
     CHECK(section->GetValue<bool>("Fullscreen", false));
-    CHECK(app.GetConfiguration().GetValue("Flag") == "true");
+    CHECK(app->GetConfiguration().GetValue("Flag") == "true");
 
-    const auto options = app.GetServiceProvider().GetRequiredService<WindowOptions>();
+    const auto options = app->GetServiceProvider().GetRequiredService<WindowOptions>();
     CHECK(options->Width == 1280);
     CHECK(options->Height == 720);
     CHECK(options->Fullscreen);
