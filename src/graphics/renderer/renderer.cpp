@@ -14,12 +14,6 @@ namespace GPP
 {
     Renderer::WindowResources::~WindowResources()
     {
-        if (Device)
-        {
-            Device->WaitIdle();
-        }
-
-        CommandPool = nullptr;
         SwapChain = nullptr;
         if (Surface)
         {
@@ -44,6 +38,7 @@ namespace GPP
     Renderer::Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                        const std::shared_ptr<WindowManager>& windowManager,
                        const std::shared_ptr<WindowOptions>& windowOptions,
+                       const std::shared_ptr<WindowDefinitions>& windowDefinitions,
                        const std::shared_ptr<RenderOptions>& renderOptions,
                        const std::shared_ptr<Logger>& logger,
                        const std::shared_ptr<IFileSystem>& fileSystem,
@@ -52,12 +47,24 @@ namespace GPP
         : m_VulkanContext(std::move(vulkanContext)),
           m_WindowManager(std::move(windowManager)),
           m_WindowOptions(std::move(windowOptions)),
+        m_WindowDefinitions(std::move(windowDefinitions)),
           m_RenderOptions(std::move(renderOptions)),
           m_Logger(std::move(logger)),
           m_FileSystem(std::move(fileSystem)),
           m_InputState(std::move(inputState)),
           m_Dispatcher(std::move(dispatcher))
     {
+    }
+
+    const std::shared_ptr<VulkanSwapChain>& Renderer::GetSwapChain(WindowId id) const noexcept
+    {
+        if (m_MainWindowResources.Window && id == m_MainWindowResources.Window->GetID())
+        {
+            return m_MainWindowResources.SwapChain;
+        }
+        static const std::shared_ptr<VulkanSwapChain> empty;
+        const auto it = m_WindowResources.find(id);
+        return it == m_WindowResources.end() ? empty : it->second.SwapChain;
     }
 
     ShaderCompilationProgress Renderer::GetShaderCompilationProgress() const
@@ -81,15 +88,40 @@ namespace GPP
 
     void Renderer::AttachLayerStackToWindow(GuiLayerStack& layerStack, const std::shared_ptr<Window>& window)
     {
-        if (window->GetID() != WindowManager::MainWindowId) return;
-
-        m_MainLayerStack = &layerStack;
+        if (!window) return;
         std::scoped_lock lock(m_RenderQueueMutex);
-        m_RenderQueue.push([this]
+        m_RenderQueue.push([this, &layerStack, window]
         {
-            if (m_MainLayerStack)
-                m_MainLayerStack->OnAttach();
+            const auto id = window->GetID();
+            if (m_MainWindowResources.Window && id == m_MainWindowResources.Window->GetID())
+            {
+                m_MainLayerStack = &layerStack;
+            }
+            else if (const auto it = m_WindowResources.find(id); it != m_WindowResources.end())
+            {
+                it->second.LayerStack = &layerStack;
+            }
+            layerStack.OnAttach();
         });
+    }
+
+    Task<std::shared_ptr<Window>> Renderer::CreateWindow(const WindowOptions& options, std::string name)
+    {
+        if (m_WindowManager->IsHeadless())
+        {
+            throw std::runtime_error("Cannot create a window while running headless.");
+        }
+        auto window = co_await m_WindowManager->CreateWindow(options, std::move(name));
+        {
+            std::scoped_lock lock(m_RenderQueueMutex);
+            m_RenderQueue.push([this, window]
+            {
+                auto& resources = m_WindowResources[window->GetID()];
+                resources.Window = window;
+                InitializeWindowResources(window, resources);
+            });
+        }
+        co_return window;
     }
 
     void Renderer::AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId)
@@ -103,19 +135,23 @@ namespace GPP
             auto& target = m_BufferTargets[bufferId];
             target.LayerStack = &layerStack;
             target.ColorImage.Create(
-                m_MainWindowResources.Device,
+                m_Device,
                 VulkanImageSpecification{
                     .extent = {target.Extent.x, target.Extent.y, 1},
-                    .format = m_MainWindowResources.SwapChain->GetImageFormat(),
+                    .format = m_MainWindowResources.SwapChain
+                                  ? m_MainWindowResources.SwapChain->GetImageFormat()
+                                  : vk::Format::eB8G8R8A8Unorm,
                     .usage = vk::ImageUsageFlagBits::eColorAttachment |
                     vk::ImageUsageFlagBits::eSampled,
                     .aspectMask = vk::ImageAspectFlagBits::eColor,
                     .createSampler = true,
                     .debugName = "BufferTargetColor"
                 });
-            const auto depthFormat = m_MainWindowResources.SwapChain->GetDepthImageFormat();
+            const auto depthFormat = m_MainWindowResources.SwapChain
+                                         ? m_MainWindowResources.SwapChain->GetDepthImageFormat()
+                                         : m_Device->GetDepthFormat();
             target.DepthImage.Create(
-                m_MainWindowResources.Device,
+                m_Device,
                 VulkanImageSpecification{
                     .extent = {target.Extent.x, target.Extent.y, 1},
                     .format = depthFormat,
@@ -124,10 +160,12 @@ namespace GPP
                     .debugName = "BufferTargetDepth"
                 });
             target.ImGuiTexture = reinterpret_cast<void*>(
-                ImGui_ImplVulkan_AddTexture(
-                    target.ColorImage.GetSampler(),
-                    target.ColorImage.GetImageView(),
-                    static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
+                m_ImGuiContext
+                    ? reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
+                        target.ColorImage.GetSampler(),
+                        target.ColorImage.GetImageView(),
+                        static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)))
+                    : nullptr);
             target.LayerStack->OnAttach();
             m_Logger->Info("Created render target {}", bufferId);
         });
@@ -248,63 +286,56 @@ namespace GPP
 
         m_FileSystem->RegisterAssetDirectory("shaders", m_FileSystem->GetBinaryDirectory() / ".." / "shaders");
 
-        m_MainWindowResources.Window = m_WindowManager->CreateWindow(*m_WindowOptions).get();
-        vk::SurfaceKHR surface;
-        if (!m_MainWindowResources.Window->CreateVulkanSurface(
-            m_VulkanContext->GetInstance(), &surface).get())
+        if (!m_WindowManager->IsHeadless())
         {
-            m_Logger->Error("Failed to create Vulkan surface for window.");
-            return;
+            m_MainWindowResources.Window =
+                m_WindowManager->CreateWindow(
+                    *m_WindowOptions, std::string(WindowManager::MainWindowName)).get();
+            if (!m_MainWindowResources.Window->CreateVulkanSurface(
+                m_VulkanContext->GetInstance(), &m_MainWindowResources.Surface).get())
+            {
+                throw std::runtime_error("Failed to create Vulkan surface for main window.");
+            }
         }
-        m_MainWindowResources.Surface = surface;
-        m_MainWindowResources.Device = std::make_shared<VulkanDevice>(
+        const auto surface = m_MainWindowResources.Surface;
+        m_Device = std::make_shared<VulkanDevice>(
             DeviceRequirements{
                 .Graphics = true,
                 .Compute = false,
                 .Transfer = true,
                 .Sparse = true,
-                .Present = true,
-                .Surface = m_MainWindowResources.Surface
+                .Present = !m_WindowManager->IsHeadless(),
+                .Surface = surface
             }, m_VulkanContext, m_Logger);
-        m_MainWindowResources.SwapChain = std::make_shared<VulkanSwapChain>(
-            m_MainWindowResources.Device,
-            m_Logger,
-            //m_MainWindowResources.Window->GetSize(),
-            glm::uvec2{10000, 10000},
-            m_MainWindowResources.Surface
-        );
-        const auto depthFormat = m_MainWindowResources.SwapChain->GetDepthImageFormat();
-        const auto depthAspectMask = GetImageAspectMask(depthFormat);
-        const bool depthHasStencil = (depthAspectMask & vk::ImageAspectFlagBits::eStencil) != vk::ImageAspectFlags{};
-        m_MainWindowResources.DepthImage.Create(
-            m_MainWindowResources.Device,
-            VulkanImageSpecification{
-                .extent = {
-                    m_MainWindowResources.SwapChain->GetExtent().width,
-                    m_MainWindowResources.SwapChain->GetExtent().height, 1
-                },
-                .format = depthFormat,
-                .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
-                .aspectMask = depthAspectMask,
-                .debugName = "DemoDepthBuffer"
-            });
-        m_MainWindowResources.DepthLayout = vk::ImageLayout::eUndefined;
-
-        m_MainWindowResources.CommandPool = std::make_shared<VulkanCommandPool>(
-            m_MainWindowResources.Device,
-            m_Logger,
-            m_MainWindowResources.Device->GetQueueIndices().Graphics
-        );
-
-
-        m_ImGuiContext = InitializeImGui(m_MainWindowResources.Device, &m_MainWindowResources, m_Logger);
+        if (!m_Device)
+        {
+            throw std::runtime_error("Failed to create Vulkan device.");
+        }
+        m_CommandPool = std::make_shared<VulkanCommandPool>(
+            m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
+        if (m_MainWindowResources.Window)
+        {
+            InitializeWindowResources(m_MainWindowResources.Window, m_MainWindowResources);
+            for (const auto& definition : m_WindowDefinitions->Items)
+            {
+                auto window = m_WindowManager->CreateWindow(
+                    definition.Options, definition.Name).get();
+                auto& resources = m_WindowResources[window->GetID()];
+                InitializeWindowResources(window, resources);
+            }
+        }
+        if (m_WindowManager->IsHeadless())
+        {
+            return;
+        }
+        m_ImGuiContext = InitializeImGui(m_Device, &m_MainWindowResources, m_Logger);
 
         m_FrameResources.reserve(2);
         for (int i = 0; i < 2; i++)
         {
             m_FrameResources.emplace_back(std::move(FrameResources(
-                m_MainWindowResources.CommandPool->AllocateCommandBuffer(),
-                m_MainWindowResources.Device->GetDevice())));
+                m_CommandPool->AllocateCommandBuffer(),
+                m_Device->GetDevice())));
         }
 
         m_RenderFinishedSemaphores.clear();
@@ -313,13 +344,13 @@ namespace GPP
         m_RenderFinishedSemaphores.reserve(imageCount);
         for (std::uint32_t i = 0; i < imageCount; ++i)
         {
-            m_RenderFinishedSemaphores.emplace_back(VulkanSemaphore(m_MainWindowResources.Device->GetDevice()));
+            m_RenderFinishedSemaphores.emplace_back(VulkanSemaphore(m_Device->GetDevice()));
         }
 
         const auto vertexSource = m_FileSystem->ResolveAssetPath("shaders", "vert.vert");
         const auto fragmentSource = m_FileSystem->ResolveAssetPath("shaders", "frag.frag");
         m_ShaderPipeline = std::make_shared<ShaderPipeline>(
-            m_MainWindowResources.Device,
+            m_Device,
             VulkanPipelineSpecification{
                 .colorFormat = m_MainWindowResources.SwapChain->GetImageFormat(),
                 .depthFormat = m_MainWindowResources.SwapChain->GetDepthImageFormat(),
@@ -368,13 +399,42 @@ namespace GPP
             5, 4, 7, 7, 6, 5, 4, 0, 3, 3, 7, 4,
             3, 2, 6, 6, 7, 3, 4, 5, 1, 1, 0, 4
         };
-        m_VertexBuffer.Create(m_MainWindowResources.Device,
+        m_VertexBuffer.Create(m_Device,
                               MakeVertexBufferSpecification(sizeof(vertices), true));
         m_VertexBuffer.Upload(vertices.data(), sizeof(vertices));
-        m_IndexBuffer.Create(m_MainWindowResources.Device,
+        m_IndexBuffer.Create(m_Device,
                              MakeIndexBufferSpecification(sizeof(indices), true));
         m_IndexBuffer.Upload(indices.data(), sizeof(indices));
         m_IndexCount = static_cast<std::uint32_t>(indices.size());
+    }
+
+    void Renderer::InitializeWindowResources(const std::shared_ptr<Window>& window,
+                                             WindowResources& resources)
+    {
+        resources.Device = m_Device;
+        resources.Window = window;
+        if (!resources.Surface && !window->CreateVulkanSurface(
+                m_VulkanContext->GetInstance(), &resources.Surface).get())
+        {
+            throw std::runtime_error("Failed to create Vulkan surface for window.");
+        }
+        resources.SwapChain = std::make_shared<VulkanSwapChain>(
+            m_Device, m_Logger, glm::uvec2{10000, 10000}, resources.Surface);
+        const auto depthFormat = resources.SwapChain->GetDepthImageFormat();
+        resources.DepthImage.Create(
+            m_Device,
+            VulkanImageSpecification{
+                .extent = {
+                    resources.SwapChain->GetExtent().width,
+                    resources.SwapChain->GetExtent().height,
+                    1
+                },
+                .format = depthFormat,
+                .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                .aspectMask = GetImageAspectMask(depthFormat),
+                .debugName = "WindowDepthBuffer"
+            });
+        resources.DepthLayout = vk::ImageLayout::eUndefined;
     }
 
     Task<void> Renderer::StopRenderSystem()
@@ -404,6 +464,11 @@ namespace GPP
                 pendingTasks.pop();
                 task();
             }
+            if (m_WindowManager->IsHeadless())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                continue;
+            }
             {
                 std::scoped_lock lock(m_RenderQueueMutex);
                 if (m_MainWindowResources.Window && m_MainWindowResources.SwapChain)
@@ -431,7 +496,7 @@ namespace GPP
 
             FrameResources& frame = m_FrameResources[m_FrameIndex];
 
-            vk::Device device = m_MainWindowResources.Device->GetDevice();
+            vk::Device device = m_Device->GetDevice();
             const auto& swapchain = m_MainWindowResources.SwapChain;
 
             frame.InFlightFence.WaitAndReset();
@@ -449,12 +514,15 @@ namespace GPP
 
             auto& cmd = frame.CommandBuffer;
             cmd.Begin();
-            ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
-            ImGui_ImplVulkan_NewFrame();
-            ImGui_ImplSDL3_NewFrame();
-            ImGui::NewFrame();
-            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
-                ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+            if (m_ImGuiContext)
+            {
+                ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+                ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplSDL3_NewFrame();
+                ImGui::NewFrame();
+                if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
+                    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+            }
 
             {
                 vk::CommandBuffer rawCmd = cmd.GetCommandBuffer();
@@ -658,9 +726,12 @@ namespace GPP
                             0, sizeof(pushConstants), &pushConstants);
                         rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
                     }
-                    ImGui::Render();
-                    ImGui_ImplVulkan_RenderDrawData(
-                        ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
+                    if (m_ImGuiContext)
+                    {
+                        ImGui::Render();
+                        ImGui_ImplVulkan_RenderDrawData(
+                            ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
+                    }
                 }
                 rawCmd.endRendering();
 
@@ -695,14 +766,15 @@ namespace GPP
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = commandBuffers;
 
-            auto result = m_MainWindowResources.Device->GetGraphicsQueue().submit(
+            auto result = m_Device->GetGraphicsQueue().submit(
                 1, &submitInfo, frame.InFlightFence.GetFence());
 
             swapchain->Present(
-                m_MainWindowResources.Device->GetPresentQueue(),
+                m_Device->GetPresentQueue(),
                 renderFinishedSemaphore.GetSemaphore()
             );
-            if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable || true)
+            if (m_ImGuiContext &&
+                (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable))
             {
                 ImGui::UpdatePlatformWindows();
                 ImGui::RenderPlatformWindowsDefault();
@@ -710,7 +782,8 @@ namespace GPP
 
             // m_Logger->Trace("W key pressed: {}", m_InputState->IsKeyDown(ScanCode::W));
         }
-        m_MainWindowResources.Device->WaitIdle();
+        if (m_Device)
+            m_Device->WaitIdle();
         if (m_ShaderPipeline)
         {
             m_ShaderPipeline->StopAsync().get();
@@ -745,15 +818,24 @@ namespace GPP
         m_IndexBuffer.Destroy();
         m_RenderFinishedSemaphores.clear();
         m_FrameResources.clear();
-        m_MainWindowResources.CommandPool.reset();
+        m_CommandPool.reset();
         m_MainWindowResources.SwapChain.reset();
         if (m_MainWindowResources.Surface)
         {
-            m_MainWindowResources.Device->GetInstance().destroySurfaceKHR(m_MainWindowResources.Surface);
+            m_Device->GetInstance().destroySurfaceKHR(m_MainWindowResources.Surface);
             m_MainWindowResources.Surface = nullptr;
         }
+        for (auto& [windowId, resources] : m_WindowResources)
+        {
+            if (resources.Surface)
+            {
+                m_Device->GetInstance().destroySurfaceKHR(resources.Surface);
+                resources.Surface = nullptr;
+            }
+        }
         m_MainWindowResources.Window.reset();
-        m_MainWindowResources.Device.reset();
+        m_WindowResources.clear();
+        m_Device.reset();
         std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         auto averageFps = iterations / (duration.count() / 1000.0);

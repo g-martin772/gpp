@@ -28,7 +28,9 @@ namespace GPP
                 if (target.Type == LayerTarget::Type::eLayerTargetWindow)
                 {
                     // TODO: Wait on individual window to be created
-                    const auto& window = wm->GetWindow(target.Id);
+                    const auto window = !target.Name.empty()
+                                            ? wm->GetWindow(target.Name)
+                                            : wm->GetWindow(target.Id);
                     if (!window)
                     {
                         throw std::runtime_error("Window for LayerTarget not found");
@@ -60,6 +62,11 @@ namespace GPP
     {
         Services.AddSingleton<VulkanContext>();
         Services.AddSingleton<InputState>();
+        Services.AddSingleton<WindowDefinitions>(
+            [this](ServiceProvider&) -> std::shared_ptr<IService>
+            {
+                return std::make_shared<WindowDefinitions>(m_WindowDefinitions);
+            });
 
         Services.AddHostedService<WindowManager>();
         Services.AddHostedService<ShaderAssetCatalog>();
@@ -73,6 +80,34 @@ namespace GPP
     {
         auto config = Configuration.Build();
         Services.ApplyConfiguration(*config);
+        if (const auto windows = config->GetSection("GPP:Graphics:Windows"))
+        {
+            for (std::size_t index = 0;; ++index)
+            {
+                const auto section = windows->GetSection(std::to_string(index));
+                std::string name;
+                if (!section->TryGetValue("Name", name) || name.empty())
+                {
+                    break;
+                }
+
+                auto options = WindowOptions::FromConfig(*section);
+                m_WindowDefinitions.Items.push_back(WindowDefinition{
+                    .Name = std::move(name),
+                    .Options = std::move(options)
+                });
+            }
+        }
+        if (m_Headless)
+        {
+            auto options = WindowOptions::FromConfig(*config->GetSection("GPP:Graphics:Window"));
+            options.Headless = true;
+            Services.AddSingleton<WindowOptions>(
+                [options](ServiceProvider&) -> std::shared_ptr<IService>
+                {
+                    return std::make_shared<WindowOptions>(options);
+                });
+        }
         auto sp = Services.Build();
         LayerStackTable layerStacks;
 

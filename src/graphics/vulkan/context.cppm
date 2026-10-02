@@ -32,7 +32,7 @@ namespace GPP
 
         vk::DebugUtilsMessengerCreateInfoEXT CreateDebugMessengerCreateInfo() const noexcept;
         bool CheckValidationLayerSupport();
-        static std::vector<const char*> GetRequiredExtensions();
+        std::vector<const char*> GetRequiredExtensions() const;
 
         vk::Instance m_Instance{nullptr};
         vk::DebugUtilsMessengerEXT m_DebugMessenger{nullptr};

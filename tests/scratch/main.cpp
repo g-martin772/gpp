@@ -3,6 +3,22 @@ import std;
 
 using namespace GPP;
 
+struct DynamicLayer : public GuiLayer
+{
+    using Dependencies = std::tuple<Logger>;
+
+    explicit DynamicLayer(const std::shared_ptr<Logger>& logger) : GuiLayer(logger)
+    {
+    }
+
+    void OnUiRender() override
+    {
+        ImGui::Begin("Dynamic window");
+        ImGui::TextUnformatted("This layer was attached after startup.");
+        ImGui::End();
+    }
+};
+
 class TestService : public IHostedService
 {
 public:
@@ -37,9 +53,11 @@ private:
         secondOptions.Title = "GPP Secondary Window";
         secondOptions.Width = 800;
         secondOptions.Height = 600;
-        m_SecondaryWindow = co_await m_WM->CreateWindow(secondOptions);
+        m_SecondaryWindow = co_await m_Renderer->CreateWindow(secondOptions, "dynamic");
+        m_DynamicLayerStack.PushLayer(std::make_shared<DynamicLayer>(m_Logger));
+        m_Renderer->AttachLayerStackToWindow(m_DynamicLayerStack, m_SecondaryWindow);
         m_Logger->Info("Secondary engine window created with ID {}", m_SecondaryWindow->GetID());
-        co_await DelayAsync(std::chrono::seconds(1));
+        //co_await DelayAsync(std::chrono::seconds(1));
         //co_await m_WM->ShowMessageBox("Test", "This is a test message.");
         co_return;
     }
@@ -49,6 +67,7 @@ private:
     std::shared_ptr<Logger> m_Logger;
     std::shared_ptr<Renderer> m_Renderer;
     std::shared_ptr<Window> m_SecondaryWindow;
+    GuiLayerStack m_DynamicLayerStack;
 };
 
 struct MainLayer : public GuiLayer
@@ -131,6 +150,22 @@ private:
     std::shared_ptr<Renderer> m_Renderer;
 };
 
+struct SecondaryLayer : public GuiLayer
+{
+    using Dependencies = std::tuple<Logger>;
+
+    explicit SecondaryLayer(const std::shared_ptr<Logger>& logger) : GuiLayer(logger)
+    {
+    }
+
+    void OnUiRender() override
+    {
+        ImGui::Begin("Secondary window");
+        ImGui::TextUnformatted("This layer was declared with the builder.");
+        ImGui::End();
+    }
+};
+
 int main(int argc, char* argv[])
 {
     auto builder = GuiApplicationBuilder();
@@ -140,10 +175,18 @@ int main(int argc, char* argv[])
            .AddCommandLine(argc, argv)
            .AddEnvironmentVariables();
 
+    WindowOptions upfrontOptions;
+    upfrontOptions.Width = 800;
+    upfrontOptions.Height = 600;
+    upfrontOptions.Title = "GPP Upfront Window";
+    builder.AddWindow("upfront", upfrontOptions);
+    builder.AddGuiLayer<SecondaryLayer>()
+           .SetWindowTarget("upfront");
+
     builder.Services.AddHostedService<TestService>();
 
     builder.AddGuiLayer<MainLayer>()
-           .SetWindowTarget(WindowManager::MainWindowId);
+           .SetWindowTarget("main");
     builder.AddGuiLayer<ViewportLayer>()
            .SetBufferTarget(5);
 

@@ -18,12 +18,13 @@ namespace GPP
     export class Renderer : public IHostedService
     {
     public:
-        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, RenderOptions,
+        using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, WindowDefinitions, RenderOptions,
                                          Logger, IFileSystem, InputState, EventDispatcher>;
 
         Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                  const std::shared_ptr<WindowManager>& windowManager,
                  const std::shared_ptr<WindowOptions>& windowOptions,
+                 const std::shared_ptr<WindowDefinitions>& windowDefinitions,
                  const std::shared_ptr<RenderOptions>& renderOptions,
                  const std::shared_ptr<Logger>& logger,
                  const std::shared_ptr<IFileSystem>& fileSystem,
@@ -39,12 +40,16 @@ namespace GPP
             co_return;
         }
 
-        const std::shared_ptr<VulkanDevice>& GetDevice() const noexcept { return m_MainWindowResources.Device; }
+        const std::shared_ptr<VulkanDevice>& GetDevice() const noexcept { return m_Device; }
 
         const std::shared_ptr<VulkanSwapChain>& GetSwapChain() const noexcept
         {
             return m_MainWindowResources.SwapChain;
         }
+
+        const std::shared_ptr<VulkanSwapChain>& GetSwapChain(WindowId id) const noexcept;
+        Task<std::shared_ptr<Window>> CreateWindow(const WindowOptions& options,
+                                                   std::string name = {});
 
         ShaderCompilationProgress GetShaderCompilationProgress() const;
         ShaderPipelineMetadata GetShaderPipelineMetadata() const;
@@ -72,24 +77,29 @@ namespace GPP
             std::shared_ptr<VulkanSwapChain> SwapChain;
             VulkanImage DepthImage;
             vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
-            std::shared_ptr<VulkanCommandPool> CommandPool;
+            GuiLayerStack* LayerStack = nullptr;
 
             ~WindowResources();
         };
 
     private:
         void InitializeRenderSystem();
+        void InitializeWindowResources(const std::shared_ptr<Window>& window,
+                                       WindowResources& resources);
         Task<void> StopRenderSystem();
         void RenderLoop(std::stop_token stopToken);
 
         std::shared_ptr<VulkanContext> m_VulkanContext;
         std::shared_ptr<WindowManager> m_WindowManager;
         std::shared_ptr<WindowOptions> m_WindowOptions;
+        std::shared_ptr<WindowDefinitions> m_WindowDefinitions;
         std::shared_ptr<RenderOptions> m_RenderOptions;
         std::shared_ptr<IFileSystem> m_FileSystem;
         std::shared_ptr<Logger> m_Logger;
         std::shared_ptr<InputState> m_InputState;
         std::shared_ptr<EventDispatcher> m_Dispatcher;
+        std::shared_ptr<VulkanDevice> m_Device;
+        std::shared_ptr<VulkanCommandPool> m_CommandPool;
         EventSubscription m_ResizeSubscription{};
         std::vector<EventSubscription> m_ImGuiInputSubscriptions{};
         mutable std::mutex m_RenderQueueMutex{};
@@ -125,6 +135,7 @@ namespace GPP
         };
 
         WindowResources m_MainWindowResources{};
+        std::unordered_map<WindowId, WindowResources> m_WindowResources{};
         std::vector<FrameResources> m_FrameResources{};
         std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
         std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};

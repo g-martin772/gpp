@@ -8,6 +8,7 @@ module GPP.Graphics;
 import std;
 import GPP.Core;
 import :Vulkan.Context;
+import :Windowing.WindowManager;
 
 namespace GPP
 {
@@ -202,8 +203,16 @@ namespace GPP
         return true;
     }
 
-    std::vector<const char*> VulkanContext::GetRequiredExtensions()
+    std::vector<const char*> VulkanContext::GetRequiredExtensions() const
     {
+        if (m_WindowManager->IsHeadless())
+        {
+            if (s_EnableValidationLayers)
+            {
+                return {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
+            }
+            return {};
+        }
         uint32_t sdlExtensionCount = 0;
         const char* const* sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
 

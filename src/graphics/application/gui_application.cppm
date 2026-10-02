@@ -39,6 +39,21 @@ namespace GPP
         GuiApplicationBuilder();
         std::shared_ptr<GuiApplication> Build() override;
 
+        GuiApplicationBuilder& SetHeadless(bool enabled = true)
+        {
+            m_Headless = enabled;
+            return *this;
+        }
+
+        GuiApplicationBuilder& AddWindow(std::string name, WindowOptions options)
+        {
+            m_WindowDefinitions.Items.push_back(WindowDefinition{
+                .Name = std::move(name),
+                .Options = std::move(options)
+            });
+            return *this;
+        }
+
         template <typename TLayer> requires std::is_base_of_v<GuiLayer, TLayer>
         GuiLayerBuilder& AddGuiLayer()
         {
@@ -50,5 +65,7 @@ namespace GPP
 
     private:
         std::vector<GuiLayerBuilder> m_LayerDescriptions;
+        WindowDefinitions m_WindowDefinitions;
+        bool m_Headless = false;
     };
 }

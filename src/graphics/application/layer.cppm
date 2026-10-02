@@ -20,6 +20,7 @@ namespace GPP
 
         Type Type{Type::eNone};
         std::uint32_t Id = -1;
+        std::string Name;
 
         bool operator==(const LayerTarget&) const = default;
     };
@@ -78,6 +79,14 @@ namespace GPP
         {
             Target.Type = LayerTarget::Type::eLayerTargetWindow;
             Target.Id = target;
+            return *this;
+        }
+
+        GuiLayerBuilder& SetWindowTarget(std::string name)
+        {
+            Target.Type = LayerTarget::Type::eLayerTargetWindow;
+            Target.Id = -1;
+            Target.Name = std::move(name);
             return *this;
         }
 
@@ -178,6 +187,7 @@ struct std::hash<GPP::LayerTarget>
     {
         std::size_t h1 = std::hash<std::uint32_t>{}(static_cast<std::uint32_t>(target.Type));
         std::size_t h2 = std::hash<std::uint32_t>{}(target.Id);
-        return h1 ^ (h2 << 1);
+        std::size_t h3 = std::hash<std::string>{}(target.Name);
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
     }
 };

@@ -15,11 +15,12 @@ namespace GPP
 
     export struct WindowOptions : public IService
     {
-        int Width;
-        int Height;
-        std::string Title;
-        bool Resizable;
-        bool Fullscreen;
+        int Width = 1280;
+        int Height = 720;
+        std::string Title = "GPP Engine";
+        bool Resizable = true;
+        bool Fullscreen = false;
+        bool Headless = false;
 
         static WindowOptions FromConfig(const IConfigurationSection& config)
         {
@@ -29,8 +30,20 @@ namespace GPP
             options.Title = config.GetValue<std::string>("Title", "GPP Engine");
             options.Resizable = config.GetValue<bool>("Resizable", true);
             options.Fullscreen = config.GetValue<bool>("Fullscreen", false);
+            options.Headless = config.GetValue<bool>("Headless", false);
             return options;
         }
+    };
+
+    export struct WindowDefinition
+    {
+        std::string Name;
+        WindowOptions Options;
+    };
+
+    export struct WindowDefinitions : public IService
+    {
+        std::vector<WindowDefinition> Items;
     };
 
     export class Window

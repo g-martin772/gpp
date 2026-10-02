@@ -7,8 +7,14 @@ import :Windowing.WindowManager;
 
 namespace GPP
 {
-    WindowManager::WindowManager(std::shared_ptr<Logger> logger, std::shared_ptr<EventDispatcher> dispatcher)
-        : m_Logger(std::move(logger)), m_Dispatcher(std::move(dispatcher))
+    WindowManager::WindowManager(std::shared_ptr<Logger> logger,
+                                 std::shared_ptr<EventDispatcher> dispatcher,
+                                 std::shared_ptr<WindowDefinitions> definitions,
+                                 std::shared_ptr<WindowOptions> options)
+        : m_Logger(std::move(logger)),
+          m_Dispatcher(std::move(dispatcher)),
+          m_Definitions(std::move(definitions)),
+          m_Options(std::move(options))
     {
     }
 
@@ -20,6 +26,13 @@ namespace GPP
     {
         Application::Instance().ScheduleOnMainThread([this]
         {
+            if (IsHeadless())
+            {
+                m_IsInitialized = true;
+                m_Logger->Info("Windowing disabled (headless mode).");
+                m_ReadyPromise.set_value();
+                return;
+            }
             if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
             {
                 throw std::runtime_error(std::string("Failed to initialize SDL3: ") + SDL_GetError());
@@ -58,7 +71,11 @@ namespace GPP
         {
             std::scoped_lock lock(m_WindowsMutex);
             m_Windows.clear();
-            SDL_Quit();
+            m_WindowNames.clear();
+            if (!IsHeadless())
+            {
+                SDL_Quit();
+            }
         });
         co_return;
     }
@@ -69,9 +86,25 @@ namespace GPP
         co_return;
     }
 
-    Task<std::shared_ptr<Window>> WindowManager::CreateWindow(const WindowOptions& options)
+    Task<std::shared_ptr<Window>> WindowManager::CreateWindow(const WindowOptions& options,
+                                                              std::string name)
     {
         co_await ResumeOn(Application::Instance());
+        if (IsHeadless())
+        {
+            throw std::runtime_error("Cannot create a window while running headless.");
+        }
+        if (name.empty())
+        {
+            name = std::format("window-{}", m_Windows.size());
+        }
+        {
+            std::scoped_lock lock(m_WindowsMutex);
+            if (m_WindowNames.contains(name))
+            {
+                throw std::runtime_error(std::format("A window named '{}' already exists.", name));
+            }
+        }
         SDL_WindowFlags flags = SDL_WINDOW_VULKAN;
 
         if (options.Resizable)
@@ -100,6 +133,7 @@ namespace GPP
         {
             std::scoped_lock lock(m_WindowsMutex);
             m_Windows[id] = wrappedWindow;
+            m_WindowNames.emplace(std::move(name), id);
         }
         m_Logger->Debug("Created window with ID {}: {}x{}, Title: '{}'", id, options.Width, options.Height, options.Title);
 
@@ -117,6 +151,38 @@ namespace GPP
         return nullptr;
     }
 
+    std::shared_ptr<Window> WindowManager::GetWindow(std::string_view name) const
+    {
+        std::scoped_lock lock(m_WindowsMutex);
+        const auto nameIt = m_WindowNames.find(std::string(name));
+        return nameIt == m_WindowNames.end() ? nullptr : m_Windows.at(nameIt->second);
+    }
+
+    std::shared_ptr<Window> WindowManager::GetMainWindow() const
+    {
+        return GetWindow(MainWindowName);
+    }
+
+    std::optional<WindowId> WindowManager::GetWindowId(std::string_view name) const
+    {
+        std::scoped_lock lock(m_WindowsMutex);
+        const auto it = m_WindowNames.find(std::string(name));
+        return it == m_WindowNames.end() ? std::nullopt : std::optional{it->second};
+    }
+
+    std::string WindowManager::GetWindowName(WindowId id) const
+    {
+        std::scoped_lock lock(m_WindowsMutex);
+        for (const auto& [name, windowId] : m_WindowNames)
+        {
+            if (windowId == id)
+            {
+                return name;
+            }
+        }
+        return {};
+    }
+
     std::vector<std::shared_ptr<Window>> WindowManager::GetWindows() const
     {
         std::scoped_lock lock(m_WindowsMutex);
@@ -131,6 +197,10 @@ namespace GPP
     {
         std::scoped_lock lock(m_WindowsMutex);
         m_Windows.erase(id);
+        for (auto it = m_WindowNames.begin(); it != m_WindowNames.end();)
+        {
+            it = it->second == id ? m_WindowNames.erase(it) : std::next(it);
+        }
         if (m_Windows.empty())
         {
             m_ShouldQuit = true;
@@ -268,6 +338,14 @@ namespace GPP
     bool WindowManager::ShouldQuit() const noexcept
     {
         return m_ShouldQuit;
+    }
+
+    bool WindowManager::IsHeadless() const noexcept
+    {
+        return (m_Options && m_Options->Headless) ||
+            (m_Definitions && std::any_of(
+                m_Definitions->Items.begin(), m_Definitions->Items.end(),
+                [](const WindowDefinition& definition) { return definition.Options.Headless; }));
     }
 
     Task<void> WindowManager::ShowMessageBox(std::string_view title, std::string_view message, bool isError)

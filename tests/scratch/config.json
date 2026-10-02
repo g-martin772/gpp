@@ -5,9 +5,19 @@
         "Width": 1600,
         "Height": 900,
         "Fullscreen": false,
+        "Headless": false,
         "Title": "Scratch"
-      }
-      ,
+      },
+      "Windows": [
+        {
+          "Name": "configured",
+          "Width": 900,
+          "Height": 650,
+          "Fullscreen": false,
+          "Resizable": true,
+          "Title": "Configured Window"
+        }
+      ],
       "Render": {
         "ShaderAssetDirectories": ["shaders"],
         "EnableShaderHotReload": true,
