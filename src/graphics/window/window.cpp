@@ -99,4 +99,13 @@ namespace GPP
         SDL_DestroyWindow(m_Window);
         co_return;
     }
+
+    void Window::DestroyNativeWindow() noexcept
+    {
+        if (m_Window)
+        {
+            SDL_DestroyWindow(m_Window);
+            m_Window = nullptr;
+        }
+    }
 }

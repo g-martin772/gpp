@@ -196,7 +196,11 @@ namespace GPP
     void WindowManager::TriggerWindowClose(WindowId id)
     {
         std::scoped_lock lock(m_WindowsMutex);
-        m_Windows.erase(id);
+        if (const auto it = m_Windows.find(id); it != m_Windows.end())
+        {
+            it->second->DestroyNativeWindow();
+            m_Windows.erase(it);
+        }
         for (auto it = m_WindowNames.begin(); it != m_WindowNames.end();)
         {
             it = it->second == id ? m_WindowNames.erase(it) : std::next(it);

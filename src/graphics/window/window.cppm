@@ -68,6 +68,7 @@ namespace GPP
         [[nodiscard]] Task<bool> CreateVulkanSurface(VkInstance instance, vk::SurfaceKHR* outSurface) const noexcept;
     private:
         explicit Window(SDL_Window* window);
+        void DestroyNativeWindow() noexcept;
         friend class WindowManager;
         SDL_Window* m_Window{nullptr};
     };

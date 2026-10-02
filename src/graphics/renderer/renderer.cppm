@@ -73,11 +73,13 @@ namespace GPP
         {
             std::shared_ptr<GPP::Window> Window;
             vk::SurfaceKHR Surface;
-            std::shared_ptr<VulkanDevice> Device;
             std::shared_ptr<VulkanSwapChain> SwapChain;
             VulkanImage DepthImage;
             vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
             GuiLayerStack* LayerStack = nullptr;
+            std::vector<VulkanSemaphore> ImageAvailableSemaphores;
+            std::vector<VulkanSemaphore> RenderFinishedSemaphores;
+            std::vector<vk::ImageLayout> ImageLayouts;
 
             ~WindowResources();
         };
@@ -86,6 +88,9 @@ namespace GPP
         void InitializeRenderSystem();
         void InitializeWindowResources(const std::shared_ptr<Window>& window,
                                        WindowResources& resources);
+        void InitializeWindowSync(WindowResources& resources);
+        void RenderWindow(WindowResources& resources, vk::CommandBuffer commandBuffer,
+                          float elapsed, bool renderTargets);
         Task<void> StopRenderSystem();
         void RenderLoop(std::stop_token stopToken);
 
@@ -101,7 +106,9 @@ namespace GPP
         std::shared_ptr<VulkanDevice> m_Device;
         std::shared_ptr<VulkanCommandPool> m_CommandPool;
         EventSubscription m_ResizeSubscription{};
+        EventSubscription m_WindowCloseSubscription{};
         std::vector<EventSubscription> m_ImGuiInputSubscriptions{};
+        std::optional<WindowId> m_ImGuiInputWindow;
         mutable std::mutex m_RenderQueueMutex{};
         std::queue<std::move_only_function<void()>> m_RenderQueue{};
         std::unordered_map<std::uint32_t, glm::uvec2> m_PendingResize{};

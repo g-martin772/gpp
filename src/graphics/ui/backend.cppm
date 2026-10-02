@@ -1,7 +1,6 @@
 module;
 #if  defined(__CLION_IDE__)
 #include "vulkan/vulkan.h" // because CLion doesn't understand the module import of vulkan enums that are not marked enum class
-
 #endif
 export module GPP.Graphics:UI.Backend;
 
@@ -39,7 +38,7 @@ namespace GPP
         imguiInfo.Queue = device->GetGraphicsQueue();
         imguiInfo.DescriptorPoolSize = 1024;
         imguiInfo.MinImageCount = 2;
-        imguiInfo.ImageCount = windowResources->SwapChain->GetImageCount();
+        imguiInfo.ImageCount = 64; //?
         imguiInfo.UseDynamicRendering = true;
         imguiInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         imguiInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType =

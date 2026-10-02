@@ -15,11 +15,6 @@ namespace GPP
     Renderer::WindowResources::~WindowResources()
     {
         SwapChain = nullptr;
-        if (Surface)
-        {
-            Device->GetInstance().destroySurfaceKHR(Surface);
-        }
-        Device = nullptr;
         Window = nullptr;
     }
 
@@ -96,6 +91,7 @@ namespace GPP
             if (m_MainWindowResources.Window && id == m_MainWindowResources.Window->GetID())
             {
                 m_MainLayerStack = &layerStack;
+                m_MainWindowResources.LayerStack = &layerStack;
             }
             else if (const auto it = m_WindowResources.find(id); it != m_WindowResources.end())
             {
@@ -119,6 +115,7 @@ namespace GPP
                 auto& resources = m_WindowResources[window->GetID()];
                 resources.Window = window;
                 InitializeWindowResources(window, resources);
+                InitializeWindowSync(resources);
             });
         }
         co_return window;
@@ -201,6 +198,50 @@ namespace GPP
                     static_cast<std::uint32_t>(std::max(event.Height, 1))
                 };
             }, EventDelivery::Async, EventTarget::Render);
+        m_WindowCloseSubscription = m_Dispatcher->Subscribe<WindowCloseRequestedEvent>(
+            [this](const WindowCloseRequestedEvent& event)
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                m_RenderQueue.push([this, id = event.Window]
+                {
+                    if (m_Device)
+                    {
+                        m_Device->WaitIdle();
+                    }
+                    if (m_MainWindowResources.Window &&
+                        m_MainWindowResources.Window->GetID() == id)
+                    {
+                        m_MainWindowResources.SwapChain.reset();
+                        if (m_MainWindowResources.Surface)
+                        {
+                            m_Device->GetInstance().destroySurfaceKHR(
+                                m_MainWindowResources.Surface);
+                            m_MainWindowResources.Surface = nullptr;
+                        }
+                        if (m_MainWindowResources.LayerStack)
+                        {
+                            m_MainWindowResources.LayerStack->OnDetach();
+                        }
+                        m_MainWindowResources.Window.reset();
+                        return;
+                    }
+                    const auto it = m_WindowResources.find(id);
+                    if (it != m_WindowResources.end())
+                    {
+                        it->second.SwapChain.reset();
+                        if (it->second.Surface)
+                        {
+                            m_Device->GetInstance().destroySurfaceKHR(it->second.Surface);
+                            it->second.Surface = nullptr;
+                        }
+                        if (it->second.LayerStack)
+                        {
+                            it->second.LayerStack->OnDetach();
+                        }
+                        m_WindowResources.erase(it);
+                    }
+                });
+            }, EventDelivery::Async, EventTarget::Render);
         m_ImGuiInputSubscriptions.push_back(m_Dispatcher->Subscribe<ImGuiRawEvent>(
             [this](const ImGuiRawEvent& source)
             {
@@ -210,6 +251,24 @@ namespace GPP
                     if (!m_ImGuiContext)
                         return;
                     ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+                    if (source.Type == SDL_EVENT_WINDOW_FOCUS_GAINED)
+                    {
+                        m_ImGuiInputWindow = source.Window;
+                        return;
+                    }
+                    if (source.Type == SDL_EVENT_WINDOW_FOCUS_LOST)
+                    {
+                        if (m_ImGuiInputWindow == source.Window)
+                            m_ImGuiInputWindow.reset();
+                        return;
+                    }
+                    if (source.Window != 0)
+                    {
+                        if (!m_ImGuiInputWindow)
+                            m_ImGuiInputWindow = source.Window;
+                        if (m_ImGuiInputWindow != source.Window)
+                            return;
+                    }
                     SDL_Event event{};
                     event.type = source.Type;
                     switch (source.Type)
@@ -257,7 +316,59 @@ namespace GPP
                     default:
                         break;
                     }
-                    ImGui_ImplSDL3_ProcessEvent(&event);
+                    auto& io = ImGui::GetIO();
+                    switch (source.Type)
+                    {
+                    case SDL_EVENT_KEY_DOWN:
+                    case SDL_EVENT_KEY_UP:
+                        {
+                            const auto key = ToImGuiKey(source.Key);
+                            if (key != ImGuiKey_None)
+                            {
+                                io.AddKeyEvent(key, source.Type == SDL_EVENT_KEY_DOWN);
+                            }
+                            io.AddKeyEvent(
+                                ImGuiMod_Ctrl, (source.Modifiers & SDL_KMOD_CTRL) != 0);
+                            io.AddKeyEvent(
+                                ImGuiMod_Shift, (source.Modifiers & SDL_KMOD_SHIFT) != 0);
+                            io.AddKeyEvent(
+                                ImGuiMod_Alt, (source.Modifiers & SDL_KMOD_ALT) != 0);
+                            io.AddKeyEvent(
+                                ImGuiMod_Super, (source.Modifiers & SDL_KMOD_GUI) != 0);
+                            break;
+                        }
+                    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    case SDL_EVENT_MOUSE_BUTTON_UP:
+                        {
+                            const int button =
+                                source.Button == MouseButton::Left ? 0 :
+                                source.Button == MouseButton::Right ? 1 :
+                                source.Button == MouseButton::Middle ? 2 :
+                                source.Button == MouseButton::X1 ? 3 :
+                                source.Button == MouseButton::X2 ? 4 : -1;
+                            if (button >= 0)
+                            {
+                                io.AddMouseButtonEvent(
+                                    button, source.Type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                            }
+                            break;
+                        }
+                    case SDL_EVENT_MOUSE_MOTION:
+                        {
+                            io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+                            io.AddMousePosEvent(
+                                source.X, source.Y);
+                            break;
+                        }
+                    case SDL_EVENT_MOUSE_WHEEL:
+                        io.AddMouseWheelEvent(-source.X, source.Y);
+                        break;
+                    case SDL_EVENT_TEXT_INPUT:
+                        io.AddInputCharactersUTF8(source.Text.c_str());
+                        break;
+                    default:
+                        break;
+                    }
                 });
             }));
         m_RenderThread = std::thread([this, stopToken]()
@@ -271,6 +382,7 @@ namespace GPP
     {
         m_ImGuiInputSubscriptions.clear();
         m_ResizeSubscription.Reset();
+        m_WindowCloseSubscription.Reset();
         m_Dispatcher->SetRenderExecutor({});
         m_Running = false;
         if (m_RenderThread.joinable())
@@ -337,14 +449,10 @@ namespace GPP
                 m_CommandPool->AllocateCommandBuffer(),
                 m_Device->GetDevice())));
         }
-
-        m_RenderFinishedSemaphores.clear();
-        const std::uint32_t imageCount = m_MainWindowResources.SwapChain->GetImageCount();
-        m_SwapchainImageLayouts.assign(imageCount, vk::ImageLayout::eUndefined);
-        m_RenderFinishedSemaphores.reserve(imageCount);
-        for (std::uint32_t i = 0; i < imageCount; ++i)
+        InitializeWindowSync(m_MainWindowResources);
+        for (auto& [windowId, resources] : m_WindowResources)
         {
-            m_RenderFinishedSemaphores.emplace_back(VulkanSemaphore(m_Device->GetDevice()));
+            InitializeWindowSync(resources);
         }
 
         const auto vertexSource = m_FileSystem->ResolveAssetPath("shaders", "vert.vert");
@@ -411,7 +519,6 @@ namespace GPP
     void Renderer::InitializeWindowResources(const std::shared_ptr<Window>& window,
                                              WindowResources& resources)
     {
-        resources.Device = m_Device;
         resources.Window = window;
         if (!resources.Surface && !window->CreateVulkanSurface(
                 m_VulkanContext->GetInstance(), &resources.Surface).get())
@@ -435,6 +542,203 @@ namespace GPP
                 .debugName = "WindowDepthBuffer"
             });
         resources.DepthLayout = vk::ImageLayout::eUndefined;
+    }
+
+    void Renderer::InitializeWindowSync(WindowResources& resources)
+    {
+        if (!resources.SwapChain)
+        {
+            return;
+        }
+        resources.ImageAvailableSemaphores.clear();
+        resources.ImageAvailableSemaphores.reserve(m_FrameResources.size());
+        for (std::size_t i = 0; i < m_FrameResources.size(); ++i)
+        {
+            resources.ImageAvailableSemaphores.emplace_back(
+                m_Device->GetDevice());
+        }
+        resources.RenderFinishedSemaphores.clear();
+        resources.RenderFinishedSemaphores.reserve(resources.SwapChain->GetImageCount());
+        for (std::uint32_t i = 0; i < resources.SwapChain->GetImageCount(); ++i)
+        {
+            resources.RenderFinishedSemaphores.emplace_back(m_Device->GetDevice());
+        }
+        resources.ImageLayouts.assign(
+            resources.SwapChain->GetImageCount(), vk::ImageLayout::eUndefined);
+    }
+
+    void Renderer::RenderWindow(WindowResources& resources,
+                                vk::CommandBuffer rawCmd,
+                                const float elapsed,
+                                const bool renderTargets)
+    {
+        auto& swapchain = resources.SwapChain;
+        const auto imageIndex = swapchain->GetCurrentImageIndex();
+        const auto extent = swapchain->GetExtent();
+        if (renderTargets)
+        for (auto& [bufferId, target] : m_BufferTargets)
+        {
+            TransitionImageLayout(
+                rawCmd, target.ColorImage.GetImage(),
+                target.ColorImage.GetSpecification().format, target.ColorLayout,
+                vk::ImageLayout::eColorAttachmentOptimal);
+            const auto targetDepthFormat = target.DepthImage.GetSpecification().format;
+            const auto targetDepthLayout =
+                (GetImageAspectMask(targetDepthFormat) & vk::ImageAspectFlagBits::eStencil) !=
+                        vk::ImageAspectFlags{}
+                    ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                    : vk::ImageLayout::eDepthAttachmentOptimal;
+            TransitionImageLayout(
+                rawCmd, target.DepthImage.GetImage(), targetDepthFormat,
+                target.DepthLayout, targetDepthLayout);
+            target.ColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            target.DepthLayout = targetDepthLayout;
+            vk::RenderingAttachmentInfo targetColor{};
+            targetColor.imageView = target.ColorImage.GetImageView();
+            targetColor.imageLayout = target.ColorLayout;
+            targetColor.loadOp = vk::AttachmentLoadOp::eClear;
+            targetColor.storeOp = vk::AttachmentStoreOp::eStore;
+            targetColor.clearValue =
+                vk::ClearValue(vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f));
+            vk::RenderingAttachmentInfo targetDepth{};
+            targetDepth.imageView = target.DepthImage.GetImageView();
+            targetDepth.imageLayout = target.DepthLayout;
+            targetDepth.loadOp = vk::AttachmentLoadOp::eClear;
+            targetDepth.storeOp = vk::AttachmentStoreOp::eDontCare;
+            targetDepth.clearValue =
+                vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
+            vk::RenderingInfo targetRendering{};
+            targetRendering.renderArea = vk::Rect2D{
+                {0, 0}, {target.Extent.x, target.Extent.y}};
+            targetRendering.layerCount = 1;
+            targetRendering.colorAttachmentCount = 1;
+            targetRendering.pColorAttachments = &targetColor;
+            targetRendering.pDepthAttachment = &targetDepth;
+            rawCmd.beginRendering(targetRendering);
+            const vk::Viewport targetViewport{
+                0.0f, 0.0f, static_cast<float>(target.Extent.x),
+                static_cast<float>(target.Extent.y), 0.0f, 1.0f};
+            const vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
+            rawCmd.setViewport(0, 1, &targetViewport);
+            rawCmd.setScissor(0, 1, &targetScissor);
+            if (auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr)
+            {
+                rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
+                BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
+                BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
+                struct PushConstants
+                {
+                    glm::mat4 viewProjection;
+                    glm::mat4 model;
+                    float time;
+                } pushConstants{};
+                pushConstants.viewProjection = glm::perspective(
+                    glm::radians(45.0f),
+                    static_cast<float>(target.Extent.x) /
+                        static_cast<float>(std::max(target.Extent.y, 1u)),
+                    0.1f, 100.0f);
+                pushConstants.viewProjection[1][1] *= -1.0f;
+                pushConstants.model = glm::translate(
+                    glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
+                pushConstants.model = glm::rotate(
+                    pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
+                pushConstants.time = elapsed;
+                rawCmd.pushConstants(
+                    pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
+                    0, sizeof(pushConstants), &pushConstants);
+                rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+            }
+            rawCmd.endRendering();
+            TransitionImageLayout(
+                rawCmd, target.ColorImage.GetImage(),
+                target.ColorImage.GetSpecification().format, target.ColorLayout,
+                vk::ImageLayout::eShaderReadOnlyOptimal);
+            target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+
+        const auto depthFormat = swapchain->GetDepthImageFormat();
+        const auto depthLayout =
+            (GetImageAspectMask(depthFormat) & vk::ImageAspectFlagBits::eStencil) !=
+                    vk::ImageAspectFlags{}
+                ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                : vk::ImageLayout::eDepthAttachmentOptimal;
+
+        TransitionImageLayout(
+            rawCmd, swapchain->GetImages()[imageIndex], swapchain->GetImageFormat(),
+            resources.ImageLayouts[imageIndex], vk::ImageLayout::eColorAttachmentOptimal);
+        TransitionImageLayout(
+            rawCmd, resources.DepthImage.GetImage(), depthFormat, resources.DepthLayout,
+            depthLayout);
+        resources.ImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
+        resources.DepthLayout = depthLayout;
+
+        vk::RenderingAttachmentInfo colorAttachment{};
+        colorAttachment.imageView = swapchain->GetImageViews()[imageIndex];
+        colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+        colorAttachment.clearValue =
+            vk::ClearValue(vk::ClearColorValue(0.05f, 0.05f, 0.05f, 1.0f));
+        vk::RenderingAttachmentInfo depthAttachment{};
+        depthAttachment.imageView = resources.DepthImage.GetImageView();
+        depthAttachment.imageLayout = depthLayout;
+        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+        depthAttachment.clearValue =
+            vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
+        vk::RenderingInfo renderingInfo{};
+        renderingInfo.renderArea = vk::Rect2D({0, 0}, swapchain->GetExtent());
+        renderingInfo.layerCount = 1;
+        renderingInfo.colorAttachmentCount = 1;
+        renderingInfo.pColorAttachments = &colorAttachment;
+        renderingInfo.pDepthAttachment = &depthAttachment;
+
+        rawCmd.beginRendering(renderingInfo);
+        vk::Viewport viewport{
+            0.0f, 0.0f, static_cast<float>(extent.width),
+            static_cast<float>(extent.height), 0.0f, 1.0f};
+        vk::Rect2D scissor{{0, 0}, extent};
+        rawCmd.setViewport(0, 1, &viewport);
+        rawCmd.setScissor(0, 1, &scissor);
+
+        if (resources.LayerStack)
+            resources.LayerStack->OnRender();
+
+        auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
+        if (pipeline)
+        {
+            rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
+            BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
+            BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
+            struct PushConstants
+            {
+                glm::mat4 viewProjection;
+                glm::mat4 model;
+                float time;
+            } pushConstants{};
+            const float aspect = static_cast<float>(extent.width) /
+                static_cast<float>(std::max(extent.height, 1u));
+            pushConstants.viewProjection =
+                glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
+            pushConstants.viewProjection[1][1] *= -1.0f;
+            pushConstants.model = glm::translate(
+                glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
+            pushConstants.model = glm::rotate(
+                pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
+            pushConstants.time = elapsed;
+            rawCmd.pushConstants(
+                pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
+                0, sizeof(pushConstants), &pushConstants);
+            rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+        }
+        if (m_ImGuiContext)
+            ImGui_ImplVulkan_RenderDrawData(
+                ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
+        rawCmd.endRendering();
+        TransitionImageLayout(
+            rawCmd, swapchain->GetImages()[imageIndex], swapchain->GetImageFormat(),
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR);
+        resources.ImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
     }
 
     Task<void> Renderer::StopRenderSystem()
@@ -471,20 +775,28 @@ namespace GPP
             }
             {
                 std::scoped_lock lock(m_RenderQueueMutex);
+                std::vector<WindowResources*> windows;
                 if (m_MainWindowResources.Window && m_MainWindowResources.SwapChain)
+                    windows.push_back(&m_MainWindowResources);
+                for (auto& [windowId, resources] : m_WindowResources)
                 {
-                    const auto windowId = m_MainWindowResources.Window->GetID();
+                    if (resources.Window && resources.SwapChain)
+                        windows.push_back(&resources);
+                }
+                for (auto* resources : windows)
+                {
+                    const auto windowId = resources->Window->GetID();
                     if (auto it = m_PendingResize.find(windowId); it != m_PendingResize.end())
                     {
-                        m_MainWindowResources.SwapChain->Update(it->second);
-                        m_MainWindowResources.DepthImage.Resize(
+                        resources->SwapChain->Update(it->second);
+                        resources->DepthImage.Resize(
                             {
-                                m_MainWindowResources.SwapChain->GetExtent().width,
-                                m_MainWindowResources.SwapChain->GetExtent().height, 1
+                                resources->SwapChain->GetExtent().width,
+                                resources->SwapChain->GetExtent().height, 1
                             });
-                        m_MainWindowResources.DepthLayout = vk::ImageLayout::eUndefined;
-                        m_SwapchainImageLayouts.assign(
-                            m_MainWindowResources.SwapChain->GetImageCount(),
+                        resources->DepthLayout = vk::ImageLayout::eUndefined;
+                        resources->ImageLayouts.assign(
+                            resources->SwapChain->GetImageCount(),
                             vk::ImageLayout::eUndefined);
                         m_PendingResize.erase(it);
                     }
@@ -493,6 +805,132 @@ namespace GPP
             std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Simulate ~60 FPS
             //m_MainWindowResources.SwapChain->Update(glm::uvec2{100, 100});
             iterations++;
+
+            std::vector<WindowResources*> activeWindows;
+            if (m_MainWindowResources.Window && m_MainWindowResources.SwapChain)
+            {
+                activeWindows.push_back(&m_MainWindowResources);
+            }
+            for (auto& [windowId, resources] : m_WindowResources)
+            {
+                if (resources.Window && resources.SwapChain)
+                {
+                    activeWindows.push_back(&resources);
+                }
+            }
+            if (activeWindows.empty())
+            {
+                continue;
+            }
+
+            FrameResources& multiWindowFrame = m_FrameResources[m_FrameIndex];
+            multiWindowFrame.InFlightFence.WaitAndReset();
+            for (auto* resources : activeWindows)
+            {
+                resources->SwapChain->AcquireNextImage(
+                    resources->ImageAvailableSemaphores[m_FrameIndex].GetSemaphore(),
+                    nullptr);
+            }
+            m_FrameIndex = (m_FrameIndex + 1) % m_FrameResources.size();
+
+            auto& multiWindowCommandBuffer = multiWindowFrame.CommandBuffer;
+            multiWindowCommandBuffer.Begin();
+            const float elapsed = static_cast<float>(
+                std::chrono::duration<double>(
+                    std::chrono::high_resolution_clock::now() - start).count());
+            const auto rawMultiWindowCommandBuffer =
+                multiWindowCommandBuffer.GetCommandBuffer();
+            if (m_ImGuiContext)
+            {
+                ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_ImGuiContext));
+                auto& io = ImGui::GetIO();
+                io.DisplaySize = ImVec2(
+                    static_cast<float>(activeWindows.front()->SwapChain->GetExtent().width),
+                    static_cast<float>(activeWindows.front()->SwapChain->GetExtent().height));
+                io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+                auto* viewport = ImGui::GetMainViewport();
+                viewport->Pos = ImVec2(0.0f, 0.0f);
+                viewport->Size = io.DisplaySize;
+                ImGui_ImplVulkan_NewFrame();
+                ImGui::NewFrame();
+                if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+                    ImGui::DockSpaceOverViewport(0, viewport);
+            }
+            for (auto& [bufferId, target] : m_BufferTargets)
+            {
+                if (target.LayerStack)
+                {
+                    target.LayerStack->OnRender();
+                    target.LayerStack->OnUiRender();
+                }
+            }
+            for (auto* resources : activeWindows)
+            {
+                if (resources->LayerStack)
+                    resources->LayerStack->OnUiRender();
+            }
+            if (m_ImGuiContext)
+                ImGui::Render();
+            bool renderTargets = true;
+            for (auto* resources : activeWindows)
+            {
+                RenderWindow(
+                    *resources, rawMultiWindowCommandBuffer, elapsed, renderTargets);
+                renderTargets = false;
+            }
+            multiWindowCommandBuffer.End();
+
+            std::vector<vk::Semaphore> multiWaitSemaphores;
+            std::vector<vk::PipelineStageFlags> multiWaitStages;
+            std::vector<vk::Semaphore> multiSignalSemaphores;
+            multiWaitSemaphores.reserve(activeWindows.size());
+            multiWaitStages.reserve(activeWindows.size());
+            multiSignalSemaphores.reserve(activeWindows.size());
+            for (auto* resources : activeWindows)
+            {
+                multiWaitSemaphores.push_back(
+                    resources->ImageAvailableSemaphores[m_FrameIndex == 0
+                                                            ? m_FrameResources.size() - 1
+                                                            : m_FrameIndex - 1]
+                        .GetSemaphore());
+                multiWaitStages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+                multiSignalSemaphores.push_back(
+                    resources->RenderFinishedSemaphores[
+                        resources->SwapChain->GetCurrentImageIndex()].GetSemaphore());
+            }
+            vk::SubmitInfo multiWindowSubmitInfo{};
+            multiWindowSubmitInfo.waitSemaphoreCount =
+                static_cast<std::uint32_t>(multiWaitSemaphores.size());
+            multiWindowSubmitInfo.pWaitSemaphores = multiWaitSemaphores.data();
+            multiWindowSubmitInfo.pWaitDstStageMask = multiWaitStages.data();
+            multiWindowSubmitInfo.signalSemaphoreCount =
+                static_cast<std::uint32_t>(multiSignalSemaphores.size());
+            multiWindowSubmitInfo.pSignalSemaphores = multiSignalSemaphores.data();
+            const auto commandBuffer = multiWindowCommandBuffer.GetCommandBuffer();
+            multiWindowSubmitInfo.commandBufferCount = 1;
+            multiWindowSubmitInfo.pCommandBuffers = &commandBuffer;
+            const auto submitResult = m_Device->GetGraphicsQueue().submit(
+                1, &multiWindowSubmitInfo, multiWindowFrame.InFlightFence.GetFence());
+            if (submitResult != vk::Result::eSuccess)
+            {
+                m_Logger->Error("Failed to submit multi-window frame: {}",
+                                vk::to_string(submitResult));
+                continue;
+            }
+
+            for (std::size_t index = 0; index < activeWindows.size(); ++index)
+            {
+                auto* resources = activeWindows[index];
+                resources->SwapChain->Present(
+                    m_Device->GetPresentQueue(), multiSignalSemaphores[index]);
+            }
+            if (m_ImGuiContext &&
+                (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable))
+            {
+                ImGui::UpdatePlatformWindows();
+                ImGui::RenderPlatformWindowsDefault();
+            }
+            continue;
 
             FrameResources& frame = m_FrameResources[m_FrameIndex];
 
@@ -813,6 +1251,13 @@ namespace GPP
             if (target.LayerStack)
                 target.LayerStack->OnDetach();
         }
+        if (m_MainWindowResources.LayerStack)
+            m_MainWindowResources.LayerStack->OnDetach();
+        for (auto& [windowId, resources] : m_WindowResources)
+        {
+            if (resources.LayerStack)
+                resources.LayerStack->OnDetach();
+        }
         m_BufferTargets.clear();
         m_VertexBuffer.Destroy();
         m_IndexBuffer.Destroy();
@@ -820,6 +1265,10 @@ namespace GPP
         m_FrameResources.clear();
         m_CommandPool.reset();
         m_MainWindowResources.SwapChain.reset();
+        for (auto& [windowId, resources] : m_WindowResources)
+        {
+            resources.SwapChain.reset();
+        }
         if (m_MainWindowResources.Surface)
         {
             m_Device->GetInstance().destroySurfaceKHR(m_MainWindowResources.Surface);
