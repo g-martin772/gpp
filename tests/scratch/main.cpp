@@ -176,8 +176,6 @@ int main(int argc, char* argv[])
            .AddEnvironmentVariables();
 
     WindowOptions upfrontOptions;
-    upfrontOptions.Width = 800;
-    upfrontOptions.Height = 600;
     upfrontOptions.Title = "GPP Upfront Window";
     builder.AddWindow("upfront", upfrontOptions);
     builder.AddGuiLayer<SecondaryLayer>()

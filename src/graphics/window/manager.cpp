@@ -198,7 +198,7 @@ namespace GPP
         std::scoped_lock lock(m_WindowsMutex);
         if (const auto it = m_Windows.find(id); it != m_Windows.end())
         {
-            it->second->DestroyNativeWindow();
+            // native window is destroyed by render thread
             m_Windows.erase(it);
         }
         for (auto it = m_WindowNames.begin(); it != m_WindowNames.end();)

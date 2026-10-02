@@ -225,9 +225,15 @@ namespace GPP
                                 m_MainWindowResources.Surface);
                             m_MainWindowResources.Surface = nullptr;
                         }
+
                         if (m_MainWindowResources.LayerStack)
                         {
                             m_MainWindowResources.LayerStack->OnDetach();
+                        }
+
+                        if (m_MainWindowResources.Window)
+                        {
+                            m_MainWindowResources.Window->DestroyWindow().get();
                         }
                         m_MainWindowResources.Window.reset();
                         return;
@@ -242,9 +248,15 @@ namespace GPP
                             m_Device->GetInstance().destroySurfaceKHR(it->second.Surface);
                             it->second.Surface = nullptr;
                         }
+
                         if (it->second.LayerStack)
                         {
                             it->second.LayerStack->OnDetach();
+                        }
+
+                        if (it->second.Window)
+                        {
+                            it->second.Window->DestroyWindow().get();
                         }
                         m_WindowResources.erase(it);
                     }

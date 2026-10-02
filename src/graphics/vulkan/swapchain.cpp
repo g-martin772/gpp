@@ -91,8 +91,13 @@ namespace GPP
 
     void VulkanSwapChain::CreateSwapChain()
     {
+        const auto physicalDevice = m_Device->GetPhysicalDevice();
+        const auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(m_Surface);
+        const auto surfaceFormats = physicalDevice.getSurfaceFormatsKHR(m_Surface);
+        const auto surfacePresentModes = physicalDevice.getSurfacePresentModesKHR(m_Surface);
+
         bool found = false;
-        for (const auto& format : m_Device->GetSurfaceFormats())
+        for (const auto& format : surfaceFormats)
         {
             if (format.format == vk::Format::eB8G8R8A8Unorm && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
             {
@@ -105,14 +110,14 @@ namespace GPP
 
         if (!found)
         {
-            m_ColorSpace = m_Device->GetSurfaceFormats()[0].colorSpace;
-            m_Format = m_Device->GetSurfaceFormats()[0].format;
+            m_ColorSpace = surfaceFormats[0].colorSpace;
+            m_Format = surfaceFormats[0].format;
         }
 
         vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo; // always supported, vsync on
         if (m_VSync)
         {
-            for (const auto& mode : m_Device->GetSurfacePresentModes())
+            for (const auto& mode : surfacePresentModes)
             {
                 if (mode == vk::PresentModeKHR::eMailbox)
                 {
@@ -123,7 +128,7 @@ namespace GPP
         }
         else
         {
-            for (const auto& mode : m_Device->GetSurfacePresentModes())
+            for (const auto& mode : surfacePresentModes)
             {
                 if (mode == vk::PresentModeKHR::eImmediate)
                 {
@@ -133,11 +138,11 @@ namespace GPP
             }
         }
 
-        if (m_Device->GetSurfaceCapabilities().currentExtent.width != -1)
-            m_Extent = m_Device->GetSurfaceCapabilities().currentExtent;
+        if (surfaceCapabilities.currentExtent.width != -1)
+            m_Extent = surfaceCapabilities.currentExtent;
 
-        if (m_FramesInFlight > m_Device->GetSurfaceCapabilities().maxImageCount)
-            m_FramesInFlight = m_Device->GetSurfaceCapabilities().maxImageCount;
+        if (m_FramesInFlight > surfaceCapabilities.maxImageCount)
+            m_FramesInFlight = surfaceCapabilities.maxImageCount;
 
         vk::SwapchainCreateInfoKHR createInfo = {};
         createInfo.surface = m_Surface;
@@ -164,7 +169,7 @@ namespace GPP
 
         vk::SwapchainKHR oldSwapchain = m_SwapChain;
 
-        createInfo.preTransform = m_Device->GetSurfaceCapabilities().currentTransform;
+        createInfo.preTransform = surfaceCapabilities.currentTransform;
         createInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
         createInfo.presentMode = presentMode;
         createInfo.clipped = false;
