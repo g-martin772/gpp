@@ -1,6 +1,7 @@
 .idea/
 .cache/
 .gpp/
+/build/
 
 /compile_commands.json
 *.spv

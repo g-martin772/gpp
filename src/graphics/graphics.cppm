@@ -14,3 +14,5 @@ export import :FontAssets;
 export import :HotReload;
 export import :UI;
 export import :UI.Preferences;
+export import :Assets.Image;
+export import :Assets.Gltf;

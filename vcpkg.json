@@ -12,12 +12,11 @@
       "features": [ "vulkan" ]
     },
     "vulkan-memory-allocator",
-    {
-      "name": "imgui",
-      "features": [
-        "vulkan-binding",
-        "sdl3-binding"
-      ]
-    }
+    "vulkan-headers",
+    "imgui",
+    "stb",
+    "yaml-cpp",
+    "tinygltf",
+    "physx"
   ]
 }

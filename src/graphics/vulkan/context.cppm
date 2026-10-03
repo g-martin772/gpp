@@ -1,5 +1,6 @@
 export module GPP.Graphics:Vulkan.Context;
 
+import std;
 import vulkan;
 import GPP.Core;
 
