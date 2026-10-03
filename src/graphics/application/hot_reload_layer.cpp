@@ -75,6 +75,10 @@ namespace GPP
             previous->OnDetach();
         }
         m_Active = newLayer;
+        if (newLayer)
+        {
+            newLayer->SetLayerTarget(GetLayerTarget());
+        }
         if (m_StackAttached && newLayer)
         {
             newLayer->OnAttach();

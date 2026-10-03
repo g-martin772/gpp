@@ -61,6 +61,13 @@ namespace GPP
         {
         }
 
+        // Normally set once by GuiLayerBuilder::Build (a friend) before the layer is ever used.
+        // Hot-reload layers are the exception: the proxy registered with the layer stack is a
+        // different object from the real instance loaded from the plugin, so HotReloadLayerProxy
+        // uses these to carry its own target down to each newly (re)loaded instance.
+        void SetLayerTarget(const LayerTarget& target) noexcept { m_LayerTarget = target; }
+        [[nodiscard]] const LayerTarget& GetLayerTarget() const noexcept { return m_LayerTarget; }
+
     protected:
         std::shared_ptr<Logger> m_Logger;
         LayerTarget m_LayerTarget;

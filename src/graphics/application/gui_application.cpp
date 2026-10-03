@@ -94,8 +94,10 @@ namespace GPP
                 registrations->Items.reserve(m_HotReloadLayerDescriptions.size());
                 for (auto& layerBuilder : m_HotReloadLayerDescriptions)
                 {
-                    registrations->Items.push_back(HotReloadLayerRegistration{
-                        layerBuilder.Description, ActivateService<HotReloadLayerProxy>(provider)});
+                    auto proxy = ActivateService<HotReloadLayerProxy>(provider);
+                    proxy->SetLayerTarget(layerBuilder.Description.Target);
+                    registrations->Items.push_back(
+                        HotReloadLayerRegistration{layerBuilder.Description, std::move(proxy)});
                 }
                 return registrations;
             });
