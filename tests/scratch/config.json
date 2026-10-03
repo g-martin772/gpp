@@ -16,6 +16,9 @@
       "LayerHotReload": {
         "Enabled": true,
         "PollingIntervalMilliseconds": 300
+      },
+      "Fonts": {
+        "FontDirectories": ["tests/scratch/fonts"]
       }
     }
   }

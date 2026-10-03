@@ -1,0 +1,4 @@
+- `DejaVuSans.ttf`, `DejaVuSansMono.ttf` -- DejaVu Fonts (public domain / Bitstream Vera license)
+- `LiberationSans-Regular.ttf`, `LiberationSerif-Regular.ttf` -- Liberation Fonts (SIL OFL 1.1)
+- `Hack-Regular.ttf` -- Hack (MIT / Bitstream Vera license)
+- `JetBrainsMono-Regular.ttf` -- JetBrains Mono (SIL OFL 1.1)

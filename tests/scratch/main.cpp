@@ -49,14 +49,16 @@ private:
         co_await ResumeOn(ThreadPool::Instance());
         co_await m_WM->AwaitReady();
         co_await m_Renderer->AwaitReady();
-        WindowOptions secondOptions = *m_WO;
-        secondOptions.Title = "GPP Secondary Window";
-        secondOptions.Width = 800;
-        secondOptions.Height = 600;
-        m_SecondaryWindow = co_await m_Renderer->CreateWindow(secondOptions, "dynamic");
-        m_DynamicLayerStack.PushLayer(std::make_shared<DynamicLayer>(m_Logger));
-        m_Renderer->AttachLayerStackToWindow(m_DynamicLayerStack, m_SecondaryWindow);
-        m_Logger->Info("Secondary engine window created with ID {}", m_SecondaryWindow->GetID());
+
+        // WindowOptions secondOptions = *m_WO;
+        // secondOptions.Title = "GPP Secondary Window";
+        // secondOptions.Width = 800;
+        // secondOptions.Height = 600;
+        // m_SecondaryWindow = co_await m_Renderer->CreateWindow(secondOptions, "dynamic");
+        // m_DynamicLayerStack.PushLayer(std::make_shared<DynamicLayer>(m_Logger));
+        // m_Renderer->AttachLayerStackToWindow(m_DynamicLayerStack, m_SecondaryWindow);
+        // m_Logger->Info("Secondary engine window created with ID {}", m_SecondaryWindow->GetID());
+
         //co_await DelayAsync(std::chrono::seconds(1));
         //co_await m_WM->ShowMessageBox("Test", "This is a test message.");
         co_return;
@@ -129,7 +131,6 @@ struct ViewportLayer : public GuiLayer
     {
         ImGui::Begin("GPP Dockspace");
         ImGui::TextUnformatted("Main engine window");
-        ImGui::TextUnformatted("The installed ImGui build lacks docking support.");
         if (const auto target = m_Renderer->GetRenderTargetInfo(5))
         {
             ImGui::Separator();
@@ -150,20 +151,67 @@ private:
     std::shared_ptr<Renderer> m_Renderer;
 };
 
-struct DemoTheme final : public Theme
+struct FontPickerLayer : public GuiLayer
 {
-    using Dependencies = std::tuple<Logger>;
+    using Dependencies = std::tuple<Logger, FontAssetCatalog, UiPreferences>;
 
-    explicit DemoTheme(const std::shared_ptr<Logger>& logger) : Theme(logger)
+    FontPickerLayer(const std::shared_ptr<Logger>& logger,
+                    const std::shared_ptr<FontAssetCatalog>& fontAssets,
+                    const std::shared_ptr<UiPreferences>& uiPreferences)
+        : GuiLayer(logger), m_FontAssets(fontAssets), m_UiPreferences(uiPreferences)
     {
     }
 
-    void Apply(ImGuiStyle& style, ImGuiIO&) override
+    void OnUiRender() override
     {
-        ImGui::StyleColorsDark(&style);
-        style.WindowRounding = 6.0f;
-        style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.26f, 0.42f, 0.78f, 1.0f);
+        ImGui::Begin("Font & UI Scale");
+
+        const auto fonts = m_FontAssets->GetAvailableFonts();
+        const auto current = m_UiPreferences->GetFontName();
+        const auto currentLabel = current.empty() ? "(default)" : current;
+
+        if (ImGui::BeginCombo("Font", currentLabel.c_str()))
+        {
+            if (ImGui::Selectable("(default)", current.empty()))
+            {
+                m_UiPreferences->SetFont("", m_FontSize);
+            }
+            for (const auto& font : fonts)
+            {
+                const bool selected = font.Name == current;
+                if (ImGui::Selectable(font.Name.c_str(), selected))
+                {
+                    m_UiPreferences->SetFont(font.Name, m_FontSize);
+                }
+                if (selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        if (ImGui::SliderFloat("Font size", &m_FontSize, 8.0f, 32.0f, "%.0f"))
+        {
+            if (!current.empty())
+            {
+                m_UiPreferences->SetFont(current, m_FontSize);
+            }
+        }
+
+        float uiScale = m_UiPreferences->GetUiScale();
+        if (ImGui::SliderFloat("UI scale", &uiScale, 0.5f, 2.0f, "%.2f"))
+        {
+            m_UiPreferences->SetUiScale(uiScale);
+        }
+
+        ImGui::End();
     }
+
+private:
+    std::shared_ptr<FontAssetCatalog> m_FontAssets;
+    std::shared_ptr<UiPreferences> m_UiPreferences;
+    float m_FontSize = 16.0f;
 };
 
 struct SecondaryLayer : public GuiLayer
@@ -191,17 +239,15 @@ int main(int argc, char* argv[])
            .AddCommandLine(argc, argv)
            .AddEnvironmentVariables();
 
-    // Global ImGui defaults: every window gets docking + a dockspace unless its own WindowOptions
-    // (here, or "ImGui" in config.json) overrides it.
     builder.ConfigureImGui({"DockingEnable", "ViewportsEnable"}, true);
-    builder.SetTheme<DemoTheme>();
+    builder.SetTheme("demo_theme.so", true);
 
-    WindowOptions upfrontOptions;
-    upfrontOptions.Title = "GPP Upfront Window";
-    upfrontOptions.ImGuiDockSpace = false; // this window opts out of the global dockspace default
-    builder.AddWindow("upfront", upfrontOptions);
-    builder.AddGuiLayer<SecondaryLayer>()
-           .SetWindowTarget("upfront");
+    // WindowOptions upfrontOptions;
+    // upfrontOptions.Title = "GPP Upfront Window";
+    // upfrontOptions.ImGuiDockSpace = false;
+    // builder.AddWindow("upfront", upfrontOptions);
+    // builder.AddGuiLayer<SecondaryLayer>()
+    //        .SetWindowTarget("upfront");
 
     builder.Services.AddHostedService<TestService>();
 
@@ -209,6 +255,8 @@ int main(int argc, char* argv[])
            .SetWindowTarget("main");
     builder.AddGuiLayer<ViewportLayer>()
            .SetBufferTarget(5);
+    builder.AddGuiLayer<FontPickerLayer>()
+           .SetWindowTarget("main");
 
     builder.AddHotReloadableLayer("demo-layer", "demo_hot_reload_layer.so")
            .SetWindowTarget("main");
