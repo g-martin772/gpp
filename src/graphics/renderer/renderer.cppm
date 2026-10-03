@@ -170,6 +170,7 @@ namespace GPP
         std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
         std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};
         std::uint32_t m_FrameIndex = 0;
+        float m_LastFrameElapsed = 0.0f;
 
         bool m_ImGuiEnabled = false;
         std::unordered_map<std::uint32_t, BufferTargetResources> m_BufferTargets;

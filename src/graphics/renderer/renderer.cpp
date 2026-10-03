@@ -855,6 +855,8 @@ namespace GPP
             const float elapsed = static_cast<float>(
                 std::chrono::duration<double>(
                     std::chrono::high_resolution_clock::now() - start).count());
+            const float deltaTime = std::max(0.0f, elapsed - m_LastFrameElapsed);
+            m_LastFrameElapsed = elapsed;
             const auto rawMultiWindowCommandBuffer =
                 multiWindowCommandBuffer.GetCommandBuffer();
             // Buffer-target UI (e.g. ImGui::Image widgets showing offscreen render targets)
@@ -873,12 +875,16 @@ namespace GPP
                 {
                     if (target.LayerStack)
                     {
+                        target.LayerStack->OnUpdate(deltaTime);
                         target.LayerStack->OnRender();
                         target.LayerStack->OnUiRender();
                     }
                 }
                 if (m_MainWindowResources.LayerStack)
+                {
+                    m_MainWindowResources.LayerStack->OnUpdate(deltaTime);
                     m_MainWindowResources.LayerStack->OnUiRender();
+                }
                 ImGui::Render();
             }
             // Every other window owns its own independent ImGuiContext, so each one gets
@@ -895,7 +901,10 @@ namespace GPP
                     (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable))
                     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
                 if (resources->LayerStack)
+                {
+                    resources->LayerStack->OnUpdate(deltaTime);
                     resources->LayerStack->OnUiRender();
+                }
                 ImGui::Render();
             }
             bool renderTargets = true;
