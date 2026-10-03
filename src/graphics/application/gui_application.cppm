@@ -3,11 +3,15 @@ export module GPP.Graphics:Application;
 export import :Application.Layer;
 export import :Application.HotReloadLayer;
 export import :Application.HotReloadLayerManager;
+export import :Application.Theme;
+export import :Application.ThemeManager;
 
 import std;
 import GPP.Core;
 import :RenderConfig;
 import :ShaderAssets;
+import :FontAssets;
+import :UI.Preferences;
 
 namespace GPP
 {
@@ -71,10 +75,40 @@ namespace GPP
             return m_HotReloadLayerDescriptions.back();
         }
 
+        GuiApplicationBuilder& ConfigureImGui(std::vector<std::string> configFlags, bool enableDockSpace = false)
+        {
+            ImGuiOptions options;
+            options.ConfigFlags = std::move(configFlags);
+            options.EnableDockSpace = enableDockSpace;
+            m_ImGuiOptions = std::move(options);
+            return *this;
+        }
+
+        template <typename TTheme> requires std::is_base_of_v<Theme, TTheme>
+        GuiApplicationBuilder& SetTheme()
+        {
+            m_ThemeDescription = ThemeDescription{.ClassType = std::type_index(typeid(TTheme))};
+            Services.AddSingleton<TTheme>();
+            return *this;
+        }
+
+        GuiApplicationBuilder& SetTheme(std::filesystem::path libraryPath, bool enableHotReload = false,
+                                        std::chrono::milliseconds pollingInterval = std::chrono::milliseconds(300))
+        {
+            m_ThemeDescription = ThemeDescription{
+                .LibraryPath = std::move(libraryPath),
+                .EnableHotReload = enableHotReload,
+                .PollingInterval = pollingInterval
+            };
+            return *this;
+        }
+
     private:
         std::vector<GuiLayerBuilder> m_LayerDescriptions;
         std::vector<HotReloadLayerBuilder> m_HotReloadLayerDescriptions;
         WindowDefinitions m_WindowDefinitions;
+        std::optional<ImGuiOptions> m_ImGuiOptions;
+        std::optional<ThemeDescription> m_ThemeDescription;
         bool m_Headless = false;
     };
 }

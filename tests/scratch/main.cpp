@@ -150,6 +150,22 @@ private:
     std::shared_ptr<Renderer> m_Renderer;
 };
 
+struct DemoTheme final : public Theme
+{
+    using Dependencies = std::tuple<Logger>;
+
+    explicit DemoTheme(const std::shared_ptr<Logger>& logger) : Theme(logger)
+    {
+    }
+
+    void Apply(ImGuiStyle& style, ImGuiIO&) override
+    {
+        ImGui::StyleColorsDark(&style);
+        style.WindowRounding = 6.0f;
+        style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.26f, 0.42f, 0.78f, 1.0f);
+    }
+};
+
 struct SecondaryLayer : public GuiLayer
 {
     using Dependencies = std::tuple<Logger>;
@@ -175,8 +191,14 @@ int main(int argc, char* argv[])
            .AddCommandLine(argc, argv)
            .AddEnvironmentVariables();
 
+    // Global ImGui defaults: every window gets docking + a dockspace unless its own WindowOptions
+    // (here, or "ImGui" in config.json) overrides it.
+    builder.ConfigureImGui({"DockingEnable", "ViewportsEnable"}, true);
+    builder.SetTheme<DemoTheme>();
+
     WindowOptions upfrontOptions;
     upfrontOptions.Title = "GPP Upfront Window";
+    upfrontOptions.ImGuiDockSpace = false; // this window opts out of the global dockspace default
     builder.AddWindow("upfront", upfrontOptions);
     builder.AddGuiLayer<SecondaryLayer>()
            .SetWindowTarget("upfront");

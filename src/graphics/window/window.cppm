@@ -22,6 +22,9 @@ namespace GPP
         bool Fullscreen = false;
         bool Headless = false;
 
+        std::optional<std::vector<std::string>> ImGuiConfigFlags;
+        std::optional<bool> ImGuiDockSpace;
+
         static WindowOptions FromConfig(const IConfigurationSection& config)
         {
             WindowOptions options;
@@ -31,6 +34,31 @@ namespace GPP
             options.Resizable = config.GetValue<bool>("Resizable", true);
             options.Fullscreen = config.GetValue<bool>("Fullscreen", false);
             options.Headless = config.GetValue<bool>("Headless", false);
+
+            const auto imgui = config.GetSection("ImGui");
+            std::vector<std::string> configFlags;
+            const auto flagsSection = imgui->GetSection("ConfigFlags");
+            for (std::size_t index = 0;; ++index)
+            {
+                std::string value;
+                if (!flagsSection->TryGetValue(std::to_string(index), value))
+                {
+                    break;
+                }
+                if (!value.empty())
+                {
+                    configFlags.push_back(std::move(value));
+                }
+            }
+            if (!configFlags.empty())
+            {
+                options.ImGuiConfigFlags = std::move(configFlags);
+            }
+            if (std::string dockSpace; imgui->TryGetValue("EnableDockSpace", dockSpace))
+            {
+                options.ImGuiDockSpace = (dockSpace == "true" || dockSpace == "1" ||
+                                           dockSpace == "yes" || dockSpace == "on");
+            }
             return options;
         }
     };

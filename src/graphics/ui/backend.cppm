@@ -12,6 +12,31 @@ import :Renderer;
 
 namespace GPP
 {
+    export ImGuiConfigFlags ParseImGuiConfigFlags(const std::vector<std::string>& names)
+    {
+        static const std::unordered_map<std::string, ImGuiConfigFlags_> kFlagsByName{
+            {"NavEnableKeyboard", ImGuiConfigFlags_NavEnableKeyboard},
+            {"NavEnableGamepad", ImGuiConfigFlags_NavEnableGamepad},
+            {"NoMouse", ImGuiConfigFlags_NoMouse},
+            {"NoMouseCursorChange", ImGuiConfigFlags_NoMouseCursorChange},
+            {"NoKeyboard", ImGuiConfigFlags_NoKeyboard},
+            {"DockingEnable", ImGuiConfigFlags_DockingEnable},
+            {"ViewportsEnable", ImGuiConfigFlags_ViewportsEnable},
+            {"IsSRGB", ImGuiConfigFlags_IsSRGB},
+            {"IsTouchScreen", ImGuiConfigFlags_IsTouchScreen},
+        };
+
+        ImGuiConfigFlags flags = ImGuiConfigFlags_None;
+        for (const auto& name : names)
+        {
+            if (const auto it = kFlagsByName.find(name); it != kFlagsByName.end())
+            {
+                flags |= it->second;
+            }
+        }
+        return flags;
+    }
+
     export ImGuiContext* InitializeImGui(std::shared_ptr<VulkanDevice> device,
                                          Renderer::WindowResources* windowResources,
                                          std::shared_ptr<Logger> logger)
@@ -19,9 +44,6 @@ namespace GPP
         ImGui::SetCurrentContext(ImGui::CreateContext());
         auto* imguiContext = ImGui::GetCurrentContext();
         auto& io = ImGui::GetIO();
-        //io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-        // Each window gets its own ImGuiContext/backend pair, so platform viewports
-        // (which spawn additional native windows outside of WindowManager) are left disabled.
         io.IniFilename = windowResources->ImGuiIniPath.empty()
                              ? nullptr
                              : windowResources->ImGuiIniPath.c_str();

@@ -38,16 +38,24 @@ namespace GPP
                        const std::shared_ptr<Logger>& logger,
                        const std::shared_ptr<IFileSystem>& fileSystem,
                        const std::shared_ptr<InputState>& inputState,
-                       const std::shared_ptr<EventDispatcher>& dispatcher)
+                       const std::shared_ptr<EventDispatcher>& dispatcher,
+                       const std::shared_ptr<ImGuiOptions>& imguiOptions,
+                       const std::shared_ptr<ThemeProxy>& themeProxy,
+                       const std::shared_ptr<UiPreferences>& uiPreferences,
+                       const std::shared_ptr<FontAssetCatalog>& fontAssets)
         : m_VulkanContext(std::move(vulkanContext)),
           m_WindowManager(std::move(windowManager)),
           m_WindowOptions(std::move(windowOptions)),
-        m_WindowDefinitions(std::move(windowDefinitions)),
+          m_WindowDefinitions(std::move(windowDefinitions)),
           m_RenderOptions(std::move(renderOptions)),
           m_Logger(std::move(logger)),
           m_FileSystem(std::move(fileSystem)),
           m_InputState(std::move(inputState)),
-          m_Dispatcher(std::move(dispatcher))
+          m_Dispatcher(std::move(dispatcher)),
+          m_ImGuiOptions(std::move(imguiOptions)),
+          m_ThemeProxy(std::move(themeProxy)),
+          m_UiPreferences(std::move(uiPreferences)),
+          m_FontAssets(std::move(fontAssets))
     {
     }
 
@@ -110,7 +118,7 @@ namespace GPP
         auto window = co_await m_WindowManager->CreateWindow(options, std::move(name));
         {
             std::scoped_lock lock(m_RenderQueueMutex);
-            m_RenderQueue.push([this, window]
+            m_RenderQueue.push([this, window, options]
             {
                 auto& resources = m_WindowResources[window->GetID()];
                 resources.Window = window;
@@ -118,7 +126,7 @@ namespace GPP
                 InitializeWindowSync(resources);
                 if (m_ImGuiEnabled)
                 {
-                    InitializeImGuiForWindow(resources);
+                    InitializeImGuiForWindow(resources, options);
                 }
             });
         }
@@ -195,6 +203,18 @@ namespace GPP
             std::scoped_lock lock(m_RenderQueueMutex);
             m_RenderQueue.push(std::move(task));
         });
+        m_ThemeChangedSubscription = m_Dispatcher->Subscribe<ThemeChangedEvent>(
+            [this](const ThemeChangedEvent&)
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                m_RenderQueue.push([this] { ApplyThemeToAllContexts(); });
+            }, EventDelivery::Async, EventTarget::Render);
+        m_UiPreferencesSubscription = m_Dispatcher->Subscribe<UiPreferencesChangedEvent>(
+            [this](const UiPreferencesChangedEvent&)
+            {
+                std::scoped_lock lock(m_RenderQueueMutex);
+                m_RenderQueue.push([this] { ApplyFontPreferencesToAllContexts(); });
+            }, EventDelivery::Async, EventTarget::Render);
         m_ResizeSubscription = m_Dispatcher->Subscribe<WindowResizedEvent>(
             [this](const WindowResizedEvent& event)
             {
@@ -275,7 +295,7 @@ namespace GPP
                         resources = &m_MainWindowResources;
                     }
                     else if (const auto it = m_WindowResources.find(source.Window);
-                             it != m_WindowResources.end())
+                        it != m_WindowResources.end())
                     {
                         resources = &it->second;
                     }
@@ -398,6 +418,8 @@ namespace GPP
         m_ImGuiInputSubscriptions.clear();
         m_ResizeSubscription.Reset();
         m_WindowCloseSubscription.Reset();
+        m_ThemeChangedSubscription.Reset();
+        m_UiPreferencesSubscription.Reset();
         m_Dispatcher->SetRenderExecutor({});
         m_Running = false;
         if (m_RenderThread.joinable())
@@ -456,10 +478,19 @@ namespace GPP
             return;
         }
         m_ImGuiEnabled = true;
-        InitializeImGuiForWindow(m_MainWindowResources);
+        InitializeImGuiForWindow(m_MainWindowResources, *m_WindowOptions);
         for (auto& [windowId, resources] : m_WindowResources)
         {
-            InitializeImGuiForWindow(resources);
+            const WindowOptions* options = m_WindowOptions.get();
+            for (const auto& definition : m_WindowDefinitions->Items)
+            {
+                if (resources.Window && m_WindowManager->GetWindowName(windowId) == definition.Name)
+                {
+                    options = &definition.Options;
+                    break;
+                }
+            }
+            InitializeImGuiForWindow(resources, *options);
         }
 
         m_FrameResources.reserve(2);
@@ -541,7 +572,7 @@ namespace GPP
     {
         resources.Window = window;
         if (!resources.Surface && !window->CreateVulkanSurface(
-                m_VulkanContext->GetInstance(), &resources.Surface).get())
+            m_VulkanContext->GetInstance(), &resources.Surface).get())
         {
             throw std::runtime_error("Failed to create Vulkan surface for window.");
         }
@@ -587,7 +618,7 @@ namespace GPP
             resources.SwapChain->GetImageCount(), vk::ImageLayout::eUndefined);
     }
 
-    void Renderer::InitializeImGuiForWindow(WindowResources& resources)
+    void Renderer::InitializeImGuiForWindow(WindowResources& resources, const WindowOptions& windowOptions)
     {
         if (!resources.Window || !resources.SwapChain || resources.ImGuiContext)
             return;
@@ -595,6 +626,16 @@ namespace GPP
         resources.ImGuiIniPath = std::format(
             ".gpp/imgui_{}.ini", name.empty() ? std::to_string(resources.Window->GetID()) : name);
         resources.ImGuiContext = InitializeImGui(m_Device, &resources, m_Logger);
+
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
+        auto& io = ImGui::GetIO();
+        const auto& configFlags = windowOptions.ImGuiConfigFlags.value_or(m_ImGuiOptions->ConfigFlags);
+        io.ConfigFlags |= ParseImGuiConfigFlags(configFlags);
+        resources.EnableDockSpace = windowOptions.ImGuiDockSpace.value_or(m_ImGuiOptions->EnableDockSpace);
+        resources.ImGuiEffectiveConfigFlags = static_cast<unsigned int>(io.ConfigFlags);
+
+        ApplyThemeToContext(resources);
+        ApplyFontPreferencesToContext(resources);
     }
 
     void Renderer::ShutdownImGuiForWindow(WindowResources& resources)
@@ -606,6 +647,76 @@ namespace GPP
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
         resources.ImGuiContext = nullptr;
+        resources.FontCache.clear();
+    }
+
+    void Renderer::ApplyThemeToContext(WindowResources& resources) const
+    {
+        if (!resources.ImGuiContext)
+            return;
+        auto* theme = m_ThemeProxy->GetActive();
+        if (!theme)
+            return;
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
+        theme->Apply(ImGui::GetStyle(), ImGui::GetIO());
+    }
+
+    void Renderer::ApplyFontPreferencesToContext(WindowResources& resources) const
+    {
+        if (!resources.ImGuiContext)
+            return;
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
+        auto& io = ImGui::GetIO();
+
+        io.FontGlobalScale = std::max(m_UiPreferences->GetUiScale(), 0.1f);
+
+        const auto fontName = m_UiPreferences->GetFontName();
+        const auto fontSize = m_UiPreferences->GetFontSize();
+        if (fontName.empty() || fontSize <= 0.0f)
+        {
+            return;
+        }
+
+        const auto cacheKey = std::format("{}@{}", fontName, fontSize);
+        if (const auto it = resources.FontCache.find(cacheKey); it != resources.FontCache.end())
+        {
+            io.FontDefault = static_cast<ImFont*>(it->second);
+            return;
+        }
+
+        const auto path = m_FontAssets->ResolveFont(fontName);
+        if (!path)
+        {
+            m_Logger->Warn("UiPreferences requested unknown font '{}'; keeping the current font.", fontName);
+            return;
+        }
+
+        auto* font = io.Fonts->AddFontFromFileTTF(path->string().c_str(), fontSize);
+        if (!font)
+        {
+            m_Logger->Error("Failed to load font '{}' from {}", fontName, path->string());
+            return;
+        }
+        resources.FontCache[cacheKey] = font;
+        io.FontDefault = font;
+    }
+
+    void Renderer::ApplyThemeToAllContexts()
+    {
+        ApplyThemeToContext(m_MainWindowResources);
+        for (auto& [windowId, resources] : m_WindowResources)
+        {
+            ApplyThemeToContext(resources);
+        }
+    }
+
+    void Renderer::ApplyFontPreferencesToAllContexts()
+    {
+        ApplyFontPreferencesToContext(m_MainWindowResources);
+        for (auto& [windowId, resources] : m_WindowResources)
+        {
+            ApplyFontPreferencesToContext(resources);
+        }
     }
 
     void Renderer::RenderWindow(WindowResources& resources,
@@ -617,90 +728,92 @@ namespace GPP
         const auto imageIndex = swapchain->GetCurrentImageIndex();
         const auto extent = swapchain->GetExtent();
         if (renderTargets)
-        for (auto& [bufferId, target] : m_BufferTargets)
-        {
-            TransitionImageLayout(
-                rawCmd, target.ColorImage.GetImage(),
-                target.ColorImage.GetSpecification().format, target.ColorLayout,
-                vk::ImageLayout::eColorAttachmentOptimal);
-            const auto targetDepthFormat = target.DepthImage.GetSpecification().format;
-            const auto targetDepthLayout =
-                (GetImageAspectMask(targetDepthFormat) & vk::ImageAspectFlagBits::eStencil) !=
-                        vk::ImageAspectFlags{}
-                    ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                    : vk::ImageLayout::eDepthAttachmentOptimal;
-            TransitionImageLayout(
-                rawCmd, target.DepthImage.GetImage(), targetDepthFormat,
-                target.DepthLayout, targetDepthLayout);
-            target.ColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
-            target.DepthLayout = targetDepthLayout;
-            vk::RenderingAttachmentInfo targetColor{};
-            targetColor.imageView = target.ColorImage.GetImageView();
-            targetColor.imageLayout = target.ColorLayout;
-            targetColor.loadOp = vk::AttachmentLoadOp::eClear;
-            targetColor.storeOp = vk::AttachmentStoreOp::eStore;
-            targetColor.clearValue =
-                vk::ClearValue(vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f));
-            vk::RenderingAttachmentInfo targetDepth{};
-            targetDepth.imageView = target.DepthImage.GetImageView();
-            targetDepth.imageLayout = target.DepthLayout;
-            targetDepth.loadOp = vk::AttachmentLoadOp::eClear;
-            targetDepth.storeOp = vk::AttachmentStoreOp::eDontCare;
-            targetDepth.clearValue =
-                vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
-            vk::RenderingInfo targetRendering{};
-            targetRendering.renderArea = vk::Rect2D{
-                {0, 0}, {target.Extent.x, target.Extent.y}};
-            targetRendering.layerCount = 1;
-            targetRendering.colorAttachmentCount = 1;
-            targetRendering.pColorAttachments = &targetColor;
-            targetRendering.pDepthAttachment = &targetDepth;
-            rawCmd.beginRendering(targetRendering);
-            const vk::Viewport targetViewport{
-                0.0f, 0.0f, static_cast<float>(target.Extent.x),
-                static_cast<float>(target.Extent.y), 0.0f, 1.0f};
-            const vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
-            rawCmd.setViewport(0, 1, &targetViewport);
-            rawCmd.setScissor(0, 1, &targetScissor);
-            if (auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr)
+            for (auto& [bufferId, target] : m_BufferTargets)
             {
-                rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
-                BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
-                BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
-                struct PushConstants
+                TransitionImageLayout(
+                    rawCmd, target.ColorImage.GetImage(),
+                    target.ColorImage.GetSpecification().format, target.ColorLayout,
+                    vk::ImageLayout::eColorAttachmentOptimal);
+                const auto targetDepthFormat = target.DepthImage.GetSpecification().format;
+                const auto targetDepthLayout =
+                    (GetImageAspectMask(targetDepthFormat) & vk::ImageAspectFlagBits::eStencil) !=
+                    vk::ImageAspectFlags{}
+                        ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                        : vk::ImageLayout::eDepthAttachmentOptimal;
+                TransitionImageLayout(
+                    rawCmd, target.DepthImage.GetImage(), targetDepthFormat,
+                    target.DepthLayout, targetDepthLayout);
+                target.ColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
+                target.DepthLayout = targetDepthLayout;
+                vk::RenderingAttachmentInfo targetColor{};
+                targetColor.imageView = target.ColorImage.GetImageView();
+                targetColor.imageLayout = target.ColorLayout;
+                targetColor.loadOp = vk::AttachmentLoadOp::eClear;
+                targetColor.storeOp = vk::AttachmentStoreOp::eStore;
+                targetColor.clearValue =
+                    vk::ClearValue(vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f));
+                vk::RenderingAttachmentInfo targetDepth{};
+                targetDepth.imageView = target.DepthImage.GetImageView();
+                targetDepth.imageLayout = target.DepthLayout;
+                targetDepth.loadOp = vk::AttachmentLoadOp::eClear;
+                targetDepth.storeOp = vk::AttachmentStoreOp::eDontCare;
+                targetDepth.clearValue =
+                    vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
+                vk::RenderingInfo targetRendering{};
+                targetRendering.renderArea = vk::Rect2D{
+                    {0, 0}, {target.Extent.x, target.Extent.y}
+                };
+                targetRendering.layerCount = 1;
+                targetRendering.colorAttachmentCount = 1;
+                targetRendering.pColorAttachments = &targetColor;
+                targetRendering.pDepthAttachment = &targetDepth;
+                rawCmd.beginRendering(targetRendering);
+                const vk::Viewport targetViewport{
+                    0.0f, 0.0f, static_cast<float>(target.Extent.x),
+                    static_cast<float>(target.Extent.y), 0.0f, 1.0f
+                };
+                const vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
+                rawCmd.setViewport(0, 1, &targetViewport);
+                rawCmd.setScissor(0, 1, &targetScissor);
+                if (auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr)
                 {
-                    glm::mat4 viewProjection;
-                    glm::mat4 model;
-                    float time;
-                } pushConstants{};
-                pushConstants.viewProjection = glm::perspective(
-                    glm::radians(45.0f),
-                    static_cast<float>(target.Extent.x) /
+                    rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
+                    BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
+                    BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
+                    struct PushConstants
+                    {
+                        glm::mat4 viewProjection;
+                        glm::mat4 model;
+                        float time;
+                    } pushConstants{};
+                    pushConstants.viewProjection = glm::perspective(
+                        glm::radians(45.0f),
+                        static_cast<float>(target.Extent.x) /
                         static_cast<float>(std::max(target.Extent.y, 1u)),
-                    0.1f, 100.0f);
-                pushConstants.viewProjection[1][1] *= -1.0f;
-                pushConstants.model = glm::translate(
-                    glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
-                pushConstants.model = glm::rotate(
-                    pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
-                pushConstants.time = elapsed;
-                rawCmd.pushConstants(
-                    pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
-                    0, sizeof(pushConstants), &pushConstants);
-                rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+                        0.1f, 100.0f);
+                    pushConstants.viewProjection[1][1] *= -1.0f;
+                    pushConstants.model = glm::translate(
+                        glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
+                    pushConstants.model = glm::rotate(
+                        pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
+                    pushConstants.time = elapsed;
+                    rawCmd.pushConstants(
+                        pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
+                        0, sizeof(pushConstants), &pushConstants);
+                    rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+                }
+                rawCmd.endRendering();
+                TransitionImageLayout(
+                    rawCmd, target.ColorImage.GetImage(),
+                    target.ColorImage.GetSpecification().format, target.ColorLayout,
+                    vk::ImageLayout::eShaderReadOnlyOptimal);
+                target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
             }
-            rawCmd.endRendering();
-            TransitionImageLayout(
-                rawCmd, target.ColorImage.GetImage(),
-                target.ColorImage.GetSpecification().format, target.ColorLayout,
-                vk::ImageLayout::eShaderReadOnlyOptimal);
-            target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        }
 
         const auto depthFormat = swapchain->GetDepthImageFormat();
         const auto depthLayout =
             (GetImageAspectMask(depthFormat) & vk::ImageAspectFlagBits::eStencil) !=
-                    vk::ImageAspectFlags{}
+            vk::ImageAspectFlags{}
                 ? vk::ImageLayout::eDepthStencilAttachmentOptimal
                 : vk::ImageLayout::eDepthAttachmentOptimal;
 
@@ -737,7 +850,8 @@ namespace GPP
         rawCmd.beginRendering(renderingInfo);
         vk::Viewport viewport{
             0.0f, 0.0f, static_cast<float>(extent.width),
-            static_cast<float>(extent.height), 0.0f, 1.0f};
+            static_cast<float>(extent.height), 0.0f, 1.0f
+        };
         vk::Rect2D scissor{{0, 0}, extent};
         rawCmd.setViewport(0, 1, &viewport);
         rawCmd.setScissor(0, 1, &scissor);
@@ -890,7 +1004,8 @@ namespace GPP
                 ImGui_ImplVulkan_NewFrame();
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
-                if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable)
+                if (m_MainWindowResources.EnableDockSpace &&
+                    (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable))
                     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
                 for (auto& [bufferId, target] : m_BufferTargets)
                 {
@@ -914,6 +1029,9 @@ namespace GPP
                 ImGui_ImplVulkan_NewFrame();
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
+                if (resources->EnableDockSpace &&
+                    (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable))
+                    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
                 if (resources->LayerStack)
                     resources->LayerStack->OnUiRender();
                 ImGui::Render();
@@ -941,7 +1059,7 @@ namespace GPP
                     resources->ImageAvailableSemaphores[m_FrameIndex == 0
                                                             ? m_FrameResources.size() - 1
                                                             : m_FrameIndex - 1]
-                        .GetSemaphore());
+                    .GetSemaphore());
                 multiWaitStages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
                 multiSignalSemaphores.push_back(
                     resources->RenderFinishedSemaphores[

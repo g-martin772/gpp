@@ -15,7 +15,11 @@
           "Height": 650,
           "Fullscreen": false,
           "Resizable": true,
-          "Title": "Configured Window"
+          "Title": "Configured Window",
+          "ImGui": {
+            "ConfigFlags": ["DockingEnable"],
+            "EnableDockSpace": false
+          }
         }
       ],
       "Render": {
@@ -28,6 +32,21 @@
         "PollingIntervalMilliseconds": 300,
         "ShadowDirectory": ".gpp/hot-reload-cache",
         "ShadowCopy": true
+      },
+      "ImGui": {
+        "ConfigFlags": ["DockingEnable", "ViewportsEnable", "NavEnableKeyboard"],
+        "EnableDockSpace": true
+      },
+      "Theme": {
+        "LibraryPath": "",
+        "EnableHotReload": false,
+        "PollingIntervalMilliseconds": 300
+      },
+      "Fonts": {
+        "FontDirectories": ["fonts"],
+        "DefaultFont": "",
+        "DefaultFontSize": 16.0,
+        "UiScale": 1.0
       }
     }
   }

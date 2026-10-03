@@ -70,7 +70,18 @@ namespace GPP
 
         Services.AddHostedService<WindowManager>();
         Services.AddHostedService<ShaderAssetCatalog>();
+        Services.AddHostedService<FontAssetCatalog>();
         Services.AddHostedService<Renderer>();
+
+        Services.AddSingleton<ThemeProxy>();
+        Services.AddSingleton<UiPreferences>();
+        Services.AddSingleton<ThemeDescriptionHolder>(
+            [this](ServiceProvider&) -> std::shared_ptr<IService>
+            {
+                auto holder = std::make_shared<ThemeDescriptionHolder>();
+                holder->Description = m_ThemeDescription;
+                return holder;
+            });
 
         Services.AddSingleton<HotReloadLayerRegistrations>(
             [this](ServiceProvider& provider) -> std::shared_ptr<IService>
@@ -89,6 +100,22 @@ namespace GPP
         Services.Configure<WindowOptions>("GPP:Graphics:Window");
         Services.Configure<RenderOptions>("GPP:Graphics:Render");
         Services.Configure<LayerHotReloadOptions>("GPP:Graphics:LayerHotReload");
+        Services.Configure<FontOptions>("GPP:Graphics:Fonts");
+        Services.Configure<ImGuiOptions>("GPP:Graphics:ImGui",
+            [this](const IConfigurationSection& section) -> ImGuiOptions
+            {
+                auto options = ImGuiOptions::FromConfig(section);
+                if (m_ImGuiOptions)
+                {
+                    // Flags set on the builder take precedence over config.json.
+                    if (!m_ImGuiOptions->ConfigFlags.empty())
+                    {
+                        options.ConfigFlags = m_ImGuiOptions->ConfigFlags;
+                    }
+                    options.EnableDockSpace = m_ImGuiOptions->EnableDockSpace;
+                }
+                return options;
+            });
     }
 
     std::shared_ptr<GuiApplication> GuiApplicationBuilder::Build()
@@ -123,6 +150,24 @@ namespace GPP
                     return std::make_shared<WindowOptions>(options);
                 });
         }
+        if (!m_ThemeDescription)
+        {
+            // No theme registered on the builder: fall back to the .so path in config.json, if any.
+            auto themeOptions = ThemeOptions::FromConfig(*config->GetSection("GPP:Graphics:Theme"));
+            if (!themeOptions.LibraryPath.empty())
+            {
+                m_ThemeDescription = ThemeDescription{
+                    .LibraryPath = themeOptions.LibraryPath,
+                    .EnableHotReload = themeOptions.EnableHotReload,
+                    .PollingInterval = themeOptions.PollingInterval
+                };
+            }
+        }
+        if (m_ThemeDescription)
+        {
+            Services.AddHostedService<ThemeManager>();
+        }
+
         auto sp = Services.Build();
         LayerStackTable layerStacks;
 

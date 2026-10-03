@@ -9,6 +9,9 @@ import :Shader;
 import :HotReload;
 import :RenderConfig;
 import :Application.Layer;
+import :Application.Theme;
+import :FontAssets;
+import :UI.Preferences;
 
 namespace GPP
 {
@@ -19,7 +22,8 @@ namespace GPP
     {
     public:
         using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, WindowDefinitions, RenderOptions,
-                                         Logger, IFileSystem, InputState, EventDispatcher>;
+                                         Logger, IFileSystem, InputState, EventDispatcher, ImGuiOptions, ThemeProxy,
+                                         UiPreferences, FontAssetCatalog>;
 
         Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                  const std::shared_ptr<WindowManager>& windowManager,
@@ -29,7 +33,11 @@ namespace GPP
                  const std::shared_ptr<Logger>& logger,
                  const std::shared_ptr<IFileSystem>& fileSystem,
                  const std::shared_ptr<InputState>& inputState,
-                 const std::shared_ptr<EventDispatcher>& dispatcher);
+                 const std::shared_ptr<EventDispatcher>& dispatcher,
+                 const std::shared_ptr<ImGuiOptions>& imguiOptions,
+                 const std::shared_ptr<ThemeProxy>& themeProxy,
+                 const std::shared_ptr<UiPreferences>& uiPreferences,
+                 const std::shared_ptr<FontAssetCatalog>& fontAssets);
 
         Task<void> StartAsync(std::stop_token stopToken) override;
         Task<void> StopAsync() override;
@@ -82,6 +90,9 @@ namespace GPP
             std::vector<vk::ImageLayout> ImageLayouts;
             void* ImGuiContext = nullptr;
             std::string ImGuiIniPath;
+            unsigned int ImGuiEffectiveConfigFlags = 0;
+            bool EnableDockSpace = false;
+            std::unordered_map<std::string, void*> FontCache;
 
             ~WindowResources();
         };
@@ -91,8 +102,12 @@ namespace GPP
         void InitializeWindowResources(const std::shared_ptr<Window>& window,
                                        WindowResources& resources);
         void InitializeWindowSync(WindowResources& resources);
-        void InitializeImGuiForWindow(WindowResources& resources);
+        void InitializeImGuiForWindow(WindowResources& resources, const WindowOptions& windowOptions);
         void ShutdownImGuiForWindow(WindowResources& resources);
+        void ApplyThemeToContext(WindowResources& resources) const;
+        void ApplyFontPreferencesToContext(WindowResources& resources) const;
+        void ApplyThemeToAllContexts();
+        void ApplyFontPreferencesToAllContexts();
         void RenderWindow(WindowResources& resources, vk::CommandBuffer commandBuffer,
                           float elapsed, bool renderTargets);
         Task<void> StopRenderSystem();
@@ -107,10 +122,16 @@ namespace GPP
         std::shared_ptr<Logger> m_Logger;
         std::shared_ptr<InputState> m_InputState;
         std::shared_ptr<EventDispatcher> m_Dispatcher;
+        std::shared_ptr<ImGuiOptions> m_ImGuiOptions;
+        std::shared_ptr<ThemeProxy> m_ThemeProxy;
+        std::shared_ptr<UiPreferences> m_UiPreferences;
+        std::shared_ptr<FontAssetCatalog> m_FontAssets;
         std::shared_ptr<VulkanDevice> m_Device;
         std::shared_ptr<VulkanCommandPool> m_CommandPool;
         EventSubscription m_ResizeSubscription{};
         EventSubscription m_WindowCloseSubscription{};
+        EventSubscription m_ThemeChangedSubscription{};
+        EventSubscription m_UiPreferencesSubscription{};
         std::vector<EventSubscription> m_ImGuiInputSubscriptions{};
         mutable std::mutex m_RenderQueueMutex{};
         std::queue<std::move_only_function<void()>> m_RenderQueue{};
