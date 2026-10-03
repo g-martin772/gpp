@@ -48,6 +48,9 @@ namespace GPP
     export void CopyBufferToImage(vk::CommandBuffer commandBuffer, vk::Buffer buffer, vk::Image image,
                                   vk::Extent3D extent,
                                   vk::ImageLayout imageLayout = vk::ImageLayout::eTransferDstOptimal);
+    export void CopyImageToBuffer(vk::CommandBuffer commandBuffer, vk::Image image, vk::Buffer buffer,
+                                  vk::Extent3D extent,
+                                  vk::ImageLayout imageLayout = vk::ImageLayout::eTransferSrcOptimal);
     export void CopyImage(vk::CommandBuffer commandBuffer, vk::Image source, vk::Image destination,
                           vk::Extent3D extent,
                           vk::ImageLayout sourceLayout = vk::ImageLayout::eTransferSrcOptimal,

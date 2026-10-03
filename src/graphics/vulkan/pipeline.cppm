@@ -36,6 +36,19 @@ namespace GPP
             CreatePipeline(specification, vertexShader, fragmentShader);
         }
 
+        VulkanPipeline(
+            const std::shared_ptr<VulkanDevice>& device,
+            const CompiledShader& computeShader
+        ) : m_Device(device)
+        {
+            if (!m_Device)
+            {
+                throw std::runtime_error("VulkanPipeline requires a valid VulkanDevice instance.");
+            }
+
+            CreateComputePipeline(computeShader);
+        }
+
         ~VulkanPipeline()
         {
             if (!m_Device)
@@ -64,7 +77,8 @@ namespace GPP
             : m_Device(std::move(other.m_Device)),
               m_PipelineLayout(other.m_PipelineLayout),
               m_Pipeline(other.m_Pipeline),
-              m_DescriptorSetLayouts(std::move(other.m_DescriptorSetLayouts))
+              m_DescriptorSetLayouts(std::move(other.m_DescriptorSetLayouts)),
+              m_BindPoint(other.m_BindPoint)
         {
             other.m_PipelineLayout = nullptr;
             other.m_Pipeline = nullptr;
@@ -89,6 +103,7 @@ namespace GPP
                 m_PipelineLayout = other.m_PipelineLayout;
                 m_Pipeline = other.m_Pipeline;
                 m_DescriptorSetLayouts = std::move(other.m_DescriptorSetLayouts);
+                m_BindPoint = other.m_BindPoint;
 
                 other.m_PipelineLayout = nullptr;
                 other.m_Pipeline = nullptr;
@@ -98,6 +113,7 @@ namespace GPP
 
         [[nodiscard]] vk::Pipeline GetPipeline() const noexcept { return m_Pipeline; }
         [[nodiscard]] vk::PipelineLayout GetLayout() const noexcept { return m_PipelineLayout; }
+        [[nodiscard]] vk::PipelineBindPoint GetBindPoint() const noexcept { return m_BindPoint; }
 
         [[nodiscard]] const std::vector<vk::DescriptorSetLayout>& GetDescriptorSetLayouts() const noexcept
         {
@@ -291,38 +307,7 @@ namespace GPP
                                                             dynamicStates.data());
 
             // 10. Build reflected descriptor set and push-constant layout.
-            std::uint32_t setCount = 0;
-            for (const auto& descriptor : reflection.descriptorBindings)
-            {
-                setCount = std::max(setCount, descriptor.set + 1);
-            }
-            m_DescriptorSetLayouts.resize(setCount);
-            for (std::uint32_t set = 0; set < setCount; ++set)
-            {
-                std::vector<vk::DescriptorSetLayoutBinding> bindings;
-                for (const auto& descriptor : reflection.descriptorBindings)
-                {
-                    if (descriptor.set != set) continue;
-                    bindings.emplace_back(
-                        descriptor.binding, ToVulkanDescriptorType(descriptor.type),
-                        std::max(descriptor.descriptorCount, 1u),
-                        ToVulkanShaderStages(descriptor.stages));
-                }
-                vk::DescriptorSetLayoutCreateInfo setInfo(
-                    {}, static_cast<std::uint32_t>(bindings.size()), bindings.data());
-                m_DescriptorSetLayouts[set] = logicalDevice.createDescriptorSetLayout(setInfo);
-            }
-            std::vector<vk::PushConstantRange> pushConstants;
-            pushConstants.reserve(reflection.pushConstants.size());
-            for (const auto& range : reflection.pushConstants)
-            {
-                pushConstants.emplace_back(ToVulkanShaderStages(range.stages), range.offset, range.size);
-            }
-            vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
-                {}, static_cast<std::uint32_t>(m_DescriptorSetLayouts.size()),
-                m_DescriptorSetLayouts.data(), static_cast<std::uint32_t>(pushConstants.size()),
-                pushConstants.data());
-            m_PipelineLayout = logicalDevice.createPipelineLayout(pipelineLayoutInfo);
+            BuildPipelineLayout(reflection);
 
             // ====================================================================
             // VULKAN 1.3 DYNAMIC RENDERING HANDSHAKE
@@ -371,6 +356,82 @@ namespace GPP
             // Shader modules are only needed during pipeline compilation; we can safely discard them now
             logicalDevice.destroyShaderModule(vertModule);
             logicalDevice.destroyShaderModule(fragModule);
+
+            m_BindPoint = vk::PipelineBindPoint::eGraphics;
+        }
+
+        void CreateComputePipeline(const CompiledShader& computeShader)
+        {
+            auto logicalDevice = m_Device->GetDevice();
+            const auto& reflection = computeShader.reflection;
+
+            vk::ShaderModuleCreateInfo createInfo(
+                {}, computeShader.spirv.size() * sizeof(std::uint32_t), computeShader.spirv.data());
+            vk::ShaderModule computeModule = logicalDevice.createShaderModule(createInfo);
+
+            BuildPipelineLayout(reflection);
+
+            vk::PipelineShaderStageCreateInfo stage(
+                {}, vk::ShaderStageFlagBits::eCompute, computeModule,
+                computeShader.source.entryPoint.c_str());
+
+            vk::ComputePipelineCreateInfo pipelineInfo({}, stage, m_PipelineLayout);
+
+            try
+            {
+                auto result = logicalDevice.createComputePipeline(nullptr, pipelineInfo);
+                if (result.result != vk::Result::eSuccess)
+                {
+                    throw std::runtime_error("Failed to compile Vulkan Compute Pipeline.");
+                }
+                m_Pipeline = result.value;
+            }
+            catch (const std::exception&)
+            {
+                logicalDevice.destroyShaderModule(computeModule);
+                throw;
+            }
+
+            logicalDevice.destroyShaderModule(computeModule);
+            m_BindPoint = vk::PipelineBindPoint::eCompute;
+        }
+
+        void BuildPipelineLayout(const ShaderReflection& reflection)
+        {
+            auto logicalDevice = m_Device->GetDevice();
+
+            std::uint32_t setCount = 0;
+            for (const auto& descriptor : reflection.descriptorBindings)
+            {
+                setCount = std::max(setCount, descriptor.set + 1);
+            }
+            m_DescriptorSetLayouts.resize(setCount);
+            for (std::uint32_t set = 0; set < setCount; ++set)
+            {
+                std::vector<vk::DescriptorSetLayoutBinding> bindings;
+                for (const auto& descriptor : reflection.descriptorBindings)
+                {
+                    if (descriptor.set != set) continue;
+                    bindings.emplace_back(
+                        descriptor.binding, ToVulkanDescriptorType(descriptor.type),
+                        std::max(descriptor.descriptorCount, 1u),
+                        ToVulkanShaderStages(descriptor.stages));
+                }
+                vk::DescriptorSetLayoutCreateInfo setInfo(
+                    {}, static_cast<std::uint32_t>(bindings.size()), bindings.data());
+                m_DescriptorSetLayouts[set] = logicalDevice.createDescriptorSetLayout(setInfo);
+            }
+            std::vector<vk::PushConstantRange> pushConstants;
+            pushConstants.reserve(reflection.pushConstants.size());
+            for (const auto& range : reflection.pushConstants)
+            {
+                pushConstants.emplace_back(ToVulkanShaderStages(range.stages), range.offset, range.size);
+            }
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo(
+                {}, static_cast<std::uint32_t>(m_DescriptorSetLayouts.size()),
+                m_DescriptorSetLayouts.data(), static_cast<std::uint32_t>(pushConstants.size()),
+                pushConstants.data());
+            m_PipelineLayout = logicalDevice.createPipelineLayout(pipelineLayoutInfo);
         }
 
     private:
@@ -378,5 +439,6 @@ namespace GPP
         vk::PipelineLayout m_PipelineLayout{nullptr};
         vk::Pipeline m_Pipeline{nullptr};
         std::vector<vk::DescriptorSetLayout> m_DescriptorSetLayouts;
+        vk::PipelineBindPoint m_BindPoint{vk::PipelineBindPoint::eGraphics};
     };
 }

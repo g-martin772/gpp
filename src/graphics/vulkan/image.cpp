@@ -136,6 +136,16 @@ namespace GPP
         commandBuffer.copyBufferToImage(buffer, image, imageLayout, 1, &region);
     }
 
+    void CopyImageToBuffer(const vk::CommandBuffer commandBuffer, const vk::Image image,
+                           const vk::Buffer buffer, const vk::Extent3D extent,
+                           const vk::ImageLayout imageLayout)
+    {
+        vk::BufferImageCopy region{};
+        region.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+        region.imageExtent = extent;
+        commandBuffer.copyImageToBuffer(image, imageLayout, buffer, 1, &region);
+    }
+
     void CopyImage(const vk::CommandBuffer commandBuffer, const vk::Image source,
                    const vk::Image destination, const vk::Extent3D extent,
                    const vk::ImageLayout sourceLayout, const vk::ImageLayout destinationLayout)

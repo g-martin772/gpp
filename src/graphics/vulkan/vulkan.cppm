@@ -4,5 +4,6 @@ export import :Vulkan.Device;
 export import :Vulkan.Swapchain;
 export import :Vulkan.Command;
 export import :Vulkan.Pipeline;
+export import :Vulkan.Descriptor;
 export import :Vulkan.Image;
 export import :Vulkan.Buffer;
