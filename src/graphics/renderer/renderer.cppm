@@ -74,6 +74,8 @@ namespace GPP
         [[nodiscard]] std::optional<RenderTargetInfo> GetRenderTargetInfo(
             std::uint32_t bufferId) const;
 
+        void ResizeBufferTarget(std::uint32_t bufferId, glm::uvec2 extent);
+
         struct WindowResources
         {
             std::shared_ptr<GPP::Window> Window;

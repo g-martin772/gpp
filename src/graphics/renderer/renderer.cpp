@@ -177,6 +177,33 @@ namespace GPP
         };
     }
 
+    void Renderer::ResizeBufferTarget(const std::uint32_t bufferId, const glm::uvec2 extent)
+    {
+        const auto it = m_BufferTargets.find(bufferId);
+        if (it == m_BufferTargets.end()) return;
+        auto& target = it->second;
+        if (extent.x == 0 || extent.y == 0 || target.Extent == extent) return;
+
+        m_Device->GetDevice().waitIdle();
+
+        target.Extent = extent;
+        target.ColorImage.Resize({extent.x, extent.y, 1});
+        target.DepthImage.Resize({extent.x, extent.y, 1});
+
+        if (m_MainWindowResources.ImGuiContext)
+        {
+            ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
+            if (target.ImGuiTexture)
+            {
+                ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(target.ImGuiTexture));
+            }
+            target.ImGuiTexture = reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
+                target.ColorImage.GetSampler(),
+                target.ColorImage.GetImageView(),
+                static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
+        }
+    }
+
     Task<void> Renderer::StartAsync(std::stop_token stopToken)
     {
         m_Dispatcher->SetRenderExecutor([this](std::move_only_function<void()> task)
