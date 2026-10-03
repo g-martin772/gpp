@@ -20,6 +20,7 @@ namespace GPP
     {
         struct ShaderPipelineCompiledEvent
         {
+            const ShaderPipeline* Owner = nullptr;
             std::shared_ptr<ShaderPipeline::CompiledPipeline> compiled;
         };
     }
@@ -239,7 +240,11 @@ namespace GPP
         }
 
         m_CompiledSubscription = m_Dispatcher->Subscribe<ShaderPipelineCompiledEvent>(
-            [this](const ShaderPipelineCompiledEvent& event) { HandleCompiled(event.compiled); },
+            [this](const ShaderPipelineCompiledEvent& event)
+            {
+                if (event.Owner != this) return;
+                HandleCompiled(event.compiled);
+            },
             EventDelivery::Async, EventTarget::Render);
 
         try
@@ -291,12 +296,16 @@ namespace GPP
         }
 
         m_CompiledSubscription = m_Dispatcher->Subscribe<ShaderPipelineCompiledEvent>(
-            [this](const ShaderPipelineCompiledEvent& event) { HandleCompiled(event.compiled); },
+            [this](const ShaderPipelineCompiledEvent& event)
+            {
+                if (event.Owner != this) return;
+                HandleCompiled(event.compiled);
+            },
             EventDelivery::Async, EventTarget::Render);
         try
         {
             auto compiled = co_await CompileAsync();
-            m_Dispatcher->Publish(ShaderPipelineCompiledEvent{std::move(compiled)});
+            m_Dispatcher->Publish(ShaderPipelineCompiledEvent{.Owner = this, .compiled = std::move(compiled)});
             if (m_Description.enableHotReload)
             {
                 m_FileSubscription = m_Dispatcher->Subscribe<ShaderFileChangedEvent>(
@@ -364,7 +373,7 @@ namespace GPP
     Task<bool> ShaderPipeline::ReloadAsync()
     {
         auto compiled = co_await CompileAsync();
-        m_Dispatcher->Publish(ShaderPipelineCompiledEvent{std::move(compiled)});
+        m_Dispatcher->Publish(ShaderPipelineCompiledEvent{.Owner = this, .compiled = std::move(compiled)});
         co_return true;
     }
 
@@ -419,7 +428,7 @@ namespace GPP
                         return;
                     }
                 }
-                m_Dispatcher->Publish(ShaderPipelineCompiledEvent{std::move(compiled)});
+                m_Dispatcher->Publish(ShaderPipelineCompiledEvent{.Owner = this, .compiled = std::move(compiled)});
                 m_ReloadCondition.notify_all();
             }
             catch (const std::exception& exception)
