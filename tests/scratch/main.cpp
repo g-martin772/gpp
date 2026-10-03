@@ -230,6 +230,90 @@ struct SecondaryLayer : public GuiLayer
     }
 };
 
+struct SlowMoverModule : public ISimulationModule
+{
+    void OnTick(Scene& scene, float deltaTime) override
+    {
+        for (auto [entity, transform, velocity] : scene.Registry().view<TransformComponent, VelocityComponent>().each())
+        {
+            transform.Position += velocity.Linear * deltaTime;
+        }
+    }
+};
+
+struct SimulationDemoLayer : public GuiLayer
+{
+    using Dependencies = std::tuple<Logger, SceneManager>;
+
+    static constexpr auto ScenePath = "tests/scratch/simulation_demo_scene.yaml";
+
+    SimulationDemoLayer(const std::shared_ptr<Logger>& logger, const std::shared_ptr<SceneManager>& scenes)
+        : GuiLayer(logger), m_Scenes(scenes)
+    {
+    }
+
+    void OnAttach() override
+    {
+        bool loaded = true;
+        Scene scene;
+        try
+        {
+            scene = m_Scenes->LoadSceneFromFile(ScenePath);
+        }
+        catch (const std::exception&)
+        {
+            loaded = false;
+            scene = Scene("SimulationDemo");
+
+            const auto a = scene.CreateEntity("A", "Demo");
+            scene.Registry().emplace<TransformComponent>(a, TransformComponent{.Position = {-2.0f, 0.0f, 0.0f}});
+            scene.Registry().emplace<VelocityComponent>(a, VelocityComponent{.Linear = {0.1f, 0.0f, 0.0f}});
+
+            const auto b = scene.CreateEntity("B", "Demo");
+            scene.Registry().emplace<TransformComponent>(b, TransformComponent{.Position = {2.0f, 0.0f, 0.0f}});
+            scene.Registry().emplace<VelocityComponent>(b, VelocityComponent{.Linear = {-0.05f, 0.02f, 0.0f}});
+        }
+
+        m_Logger->Info("SimulationDemoLayer: {} scene '{}'", loaded ? "loaded" : "created", scene.Metadata().Name);
+
+        m_Runner = m_Scenes->CreateSimulation(std::move(scene), std::make_shared<SlowMoverModule>());
+        m_Runner->Start();
+    }
+
+    void OnUiRender() override
+    {
+        if (!m_Runner) return;
+
+        ImGui::Begin("Simulation Demo");
+        {
+            auto view = m_Runner->LockRenderScene();
+            for (auto [entity, meta, transform] : view->Registry().view<MetadataComponent, TransformComponent>().each())
+            {
+                ImGui::Text("%s: (%.2f, %.2f, %.2f)", meta.Name.c_str(),
+                           transform.Position.x, transform.Position.y, transform.Position.z);
+            }
+        }
+        ImGui::End();
+    }
+
+    void OnDetach() override
+    {
+        if (!m_Runner) return;
+
+        m_Runner->Stop();
+
+        const auto yaml = m_Runner->LockRenderScene()->SerializeToYaml();
+        std::ofstream file(ScenePath, std::ios::binary | std::ios::trunc);
+        file << yaml;
+
+        m_Logger->Info("SimulationDemoLayer: saved scene to {}", ScenePath);
+    }
+
+private:
+    std::shared_ptr<SceneManager> m_Scenes;
+    std::shared_ptr<SimulationRunner> m_Runner;
+};
+
 int main(int argc, char* argv[])
 {
     auto builder = GuiApplicationBuilder();
@@ -256,6 +340,8 @@ int main(int argc, char* argv[])
     builder.AddGuiLayer<ViewportLayer>()
            .SetBufferTarget(5);
     builder.AddGuiLayer<FontPickerLayer>()
+           .SetWindowTarget("main");
+    builder.AddGuiLayer<SimulationDemoLayer>()
            .SetWindowTarget("main");
 
     builder.AddHotReloadableLayer("demo-layer", "demo_hot_reload_layer.so")

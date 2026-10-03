@@ -1,0 +1,28 @@
+Scene: SimulationDemo
+Entities:
+  - Guid: 16682891755691032345
+    Components:
+      Metadata:
+        Guid: 16682891755691032345
+        Name: A
+        TypeTag: Demo
+      Transform:
+        Position: [4.261785, 0, 0]
+        Rotation: [0, 0, 0, 1]
+        Scale: [1, 1, 1]
+      Velocity:
+        Linear: [0.1, 0, 0]
+        Angular: [0, 0, 0]
+  - Guid: 5043471248281516914
+    Components:
+      Metadata:
+        Guid: 5043471248281516914
+        Name: B
+        TypeTag: Demo
+      Transform:
+        Position: [-1.1309112, 1.2522846, 0]
+        Rotation: [0, 0, 0, 1]
+        Scale: [1, 1, 1]
+      Velocity:
+        Linear: [-0.05, 0.02, 0]
+        Angular: [0, 0, 0]
