@@ -7,5 +7,8 @@ set(CMAKE_CXX_STANDARD 23)
 
 include(cmake/Dependencies.cmake)
 include(cmake/GppLibrary.cmake)
-include(cmake/Scratch.cmake)
-include(cmake/Tests.cmake)
+
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(cmake/Scratch.cmake)
+    include(cmake/Tests.cmake)
+endif ()
