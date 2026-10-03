@@ -1,6 +1,6 @@
 module;
 #include <PxPhysicsAPI.h>
-export module physx_sdk;
+export module GPP.Simulation:Physics;
 
 export namespace physx
 {

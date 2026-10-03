@@ -17,6 +17,7 @@
     "stb",
     "yaml-cpp",
     "tinygltf",
-    "physx"
+    "physx",
+    "entt"
   ]
 }

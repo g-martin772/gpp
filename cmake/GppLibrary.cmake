@@ -35,6 +35,6 @@ endif()
 
 target_include_directories(gpp PRIVATE ${Stb_INCLUDE_DIR})
 target_link_libraries(gpp PUBLIC yaml-cpp::yaml-cpp gpp_imguizmo gpp_node_editor)
-target_link_libraries(gpp PUBLIC unofficial::omniverse-physx-sdk::sdk)
+target_link_libraries(gpp PUBLIC unofficial::omniverse-physx-sdk::sdk EnTT::EnTT)
 
 include(cmake/GppHotReload.cmake)

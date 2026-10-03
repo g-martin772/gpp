@@ -17,7 +17,8 @@
   "buildPresets": [
     {
       "name": "vcpkg",
-      "configurePreset": "vcpkg"
+      "configurePreset": "vcpkg",
+      "jobs": 8
     }
   ]
 }
