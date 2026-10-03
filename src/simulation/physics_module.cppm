@@ -45,6 +45,12 @@ namespace GPP
 
         [[nodiscard]] physx::PxScene* GetPxScene() const noexcept { return m_Scene; }
 
+        [[nodiscard]] physx::PxRigidActor* FindActor(entt::entity entity) const
+        {
+            const auto it = m_ActorsByEntity.find(entity);
+            return it != m_ActorsByEntity.end() ? it->second : nullptr;
+        }
+
     private:
         void SyncActors(Scene& scene);
         void StepPhysics(float deltaTime);
