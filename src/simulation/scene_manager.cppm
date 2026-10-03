@@ -24,6 +24,12 @@ namespace GPP
         std::shared_ptr<SimulationRunner> CreateSimulation(Scene scene,
                                                             std::shared_ptr<ISimulationModule> module,
                                                             SimulationOptions options = {});
+        std::shared_ptr<SimulationRunner> CreateSimulation(const std::string& sceneName,
+                                                            std::vector<std::shared_ptr<ISimulationModule>> modules,
+                                                            SimulationOptions options = {});
+        std::shared_ptr<SimulationRunner> CreateSimulation(Scene scene,
+                                                            std::vector<std::shared_ptr<ISimulationModule>> modules,
+                                                            SimulationOptions options = {});
 
         [[nodiscard]] std::shared_ptr<SimulationRunner> GetSimulation(const std::string& name) const;
         void DestroySimulation(const std::string& name);

@@ -55,7 +55,7 @@ export namespace GPP
         bool EnableGravity{true};
     };
 
-    enum class ColliderShape : $u8 { Box, Sphere, Capsule, Plane };
+    enum class ColliderShape : $u8 { Box, Sphere, Capsule, Plane, ConvexMesh };
 
     struct ColliderComponent
     {
@@ -72,6 +72,20 @@ export namespace GPP
     struct PhysicsActorHandle
     {
         void* Actor{nullptr};
+    };
+
+    struct MeshComponent
+    {
+        std::string AssetPath;
+        glm::vec3 CenterOfMassOffset{0.0f, 0.0f, 0.0f};
+    };
+
+    struct CameraComponent
+    {
+        float Fov{60.0f};
+        float NearPlane{0.1f};
+        float FarPlane{1000.0f};
+        bool Primary{true};
     };
 }
 
@@ -158,6 +172,7 @@ namespace YAML
             case GPP::ColliderShape::Sphere: return Node(std::string("Sphere"));
             case GPP::ColliderShape::Capsule: return Node(std::string("Capsule"));
             case GPP::ColliderShape::Plane: return Node(std::string("Plane"));
+            case GPP::ColliderShape::ConvexMesh: return Node(std::string("ConvexMesh"));
             case GPP::ColliderShape::Box: default: return Node(std::string("Box"));
             }
         }
@@ -168,6 +183,7 @@ namespace YAML
             if (value == "Sphere") out = GPP::ColliderShape::Sphere;
             else if (value == "Capsule") out = GPP::ColliderShape::Capsule;
             else if (value == "Plane") out = GPP::ColliderShape::Plane;
+            else if (value == "ConvexMesh") out = GPP::ColliderShape::ConvexMesh;
             else out = GPP::ColliderShape::Box;
             return true;
         }
@@ -306,6 +322,49 @@ namespace YAML
             return true;
         }
     };
+
+    template <>
+    struct convert<GPP::MeshComponent>
+    {
+        static Node encode(const GPP::MeshComponent& value)
+        {
+            Node node;
+            node["AssetPath"] = value.AssetPath;
+            node["CenterOfMassOffset"] = value.CenterOfMassOffset;
+            return node;
+        }
+
+        static bool decode(const Node& node, GPP::MeshComponent& out)
+        {
+            if (node["AssetPath"]) out.AssetPath = node["AssetPath"].as<std::string>();
+            if (node["CenterOfMassOffset"])
+                out.CenterOfMassOffset = node["CenterOfMassOffset"].as<glm::vec3>();
+            return true;
+        }
+    };
+
+    template <>
+    struct convert<GPP::CameraComponent>
+    {
+        static Node encode(const GPP::CameraComponent& value)
+        {
+            Node node;
+            node["Fov"] = value.Fov;
+            node["NearPlane"] = value.NearPlane;
+            node["FarPlane"] = value.FarPlane;
+            node["Primary"] = value.Primary;
+            return node;
+        }
+
+        static bool decode(const Node& node, GPP::CameraComponent& out)
+        {
+            if (node["Fov"]) out.Fov = node["Fov"].as<float>();
+            if (node["NearPlane"]) out.NearPlane = node["NearPlane"].as<float>();
+            if (node["FarPlane"]) out.FarPlane = node["FarPlane"].as<float>();
+            if (node["Primary"]) out.Primary = node["Primary"].as<bool>();
+            return true;
+        }
+    };
 }
 
 namespace GPP
@@ -321,6 +380,8 @@ namespace GPP
             RegisterComponent<VelocityComponent>("Velocity");
             RegisterComponent<RigidBodyComponent>("RigidBody");
             RegisterComponent<ColliderComponent>("Collider");
+            RegisterComponent<MeshComponent>("Mesh");
+            RegisterComponent<CameraComponent>("Camera");
 
             ComponentRegistrationOptions transientOptions;
             transientOptions.SyncToRenderState = false;

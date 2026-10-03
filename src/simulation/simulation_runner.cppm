@@ -42,6 +42,8 @@ namespace GPP
     public:
         SimulationRunner(Scene scene, std::shared_ptr<ISimulationModule> module,
                          SimulationOptions options = {});
+        SimulationRunner(Scene scene, std::vector<std::shared_ptr<ISimulationModule>> modules,
+                         SimulationOptions options = {});
         ~SimulationRunner();
 
         SimulationRunner(const SimulationRunner&) = delete;
@@ -63,7 +65,7 @@ namespace GPP
         Scene m_SimScene;
         Scene m_RenderScene;
         std::mutex m_RenderMutex;
-        std::shared_ptr<ISimulationModule> m_Module;
+        std::vector<std::shared_ptr<ISimulationModule>> m_Modules;
         SimulationOptions m_Options;
         std::jthread m_Thread;
         std::atomic<bool> m_Paused{false};

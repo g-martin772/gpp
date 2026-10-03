@@ -336,4 +336,14 @@ namespace GPP
     {
         return VulkanCommandBuffer(m_CommandPool, m_Device, m_Logger, true, false, false);
     }
+
+    void ImmediateSubmit(const VulkanCommandPool& pool, const vk::Queue queue,
+                        const std::function<void(vk::CommandBuffer)>& record)
+    {
+        auto commandBuffer = pool.AllocateSingleUseCommandBuffer();
+        commandBuffer.Begin();
+        record(commandBuffer.GetCommandBuffer());
+        commandBuffer.End();
+        commandBuffer.Submit(queue);
+    }
 }

@@ -6,3 +6,4 @@ export import :Components;
 export import :Scene;
 export import :Runner;
 export import :SceneManager;
+export import :PhysicsModule;

@@ -7,7 +7,7 @@ Entities:
         Name: A
         TypeTag: Demo
       Transform:
-        Position: [13.969456, 0, 0]
+        Position: [33.965393, 0, 0]
         Rotation: [0, 0, 0, 1]
         Scale: [1, 1, 1]
       Velocity:
@@ -20,7 +20,7 @@ Entities:
         Name: B
         TypeTag: Demo
       Transform:
-        Position: [-5.984585, 3.1934774, 0]
+        Position: [-15.9825535, 7.191521, 0]
         Rotation: [0, 0, 0, 1]
         Scale: [1, 1, 1]
       Velocity:

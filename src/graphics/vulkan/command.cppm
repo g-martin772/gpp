@@ -67,4 +67,7 @@ namespace GPP
         std::shared_ptr<Logger> m_Logger = nullptr;
         vk::CommandPool m_CommandPool;
     };
+
+    export void ImmediateSubmit(const VulkanCommandPool& pool, vk::Queue queue,
+                               const std::function<void(vk::CommandBuffer)>& record);
 }

@@ -73,6 +73,34 @@ namespace GPP
         return runner;
     }
 
+    std::shared_ptr<SimulationRunner> SceneManager::CreateSimulation(
+        const std::string& sceneName, std::vector<std::shared_ptr<ISimulationModule>> modules,
+        SimulationOptions options)
+    {
+        Scene scene;
+        {
+            std::scoped_lock lock(m_Mutex);
+            const auto it = m_Scenes.find(sceneName);
+            if (it == m_Scenes.end())
+            {
+                throw std::runtime_error("SceneManager: unknown scene '" + sceneName + "'");
+            }
+            scene = it->second.Clone();
+        }
+        return CreateSimulation(std::move(scene), std::move(modules), options);
+    }
+
+    std::shared_ptr<SimulationRunner> SceneManager::CreateSimulation(
+        Scene scene, std::vector<std::shared_ptr<ISimulationModule>> modules, SimulationOptions options)
+    {
+        const auto name = scene.Metadata().Name;
+        auto runner = std::make_shared<SimulationRunner>(std::move(scene), std::move(modules), options);
+
+        std::scoped_lock lock(m_Mutex);
+        m_Simulations[name] = runner;
+        return runner;
+    }
+
     std::shared_ptr<SimulationRunner> SceneManager::GetSimulation(const std::string& name) const
     {
         std::scoped_lock lock(m_Mutex);

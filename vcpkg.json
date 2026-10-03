@@ -18,6 +18,7 @@
     "yaml-cpp",
     "tinygltf",
     "physx",
-    "entt"
+    "entt",
+    "nativefiledialog-extended"
   ]
 }

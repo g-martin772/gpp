@@ -7,9 +7,17 @@ namespace GPP
 {
     SimulationRunner::SimulationRunner(Scene scene, std::shared_ptr<ISimulationModule> module,
                                        SimulationOptions options)
+        : SimulationRunner(std::move(scene),
+                           std::vector<std::shared_ptr<ISimulationModule>>{std::move(module)},
+                           options)
+    {
+    }
+
+    SimulationRunner::SimulationRunner(Scene scene, std::vector<std::shared_ptr<ISimulationModule>> modules,
+                                       SimulationOptions options)
         : m_SimScene(std::move(scene)),
           m_RenderScene(m_SimScene.Clone()),
-          m_Module(std::move(module)),
+          m_Modules(std::move(modules)),
           m_Options(options)
     {
     }
@@ -37,7 +45,10 @@ namespace GPP
 
     void SimulationRunner::ThreadMain(std::stop_token stopToken)
     {
-        m_Module->OnInit(m_SimScene);
+        for (const auto& module : m_Modules)
+        {
+            module->OnInit(m_SimScene);
+        }
 
         auto lastTick = std::chrono::steady_clock::now();
         const auto timestep = std::chrono::duration_cast<std::chrono::steady_clock::duration>(m_Options.FixedTimestep);
@@ -59,7 +70,10 @@ namespace GPP
 
             try
             {
-                m_Module->OnTick(m_SimScene, deltaTime);
+                for (const auto& module : m_Modules)
+                {
+                    module->OnTick(m_SimScene, deltaTime);
+                }
             }
             catch (const std::exception& e)
             {
@@ -86,6 +100,9 @@ namespace GPP
             }
         }
 
-        m_Module->OnShutdown(m_SimScene);
+        for (const auto& module : m_Modules)
+        {
+            module->OnShutdown(m_SimScene);
+        }
     }
 }

@@ -23,6 +23,7 @@ find_package(Stb REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(unofficial-omniverse-physx-sdk CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
+find_package(nfd CONFIG REQUIRED)
 
 # imgui
 

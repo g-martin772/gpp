@@ -37,8 +37,9 @@ namespace GPP
 
     export struct ShaderPipelineDescription
     {
-        ShaderSource vertex;
-        ShaderSource fragment;
+        std::optional<ShaderSource> vertex;
+        std::optional<ShaderSource> fragment;
+        std::optional<ShaderSource> compute;
         ShaderCompileOptions compileOptions;
         std::chrono::milliseconds pollingInterval{250};
         bool enableHotReload = false;
@@ -83,24 +84,26 @@ namespace GPP
         void HandleFileChanged(const ShaderFileChangedEvent& event);
         void HandleCompiled(const std::shared_ptr<CompiledPipeline>& compiled);
         void SetProgress(ShaderCompilationProgress progress);
+        void DrainRetired();
 
         std::shared_ptr<VulkanDevice> m_Device;
         VulkanPipelineSpecification m_PipelineSpecification;
         ShaderPipelineDescription m_Description;
+        bool m_IsCompute = false;
         ShaderCompiler m_Compiler;
         std::shared_ptr<Logger> m_Logger;
         std::shared_ptr<EventDispatcher> m_Dispatcher;
         ShaderFileWatcher m_Watcher;
         EventSubscription m_FileSubscription;
         EventSubscription m_CompiledSubscription;
-        std::filesystem::path m_VertexPath;
-        std::filesystem::path m_FragmentPath;
+        std::vector<std::filesystem::path> m_SourcePaths;
         std::vector<std::filesystem::path> m_Dependencies;
 
         mutable std::mutex m_Mutex;
         std::condition_variable m_ReloadCondition;
         std::shared_ptr<VulkanPipeline> m_CurrentPipeline;
-        std::vector<std::shared_ptr<VulkanPipeline>> m_RetiredPipelines;
+        std::deque<std::shared_ptr<VulkanPipeline>> m_RetiredPipelines;
+        static constexpr std::size_t kMaxRetiredPipelines = 3;
         ShaderReflection m_Reflection;
         ShaderPipelineMetadata m_Metadata;
         ShaderCompilationProgress m_Progress;

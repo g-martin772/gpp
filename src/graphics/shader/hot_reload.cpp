@@ -10,8 +10,9 @@ namespace GPP
 {
     struct ShaderPipeline::CompiledPipeline
     {
-        CompiledShader vertex;
-        CompiledShader fragment;
+        std::optional<CompiledShader> vertex;
+        std::optional<CompiledShader> fragment;
+        std::optional<CompiledShader> compute;
         std::uint64_t generation = 0;
     };
 
@@ -33,6 +34,7 @@ namespace GPP
         : m_Device(std::move(device)),
           m_PipelineSpecification(pipelineSpecification),
           m_Description(std::move(description)),
+          m_IsCompute(m_Description.compute.has_value()),
           m_Compiler(fileSystem, logger),
           m_Logger(std::move(logger)),
           m_Dispatcher(std::move(dispatcher)),
@@ -42,13 +44,27 @@ namespace GPP
         {
             throw std::invalid_argument("ShaderPipeline requires a device and dispatcher.");
         }
+        if (m_IsCompute == (m_Description.vertex.has_value() || m_Description.fragment.has_value()))
+        {
+            throw std::invalid_argument(
+                "ShaderPipelineDescription must set either {vertex, fragment} or {compute}, not both.");
+        }
 
-        m_VertexPath = fileSystem->ResolvePath(m_Description.vertex.path);
-        m_FragmentPath = fileSystem->ResolvePath(m_Description.fragment.path);
+        if (m_IsCompute)
+        {
+            m_SourcePaths.push_back(fileSystem->ResolvePath(m_Description.compute->path));
+        }
+        else
+        {
+            m_SourcePaths.push_back(fileSystem->ResolvePath(m_Description.vertex->path));
+            m_SourcePaths.push_back(fileSystem->ResolvePath(m_Description.fragment->path));
+        }
         if (m_Description.enableHotReload)
         {
-            m_Watcher.Watch(m_VertexPath);
-            m_Watcher.Watch(m_FragmentPath);
+            for (const auto& path : m_SourcePaths)
+            {
+                m_Watcher.Watch(path);
+            }
         }
     }
 
@@ -74,7 +90,7 @@ namespace GPP
         if (m_Logger)
         {
             m_Logger->Debug("Shader pipeline [{}] {} ({}/{}) {}",
-                            m_Description.vertex.path.string(),
+                            m_SourcePaths.empty() ? std::string{} : m_SourcePaths.front().string(),
                             snapshot.activeStage,
                             snapshot.completedStages,
                             snapshot.totalStages,
@@ -89,16 +105,24 @@ namespace GPP
             std::scoped_lock lock(m_Mutex);
             return m_Progress.generation + 1;
         }();
-        SetProgress({ShaderCompilationState::Compiling, 0, 2, generation, "vertex", "starting"});
 
-        auto vertex = m_Compiler.Compile(m_Description.vertex, m_Description.compileOptions);
+        if (m_IsCompute)
+        {
+            SetProgress({ShaderCompilationState::Compiling, 0, 1, generation, "compute", "starting"});
+            auto compute = m_Compiler.Compile(*m_Description.compute, m_Description.compileOptions);
+            SetProgress({ShaderCompilationState::Compiling, 1, 1, generation, "reflection", "done"});
+            return std::make_shared<CompiledPipeline>(
+                CompiledPipeline{.compute = std::move(compute), .generation = generation});
+        }
+
+        SetProgress({ShaderCompilationState::Compiling, 0, 2, generation, "vertex", "starting"});
+        auto vertex = m_Compiler.Compile(*m_Description.vertex, m_Description.compileOptions);
         SetProgress({ShaderCompilationState::Compiling, 1, 2, generation, "fragment", "starting"});
-        auto fragment = m_Compiler.Compile(m_Description.fragment, m_Description.compileOptions);
+        auto fragment = m_Compiler.Compile(*m_Description.fragment, m_Description.compileOptions);
 
         SetProgress({ShaderCompilationState::Compiling, 2, 2, generation, "reflection", "merging"});
-        auto result = std::make_shared<CompiledPipeline>(
-            CompiledPipeline{std::move(vertex), std::move(fragment), generation});
-        return result;
+        return std::make_shared<CompiledPipeline>(
+            CompiledPipeline{.vertex = std::move(vertex), .fragment = std::move(fragment), .generation = generation});
     }
 
     Task<std::shared_ptr<ShaderPipeline::CompiledPipeline>> ShaderPipeline::CompileAsync()
@@ -114,9 +138,30 @@ namespace GPP
             return false;
         }
 
-        auto reflection = MergeShaderReflections(compiled->vertex.reflection, compiled->fragment.reflection);
-        auto pipeline = std::make_shared<VulkanPipeline>(
-            m_Device, m_PipelineSpecification, compiled->vertex, compiled->fragment);
+        ShaderReflection reflection;
+        std::shared_ptr<VulkanPipeline> pipeline;
+        std::vector<std::filesystem::path> dependencies;
+        std::uint64_t vertexHash = 0;
+        std::uint64_t fragmentHash = 0;
+        if (m_IsCompute)
+        {
+            reflection = compiled->compute->reflection;
+            pipeline = std::make_shared<VulkanPipeline>(m_Device, *compiled->compute);
+            dependencies = compiled->compute->dependencies;
+            vertexHash = compiled->compute->sourceHash;
+        }
+        else
+        {
+            reflection = MergeShaderReflections(compiled->vertex->reflection, compiled->fragment->reflection);
+            pipeline = std::make_shared<VulkanPipeline>(
+                m_Device, m_PipelineSpecification, *compiled->vertex, *compiled->fragment);
+            dependencies = compiled->vertex->dependencies;
+            dependencies.insert(dependencies.end(),
+                                compiled->fragment->dependencies.begin(),
+                                compiled->fragment->dependencies.end());
+            vertexHash = compiled->vertex->sourceHash;
+            fragmentHash = compiled->fragment->sourceHash;
+        }
 
         std::scoped_lock lock(m_Mutex);
         if (!m_Running)
@@ -126,16 +171,14 @@ namespace GPP
         if (m_CurrentPipeline)
         {
             m_RetiredPipelines.push_back(std::move(m_CurrentPipeline));
+            DrainRetired();
         }
         m_CurrentPipeline = std::move(pipeline);
-        m_Dependencies = compiled->vertex.dependencies;
-        m_Dependencies.insert(m_Dependencies.end(),
-                              compiled->fragment.dependencies.begin(),
-                              compiled->fragment.dependencies.end());
+        m_Dependencies = std::move(dependencies);
         m_Reflection = reflection;
         m_Metadata = ShaderPipelineMetadata{
-            .vertexSourceHash = compiled->vertex.sourceHash,
-            .fragmentSourceHash = compiled->fragment.sourceHash,
+            .vertexSourceHash = vertexHash,
+            .fragmentSourceHash = fragmentHash,
             .descriptorCount = reflection.descriptorBindings.size(),
             .pushConstantCount = reflection.pushConstants.size(),
             .vertexInputCount = reflection.vertexInputs.size(),
@@ -152,11 +195,7 @@ namespace GPP
         };
         if (m_Description.enableHotReload)
         {
-            for (const auto& dependency : compiled->vertex.dependencies)
-            {
-                m_Watcher.Watch(dependency);
-            }
-            for (const auto& dependency : compiled->fragment.dependencies)
+            for (const auto& dependency : m_Dependencies)
             {
                 m_Watcher.Watch(dependency);
             }
@@ -401,14 +440,16 @@ namespace GPP
     {
         std::error_code error;
         const auto changed = std::filesystem::weakly_canonical(event.path, error);
-        const auto vertex = std::filesystem::weakly_canonical(m_VertexPath, error);
-        const auto fragment = std::filesystem::weakly_canonical(m_FragmentPath, error);
-        auto matches = [&](const std::vector<std::filesystem::path>& dependencies)
+        auto matches = [&](const std::vector<std::filesystem::path>& paths)
         {
-            return std::ranges::any_of(dependencies, [&](const auto& dependency)
+            return std::ranges::any_of(paths, [&](const auto& path)
             {
-                std::error_code dependencyError;
-                return changed == std::filesystem::weakly_canonical(dependency, dependencyError);
+                if (event.path == path)
+                {
+                    return true;
+                }
+                std::error_code pathError;
+                return changed == std::filesystem::weakly_canonical(path, pathError);
             });
         };
         std::vector<std::filesystem::path> dependencies;
@@ -416,11 +457,17 @@ namespace GPP
             std::scoped_lock lock(m_Mutex);
             dependencies = m_Dependencies;
         }
-        const bool dependencyChanged = matches(dependencies);
-        if (event.path == m_VertexPath || event.path == m_FragmentPath ||
-            changed == vertex || changed == fragment || dependencyChanged)
+        if (matches(m_SourcePaths) || matches(dependencies))
         {
             QueueReload();
+        }
+    }
+
+    void ShaderPipeline::DrainRetired()
+    {
+        while (m_RetiredPipelines.size() > kMaxRetiredPipelines)
+        {
+            m_RetiredPipelines.pop_front();
         }
     }
 

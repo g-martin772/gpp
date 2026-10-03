@@ -3,6 +3,7 @@ module GPP.Graphics;
 import :Application;
 import :Windowing.WindowManager;
 import :Renderer;
+import :UI.FileDialog;
 import GPP.Simulation;
 
 namespace GPP
@@ -77,6 +78,7 @@ namespace GPP
         Services.AddSingleton<ThemeProxy>();
         Services.AddSingleton<UiPreferences>();
         Services.AddSingleton<SceneManager>();
+        Services.AddSingleton<FileDialog>();
         Services.AddSingleton<ThemeDescriptionHolder>(
             [this](ServiceProvider&) -> std::shared_ptr<IService>
             {
