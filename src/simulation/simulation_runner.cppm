@@ -59,6 +59,12 @@ namespace GPP
         [[nodiscard]] RenderSceneLock LockRenderScene() { return RenderSceneLock(m_RenderScene, m_RenderMutex); }
         [[nodiscard]] const SceneMetadata& Metadata() const noexcept { return m_SimScene.Metadata(); }
 
+        void EnqueueEdit(std::move_only_function<void(Scene&)> edit)
+        {
+            std::scoped_lock lock(m_EditMutex);
+            m_PendingEdits.push(std::move(edit));
+        }
+
     private:
         void ThreadMain(std::stop_token stopToken);
 
@@ -70,5 +76,7 @@ namespace GPP
         std::jthread m_Thread;
         std::atomic<bool> m_Paused{false};
         std::atomic<bool> m_Running{false};
+        std::mutex m_EditMutex;
+        std::queue<std::move_only_function<void(Scene&)>> m_PendingEdits;
     };
 }

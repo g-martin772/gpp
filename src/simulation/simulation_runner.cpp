@@ -55,6 +55,19 @@ namespace GPP
 
         while (!stopToken.stop_requested())
         {
+            {
+                std::queue<std::move_only_function<void(Scene&)>> edits;
+                {
+                    std::scoped_lock lock(m_EditMutex);
+                    edits.swap(m_PendingEdits);
+                }
+                while (!edits.empty())
+                {
+                    edits.front()(m_SimScene);
+                    edits.pop();
+                }
+            }
+
             if (m_Paused.load(std::memory_order_relaxed))
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
