@@ -190,6 +190,9 @@ namespace GPP
         target.ColorImage.Resize({extent.x, extent.y, 1});
         target.DepthImage.Resize({extent.x, extent.y, 1});
 
+        target.ColorLayout = vk::ImageLayout::eUndefined;
+        target.DepthLayout = vk::ImageLayout::eUndefined;
+
         if (m_MainWindowResources.ImGuiContext)
         {
             ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
