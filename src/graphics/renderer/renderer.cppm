@@ -76,6 +76,8 @@ namespace GPP
 
         void ResizeBufferTarget(std::uint32_t bufferId, glm::uvec2 extent);
 
+        [[nodiscard]] unsigned int GetMainDockspaceId() const noexcept { return m_MainDockspaceId; }
+
         struct WindowResources
         {
             std::shared_ptr<GPP::Window> Window;
@@ -172,6 +174,7 @@ namespace GPP
         std::vector<VulkanSemaphore> m_RenderFinishedSemaphores{};
         std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};
         std::uint32_t m_FrameIndex = 0;
+        unsigned int m_MainDockspaceId = 0;
         float m_LastFrameElapsed = 0.0f;
 
         bool m_ImGuiEnabled = false;

@@ -900,7 +900,7 @@ namespace GPP
                 ImGui::NewFrame();
                 if (m_MainWindowResources.EnableDockSpace &&
                     (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable))
-                    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+                    m_MainDockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
                 for (auto& [bufferId, target] : m_BufferTargets)
                 {
                     if (target.LayerStack)

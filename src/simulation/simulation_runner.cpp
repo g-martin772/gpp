@@ -68,39 +68,44 @@ namespace GPP
                 }
             }
 
-            if (m_Paused.load(std::memory_order_relaxed))
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                lastTick = std::chrono::steady_clock::now();
-                continue;
-            }
-
+            const bool paused = m_Paused.load(std::memory_order_relaxed);
             const auto tickStart = std::chrono::steady_clock::now();
-            const float deltaTime = m_Options.UseFixedTimestep
-                ? m_Options.FixedTimestep.count()
-                : std::chrono::duration<float>(tickStart - lastTick).count();
-            lastTick = tickStart;
 
-            try
+            if (!paused)
             {
-                for (const auto& module : m_Modules)
+                const float deltaTime = m_Options.UseFixedTimestep
+                    ? m_Options.FixedTimestep.count()
+                    : std::chrono::duration<float>(tickStart - lastTick).count();
+
+                try
                 {
-                    module->OnTick(m_SimScene, deltaTime);
+                    for (const auto& module : m_Modules)
+                    {
+                        module->OnTick(m_SimScene, deltaTime);
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    Logger::LogError("Simulation tick for scene '{}' failed: {}", m_SimScene.Metadata().Name,
+                                     e.what());
+                }
+                catch (...)
+                {
+                    Logger::LogError("Simulation tick for scene '{}' failed with an unknown exception",
+                                     m_SimScene.Metadata().Name);
                 }
             }
-            catch (const std::exception& e)
-            {
-                Logger::LogError("Simulation tick for scene '{}' failed: {}", m_SimScene.Metadata().Name, e.what());
-            }
-            catch (...)
-            {
-                Logger::LogError("Simulation tick for scene '{}' failed with an unknown exception",
-                                 m_SimScene.Metadata().Name);
-            }
+            lastTick = tickStart;
 
             {
                 std::scoped_lock lock(m_RenderMutex);
                 Scene::SyncInto(m_SimScene, m_RenderScene);
+            }
+
+            if (paused)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
             }
 
             if (m_Options.UseFixedTimestep)
