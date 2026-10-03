@@ -2,6 +2,7 @@ export module GPP.Graphics:Application.HotReloadLayer;
 
 import std;
 import GPP.Core;
+import :RenderGraph;
 import :Application.Layer;
 
 namespace GPP
@@ -22,6 +23,7 @@ namespace GPP
         void OnDetach() override;
         void OnUpdate(float deltaTime) override;
         void OnRender() override;
+        void OnRenderGraph(RenderGraph& graph) override;
         void OnUiRender() override;
         void OnEvent() override;
 

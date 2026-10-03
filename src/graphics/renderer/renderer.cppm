@@ -8,6 +8,7 @@ import :Windowing;
 import :Shader;
 import :HotReload;
 import :RenderConfig;
+import :RenderGraph;
 import :Application.Layer;
 import :Application.Theme;
 import :FontAssets;
@@ -59,10 +60,6 @@ namespace GPP
         Task<std::shared_ptr<Window>> CreateWindow(const WindowOptions& options,
                                                    std::string name = {});
 
-        ShaderCompilationProgress GetShaderCompilationProgress() const;
-        ShaderPipelineMetadata GetShaderPipelineMetadata() const;
-        std::string GetShaderPipelineError() const;
-
         void AttachLayerStackToWindow(GuiLayerStack& layerStack, const std::shared_ptr<Window>& window);
         void AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId);
 
@@ -93,6 +90,7 @@ namespace GPP
             unsigned int ImGuiEffectiveConfigFlags = 0;
             bool EnableDockSpace = false;
             std::unordered_map<std::string, void*> FontCache;
+            std::unique_ptr<RenderGraph> Graph;
 
             ~WindowResources();
         };
@@ -109,7 +107,7 @@ namespace GPP
         void ApplyThemeToAllContexts();
         void ApplyFontPreferencesToAllContexts();
         void RenderWindow(WindowResources& resources, vk::CommandBuffer commandBuffer,
-                          float elapsed, bool renderTargets);
+                          float elapsed, bool renderTargets, std::uint32_t frameIndex);
         Task<void> StopRenderSystem();
         void RenderLoop(std::stop_token stopToken);
 
@@ -163,6 +161,7 @@ namespace GPP
             vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
             void* ImGuiTexture = nullptr;
             glm::uvec2 Extent{640, 360};
+            std::unique_ptr<RenderGraph> Graph;
         };
 
         WindowResources m_MainWindowResources{};
@@ -172,12 +171,8 @@ namespace GPP
         std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};
         std::uint32_t m_FrameIndex = 0;
 
-        std::shared_ptr<ShaderPipeline> m_ShaderPipeline;
         bool m_ImGuiEnabled = false;
         std::unordered_map<std::uint32_t, BufferTargetResources> m_BufferTargets;
-        VulkanBuffer m_VertexBuffer;
-        VulkanBuffer m_IndexBuffer;
-        std::uint32_t m_IndexCount = 0;
 
         std::thread m_RenderThread;
         std::atomic<bool> m_Running{true};

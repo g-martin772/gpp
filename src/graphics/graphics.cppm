@@ -6,6 +6,7 @@ export import :Application.HotReloadLayerManager;
 export import :Application.Theme;
 export import :Application.ThemeManager;
 export import :Vulkan;
+export import :RenderGraph;
 export import :Renderer;
 export import :RenderConfig;
 export import :Shader;

@@ -70,25 +70,6 @@ namespace GPP
         return it == m_WindowResources.end() ? empty : it->second.SwapChain;
     }
 
-    ShaderCompilationProgress Renderer::GetShaderCompilationProgress() const
-    {
-        return m_ShaderPipeline
-                   ? m_ShaderPipeline->GetCompilationProgress()
-                   : ShaderCompilationProgress{};
-    }
-
-    ShaderPipelineMetadata Renderer::GetShaderPipelineMetadata() const
-    {
-        return m_ShaderPipeline
-                   ? m_ShaderPipeline->GetMetadata()
-                   : ShaderPipelineMetadata{};
-    }
-
-    std::string Renderer::GetShaderPipelineError() const
-    {
-        return m_ShaderPipeline ? m_ShaderPipeline->LastError() : std::string{};
-    }
-
     void Renderer::AttachLayerStackToWindow(GuiLayerStack& layerStack, const std::shared_ptr<Window>& window)
     {
         if (!window) return;
@@ -505,66 +486,6 @@ namespace GPP
         {
             InitializeWindowSync(resources);
         }
-
-        const auto vertexSource = m_FileSystem->ResolveAssetPath("shaders", "vert.vert");
-        const auto fragmentSource = m_FileSystem->ResolveAssetPath("shaders", "frag.frag");
-        m_ShaderPipeline = std::make_shared<ShaderPipeline>(
-            m_Device,
-            VulkanPipelineSpecification{
-                .colorFormat = m_MainWindowResources.SwapChain->GetImageFormat(),
-                .depthFormat = m_MainWindowResources.SwapChain->GetDepthImageFormat(),
-                .enableBlending = false,
-                .cullMode = vk::CullModeFlagBits::eBack,
-                .frontFace = vk::FrontFace::eCounterClockwise
-            },
-            ShaderPipelineDescription{
-                .vertex = ShaderSource{.path = vertexSource, .stage = ShaderStage::Vertex},
-                .fragment = ShaderSource{.path = fragmentSource, .stage = ShaderStage::Fragment},
-                .compileOptions = ShaderCompileOptions{
-                    .includeDirectories = [&]
-                    {
-                        std::vector<std::filesystem::path> directories;
-                        directories.reserve(m_RenderOptions->ShaderAssetDirectories.size());
-                        for (const auto& directory : m_RenderOptions->ShaderAssetDirectories)
-                        {
-                            directories.push_back(m_FileSystem->ResolvePath(directory));
-                        }
-                        return directories;
-                    }()
-                },
-                .pollingInterval = m_RenderOptions->ShaderHotReloadInterval,
-                .enableHotReload = m_RenderOptions->EnableShaderHotReload
-            },
-            m_FileSystem, m_Dispatcher, m_Logger);
-
-        if (!m_ShaderPipeline->StartOnRenderThread())
-        {
-            throw std::runtime_error(m_ShaderPipeline->LastError());
-        }
-
-        struct Vertex
-        {
-            glm::vec3 position;
-            glm::vec3 color;
-        };
-        constexpr std::array vertices{
-            Vertex{{-1, -1, -1}, {1, 0, 0}}, Vertex{{1, -1, -1}, {0, 1, 0}},
-            Vertex{{1, 1, -1}, {0, 0, 1}}, Vertex{{-1, 1, -1}, {1, 1, 0}},
-            Vertex{{-1, -1, 1}, {1, 0, 1}}, Vertex{{1, -1, 1}, {0, 1, 1}},
-            Vertex{{1, 1, 1}, {1, 1, 1}}, Vertex{{-1, 1, 1}, {0.2f, 0.2f, 0.2f}}
-        };
-        constexpr std::array<std::uint32_t, 36> indices{
-            0, 1, 2, 2, 3, 0, 1, 5, 6, 6, 2, 1,
-            5, 4, 7, 7, 6, 5, 4, 0, 3, 3, 7, 4,
-            3, 2, 6, 6, 7, 3, 4, 5, 1, 1, 0, 4
-        };
-        m_VertexBuffer.Create(m_Device,
-                              MakeVertexBufferSpecification(sizeof(vertices), true));
-        m_VertexBuffer.Upload(vertices.data(), sizeof(vertices));
-        m_IndexBuffer.Create(m_Device,
-                             MakeIndexBufferSpecification(sizeof(indices), true));
-        m_IndexBuffer.Upload(indices.data(), sizeof(indices));
-        m_IndexCount = static_cast<std::uint32_t>(indices.size());
     }
 
     void Renderer::InitializeWindowResources(const std::shared_ptr<Window>& window,
@@ -722,87 +643,37 @@ namespace GPP
     void Renderer::RenderWindow(WindowResources& resources,
                                 vk::CommandBuffer rawCmd,
                                 const float elapsed,
-                                const bool renderTargets)
+                                const bool renderTargets,
+                                const std::uint32_t frameIndex)
     {
+        (void)elapsed;
         auto& swapchain = resources.SwapChain;
         const auto imageIndex = swapchain->GetCurrentImageIndex();
         const auto extent = swapchain->GetExtent();
+
         if (renderTargets)
             for (auto& [bufferId, target] : m_BufferTargets)
             {
-                TransitionImageLayout(
-                    rawCmd, target.ColorImage.GetImage(),
-                    target.ColorImage.GetSpecification().format, target.ColorLayout,
-                    vk::ImageLayout::eColorAttachmentOptimal);
-                const auto targetDepthFormat = target.DepthImage.GetSpecification().format;
-                const auto targetDepthLayout =
-                    (GetImageAspectMask(targetDepthFormat) & vk::ImageAspectFlagBits::eStencil) !=
-                    vk::ImageAspectFlags{}
-                        ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                        : vk::ImageLayout::eDepthAttachmentOptimal;
-                TransitionImageLayout(
-                    rawCmd, target.DepthImage.GetImage(), targetDepthFormat,
-                    target.DepthLayout, targetDepthLayout);
-                target.ColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                target.DepthLayout = targetDepthLayout;
-                vk::RenderingAttachmentInfo targetColor{};
-                targetColor.imageView = target.ColorImage.GetImageView();
-                targetColor.imageLayout = target.ColorLayout;
-                targetColor.loadOp = vk::AttachmentLoadOp::eClear;
-                targetColor.storeOp = vk::AttachmentStoreOp::eStore;
-                targetColor.clearValue =
-                    vk::ClearValue(vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f));
-                vk::RenderingAttachmentInfo targetDepth{};
-                targetDepth.imageView = target.DepthImage.GetImageView();
-                targetDepth.imageLayout = target.DepthLayout;
-                targetDepth.loadOp = vk::AttachmentLoadOp::eClear;
-                targetDepth.storeOp = vk::AttachmentStoreOp::eDontCare;
-                targetDepth.clearValue =
-                    vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
-                vk::RenderingInfo targetRendering{};
-                targetRendering.renderArea = vk::Rect2D{
-                    {0, 0}, {target.Extent.x, target.Extent.y}
-                };
-                targetRendering.layerCount = 1;
-                targetRendering.colorAttachmentCount = 1;
-                targetRendering.pColorAttachments = &targetColor;
-                targetRendering.pDepthAttachment = &targetDepth;
-                rawCmd.beginRendering(targetRendering);
-                const vk::Viewport targetViewport{
-                    0.0f, 0.0f, static_cast<float>(target.Extent.x),
-                    static_cast<float>(target.Extent.y), 0.0f, 1.0f
-                };
-                const vk::Rect2D targetScissor{{0, 0}, {target.Extent.x, target.Extent.y}};
-                rawCmd.setViewport(0, 1, &targetViewport);
-                rawCmd.setScissor(0, 1, &targetScissor);
-                if (auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr)
+                if (!target.Graph)
                 {
-                    rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
-                    BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
-                    BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
-                    struct PushConstants
-                    {
-                        glm::mat4 viewProjection;
-                        glm::mat4 model;
-                        float time;
-                    } pushConstants{};
-                    pushConstants.viewProjection = glm::perspective(
-                        glm::radians(45.0f),
-                        static_cast<float>(target.Extent.x) /
-                        static_cast<float>(std::max(target.Extent.y, 1u)),
-                        0.1f, 100.0f);
-                    pushConstants.viewProjection[1][1] *= -1.0f;
-                    pushConstants.model = glm::translate(
-                        glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
-                    pushConstants.model = glm::rotate(
-                        pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
-                    pushConstants.time = elapsed;
-                    rawCmd.pushConstants(
-                        pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
-                        0, sizeof(pushConstants), &pushConstants);
-                    rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+                    target.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger);
                 }
-                rawCmd.endRendering();
+                target.Graph->Begin(frameIndex);
+                const auto colorHandle = target.Graph->ImportImage(
+                    "Target.Color", target.ColorImage, target.ColorLayout);
+                const auto depthHandle = target.Graph->ImportImage(
+                    "Target.Depth", target.DepthImage, target.DepthLayout);
+                target.Graph->SetPrimaryColorTarget(colorHandle);
+                target.Graph->SetPrimaryDepthTarget(depthHandle);
+                if (target.LayerStack)
+                {
+                    target.LayerStack->OnRenderGraph(*target.Graph);
+                }
+                target.Graph->Compile();
+                target.Graph->Execute(rawCmd);
+                target.ColorLayout = target.Graph->GetCurrentLayout(colorHandle);
+                target.DepthLayout = target.Graph->GetCurrentLayout(depthHandle);
+
                 TransitionImageLayout(
                     rawCmd, target.ColorImage.GetImage(),
                     target.ColorImage.GetSpecification().format, target.ColorLayout,
@@ -817,6 +688,31 @@ namespace GPP
                 ? vk::ImageLayout::eDepthStencilAttachmentOptimal
                 : vk::ImageLayout::eDepthAttachmentOptimal;
 
+        if (!resources.Graph)
+        {
+            resources.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger);
+        }
+        resources.Graph->Begin(frameIndex);
+        const auto windowColorHandle = resources.Graph->ImportImage(
+            "Window.Color",
+            RenderGraphExternalImage{
+                swapchain->GetImages()[imageIndex], swapchain->GetImageViews()[imageIndex],
+                swapchain->GetImageFormat(), vk::Extent3D{extent.width, extent.height, 1}
+            },
+            resources.ImageLayouts[imageIndex]);
+        const auto windowDepthHandle = resources.Graph->ImportImage(
+            "Window.Depth", resources.DepthImage, resources.DepthLayout);
+        resources.Graph->SetPrimaryColorTarget(windowColorHandle);
+        resources.Graph->SetPrimaryDepthTarget(windowDepthHandle);
+        if (resources.LayerStack)
+        {
+            resources.LayerStack->OnRenderGraph(*resources.Graph);
+        }
+        resources.Graph->Compile();
+        resources.Graph->Execute(rawCmd);
+        resources.ImageLayouts[imageIndex] = resources.Graph->GetCurrentLayout(windowColorHandle);
+        resources.DepthLayout = resources.Graph->GetCurrentLayout(windowDepthHandle);
+
         TransitionImageLayout(
             rawCmd, swapchain->GetImages()[imageIndex], swapchain->GetImageFormat(),
             resources.ImageLayouts[imageIndex], vk::ImageLayout::eColorAttachmentOptimal);
@@ -829,17 +725,13 @@ namespace GPP
         vk::RenderingAttachmentInfo colorAttachment{};
         colorAttachment.imageView = swapchain->GetImageViews()[imageIndex];
         colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        colorAttachment.loadOp = vk::AttachmentLoadOp::eLoad;
         colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-        colorAttachment.clearValue =
-            vk::ClearValue(vk::ClearColorValue(0.05f, 0.05f, 0.05f, 1.0f));
         vk::RenderingAttachmentInfo depthAttachment{};
         depthAttachment.imageView = resources.DepthImage.GetImageView();
         depthAttachment.imageLayout = depthLayout;
-        depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+        depthAttachment.loadOp = vk::AttachmentLoadOp::eLoad;
         depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
-        depthAttachment.clearValue =
-            vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0));
         vk::RenderingInfo renderingInfo{};
         renderingInfo.renderArea = vk::Rect2D({0, 0}, swapchain->GetExtent());
         renderingInfo.layerCount = 1;
@@ -855,37 +747,6 @@ namespace GPP
         vk::Rect2D scissor{{0, 0}, extent};
         rawCmd.setViewport(0, 1, &viewport);
         rawCmd.setScissor(0, 1, &scissor);
-
-        if (resources.LayerStack)
-            resources.LayerStack->OnRender();
-
-        auto pipeline = m_ShaderPipeline ? m_ShaderPipeline->GetPipeline() : nullptr;
-        if (pipeline)
-        {
-            rawCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
-            BindVertexBuffer(rawCmd, m_VertexBuffer.GetBuffer());
-            BindIndexBuffer(rawCmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
-            struct PushConstants
-            {
-                glm::mat4 viewProjection;
-                glm::mat4 model;
-                float time;
-            } pushConstants{};
-            const float aspect = static_cast<float>(extent.width) /
-                static_cast<float>(std::max(extent.height, 1u));
-            pushConstants.viewProjection =
-                glm::perspective(glm::radians(45.0f), aspect, 0.1f, 100.0f);
-            pushConstants.viewProjection[1][1] *= -1.0f;
-            pushConstants.model = glm::translate(
-                glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
-            pushConstants.model = glm::rotate(
-                pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
-            pushConstants.time = elapsed;
-            rawCmd.pushConstants(
-                pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
-                0, sizeof(pushConstants), &pushConstants);
-            rawCmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
-        }
         if (resources.ImGuiContext)
             ImGui_ImplVulkan_RenderDrawData(
                 ImGui::GetDrawData(), static_cast<VkCommandBuffer>(rawCmd));
@@ -978,6 +839,7 @@ namespace GPP
                 continue;
             }
 
+            const std::uint32_t frameSlot = m_FrameIndex;
             FrameResources& multiWindowFrame = m_FrameResources[m_FrameIndex];
             multiWindowFrame.InFlightFence.WaitAndReset();
             for (auto* resources : activeWindows)
@@ -1042,7 +904,7 @@ namespace GPP
                 if (resources->ImGuiContext)
                     ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources->ImGuiContext));
                 RenderWindow(
-                    *resources, rawMultiWindowCommandBuffer, elapsed, renderTargets);
+                    *resources, rawMultiWindowCommandBuffer, elapsed, renderTargets, frameSlot);
                 renderTargets = false;
             }
             multiWindowCommandBuffer.End();
@@ -1095,9 +957,7 @@ namespace GPP
         }
         if (m_Device)
             m_Device->WaitIdle();
-        if (m_ShaderPipeline)
         {
-            m_ShaderPipeline->StopAsync().get();
             std::queue<std::move_only_function<void()>> shutdownTasks;
             {
                 std::scoped_lock lock(m_RenderQueueMutex);
@@ -1109,7 +969,6 @@ namespace GPP
                 shutdownTasks.pop();
                 task();
             }
-            m_ShaderPipeline.reset();
         }
         ShutdownImGuiForWindow(m_MainWindowResources);
         for (auto& [windowId, resources] : m_WindowResources)
@@ -1129,8 +988,6 @@ namespace GPP
                 resources.LayerStack->OnDetach();
         }
         m_BufferTargets.clear();
-        m_VertexBuffer.Destroy();
-        m_IndexBuffer.Destroy();
         m_RenderFinishedSemaphores.clear();
         m_FrameResources.clear();
         m_CommandPool.reset();

@@ -4,6 +4,7 @@ import std;
 import GPP.Core;
 
 import :Windowing;
+import :RenderGraph;
 
 namespace GPP
 {
@@ -45,6 +46,10 @@ namespace GPP
         }
 
         virtual void OnRender()
+        {
+        }
+
+        virtual void OnRenderGraph(RenderGraph& graph)
         {
         }
 
@@ -155,6 +160,14 @@ namespace GPP
             for (const auto layer : m_Layers)
             {
                 layer->OnRender();
+            }
+        }
+
+        void OnRenderGraph(RenderGraph& graph) const
+        {
+            for (const auto layer : m_Layers)
+            {
+                layer->OnRenderGraph(graph);
             }
         }
 

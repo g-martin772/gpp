@@ -1,4 +1,5 @@
 import GPP;
+import vulkan;
 import std;
 
 using namespace GPP;
@@ -110,21 +111,125 @@ private:
 
 struct ViewportLayer : public GuiLayer
 {
-    using Dependencies = std::tuple<Logger, Renderer>;
+    using Dependencies = std::tuple<Logger, Renderer, IFileSystem, EventDispatcher>;
 
-    ViewportLayer(const std::shared_ptr<Logger>& logger, const std::shared_ptr<Renderer>& renderer)
-        : GuiLayer(logger), m_Renderer(renderer)
+    ViewportLayer(const std::shared_ptr<Logger>& logger, const std::shared_ptr<Renderer>& renderer,
+                  const std::shared_ptr<IFileSystem>& fileSystem,
+                  const std::shared_ptr<EventDispatcher>& dispatcher)
+        : GuiLayer(logger), m_Renderer(renderer), m_FileSystem(fileSystem), m_Dispatcher(dispatcher)
     {
     }
 
     void OnAttach() override
     {
         m_Logger->Info("ViewportLayer attached");
+
+        const auto device = m_Renderer->GetDevice();
+        const auto swapchain = m_Renderer->GetSwapChain();
+        m_Pipeline = std::make_shared<ShaderPipeline>(
+            device,
+            VulkanPipelineSpecification{
+                .colorFormat = swapchain->GetImageFormat(),
+                .depthFormat = swapchain->GetDepthImageFormat(),
+                .enableBlending = false,
+                .cullMode = vk::CullModeFlagBits::eBack,
+                .frontFace = vk::FrontFace::eCounterClockwise
+            },
+            ShaderPipelineDescription{
+                .vertex = ShaderSource{
+                    .path = m_FileSystem->ResolveAssetPath("shaders", "vert.vert"),
+                    .stage = ShaderStage::Vertex
+                },
+                .fragment = ShaderSource{
+                    .path = m_FileSystem->ResolveAssetPath("shaders", "frag.frag"),
+                    .stage = ShaderStage::Fragment
+                }
+            },
+            m_FileSystem, m_Dispatcher, m_Logger);
+        if (!m_Pipeline->StartOnRenderThread())
+        {
+            m_Logger->Error("ViewportLayer: failed to start the cube pipeline: {}",
+                            m_Pipeline->LastError());
+        }
+
+        struct Vertex
+        {
+            glm::vec3 position;
+            glm::vec3 color;
+        };
+        constexpr std::array vertices{
+            Vertex{{-1, -1, -1}, {1, 0, 0}}, Vertex{{1, -1, -1}, {0, 1, 0}},
+            Vertex{{1, 1, -1}, {0, 0, 1}}, Vertex{{-1, 1, -1}, {1, 1, 0}},
+            Vertex{{-1, -1, 1}, {1, 0, 1}}, Vertex{{1, -1, 1}, {0, 1, 1}},
+            Vertex{{1, 1, 1}, {1, 1, 1}}, Vertex{{-1, 1, 1}, {0.2f, 0.2f, 0.2f}}
+        };
+        constexpr std::array<std::uint32_t, 36> indices{
+            0, 1, 2, 2, 3, 0, 1, 5, 6, 6, 2, 1,
+            5, 4, 7, 7, 6, 5, 4, 0, 3, 3, 7, 4,
+            3, 2, 6, 6, 7, 3, 4, 5, 1, 1, 0, 4
+        };
+        m_VertexBuffer.Create(device, MakeVertexBufferSpecification(sizeof(vertices), true));
+        m_VertexBuffer.Upload(vertices.data(), sizeof(vertices));
+        m_IndexBuffer.Create(device, MakeIndexBufferSpecification(sizeof(indices), true));
+        m_IndexBuffer.Upload(indices.data(), sizeof(indices));
+        m_IndexCount = static_cast<std::uint32_t>(indices.size());
+        m_StartTime = std::chrono::high_resolution_clock::now();
     }
 
-    void OnRender() override
+    void OnRenderGraph(RenderGraph& graph) override
     {
-        //m_Logger->Info("Rendering ViewportLayer");
+        const auto colorTarget = graph.GetPrimaryColorTarget();
+        const auto depthTarget = graph.GetPrimaryDepthTarget();
+        if (colorTarget == kInvalidRenderGraphHandle || !m_Pipeline)
+        {
+            return;
+        }
+        const auto extent = graph.GetImageExtent(colorTarget);
+        const auto elapsed = std::chrono::duration<float>(
+            std::chrono::high_resolution_clock::now() - m_StartTime).count();
+
+        graph.AddGraphicsPass(
+            "ViewportLayer.Cube", {}, {},
+            {RenderGraphAttachment{
+                .Handle = colorTarget, .LoadOp = vk::AttachmentLoadOp::eClear,
+                .Clear = vk::ClearValue(vk::ClearColorValue(0.08f, 0.10f, 0.14f, 1.0f))
+            }},
+            depthTarget == kInvalidRenderGraphHandle
+                ? std::nullopt
+                : std::optional(RenderGraphAttachment{
+                    .Handle = depthTarget, .LoadOp = vk::AttachmentLoadOp::eClear,
+                    .Clear = vk::ClearValue(vk::ClearDepthStencilValue(1.0f, 0))
+                }),
+            [this, extent, elapsed](vk::CommandBuffer cmd, RenderGraph&)
+            {
+                const auto pipeline = m_Pipeline->GetPipeline();
+                if (!pipeline)
+                {
+                    return;
+                }
+                cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline->GetPipeline());
+                BindVertexBuffer(cmd, m_VertexBuffer.GetBuffer());
+                BindIndexBuffer(cmd, m_IndexBuffer.GetBuffer(), 0, vk::IndexType::eUint32);
+                struct PushConstants
+                {
+                    glm::mat4 viewProjection;
+                    glm::mat4 model;
+                    float time;
+                } pushConstants{};
+                pushConstants.viewProjection = glm::perspective(
+                    glm::radians(45.0f),
+                    static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u)),
+                    0.1f, 100.0f);
+                pushConstants.viewProjection[1][1] *= -1.0f;
+                pushConstants.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f));
+                pushConstants.model = glm::rotate(
+                    pushConstants.model, elapsed, glm::vec3(0.5f, 1.0f, 0.0f));
+                pushConstants.time = elapsed;
+                cmd.pushConstants(
+                    pipeline->GetLayout(), vk::ShaderStageFlagBits::eVertex,
+                    0, sizeof(pushConstants), &pushConstants);
+                cmd.drawIndexed(m_IndexCount, 1, 0, 0, 0);
+            });
     }
 
     void OnUiRender() override
@@ -149,6 +254,13 @@ struct ViewportLayer : public GuiLayer
     }
 private:
     std::shared_ptr<Renderer> m_Renderer;
+    std::shared_ptr<IFileSystem> m_FileSystem;
+    std::shared_ptr<EventDispatcher> m_Dispatcher;
+    std::shared_ptr<ShaderPipeline> m_Pipeline;
+    VulkanBuffer m_VertexBuffer;
+    VulkanBuffer m_IndexBuffer;
+    std::uint32_t m_IndexCount = 0;
+    std::chrono::high_resolution_clock::time_point m_StartTime;
 };
 
 struct FontPickerLayer : public GuiLayer

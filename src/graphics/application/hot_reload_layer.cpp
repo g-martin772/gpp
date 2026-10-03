@@ -1,6 +1,7 @@
 module GPP.Graphics;
 
 import :Application.HotReloadLayer;
+import :RenderGraph;
 import std;
 
 namespace GPP
@@ -38,6 +39,14 @@ namespace GPP
         if (auto* active = GetActive())
         {
             active->OnRender();
+        }
+    }
+
+    void HotReloadLayerProxy::OnRenderGraph(RenderGraph& graph)
+    {
+        if (auto* active = GetActive())
+        {
+            active->OnRenderGraph(graph);
         }
     }
 
