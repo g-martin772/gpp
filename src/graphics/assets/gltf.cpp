@@ -1,3 +1,5 @@
+module;
+#include <glm/gtc/quaternion.hpp>
 module GPP.Graphics;
 
 import std;
@@ -73,6 +75,44 @@ namespace GPP
             return view.ComponentType == kComponentTypeFloat && view.Type == expectedType;
         }
 
+        glm::mat4 LocalNodeTransform(const tinygltf::Node& node)
+        {
+            if (node.matrix.size() == 16)
+            {
+                glm::mat4 m;
+                for (int c = 0; c < 4; ++c)
+                {
+                    for (int r = 0; r < 4; ++r)
+                    {
+                        m[c][r] = static_cast<float>(
+                            node.matrix[static_cast<std::size_t>(c) * 4 + static_cast<std::size_t>(r)]);
+                    }
+                }
+                return m;
+            }
+
+            glm::vec3 translation{0.0f};
+            if (node.translation.size() == 3)
+            {
+                translation = {static_cast<float>(node.translation[0]), static_cast<float>(node.translation[1]),
+                              static_cast<float>(node.translation[2])};
+            }
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            if (node.rotation.size() == 4)
+            {
+                rotation = glm::quat(static_cast<float>(node.rotation[3]), static_cast<float>(node.rotation[0]),
+                                    static_cast<float>(node.rotation[1]), static_cast<float>(node.rotation[2]));
+            }
+            glm::vec3 scale{1.0f};
+            if (node.scale.size() == 3)
+            {
+                scale = {static_cast<float>(node.scale[0]), static_cast<float>(node.scale[1]),
+                        static_cast<float>(node.scale[2])};
+            }
+            return glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(rotation) *
+                   glm::scale(glm::mat4(1.0f), scale);
+        }
+
         bool DecodeEmbeddedImage(tinygltf::Image* image, const int, std::string* err, std::string*,
                                  int, int, const unsigned char* bytes, const int size, void*)
         {
@@ -137,6 +177,126 @@ namespace GPP
                                       vk::ImageLayout::eShaderReadOnlyOptimal);
             });
             return gpuImage;
+        }
+
+        void ProcessPrimitive(const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+                              const glm::mat4& worldTransform, const glm::mat3& normalMatrix,
+                              const std::shared_ptr<VulkanDevice>& device,
+                              const std::filesystem::path& resolvedPath, const std::shared_ptr<Logger>& logger,
+                              GltfSceneData& scene, GltfMesh& outMesh)
+        {
+            const auto positionIt = primitive.attributes.find("POSITION");
+            if (positionIt == primitive.attributes.end() || primitive.indices < 0)
+            {
+                if (logger)
+                {
+                    logger->Warn("glTF '{}': skipping primitive with no POSITION or indices.",
+                                resolvedPath.string());
+                }
+                return;
+            }
+
+            const auto positionView = GetAccessorView(model, positionIt->second);
+            if (!IsFloatVec(positionView, kTypeVec3))
+            {
+                if (logger)
+                {
+                    logger->Warn("glTF '{}': skipping primitive with a non-float POSITION accessor.",
+                                resolvedPath.string());
+                }
+                return;
+            }
+
+            std::optional<AccessorView> normalView;
+            if (const auto it = primitive.attributes.find("NORMAL"); it != primitive.attributes.end())
+            {
+                if (auto view = GetAccessorView(model, it->second); IsFloatVec(view, kTypeVec3))
+                {
+                    normalView = view;
+                }
+            }
+            std::optional<AccessorView> texCoordView;
+            if (const auto it = primitive.attributes.find("TEXCOORD_0"); it != primitive.attributes.end())
+            {
+                if (auto view = GetAccessorView(model, it->second); IsFloatVec(view, kTypeVec2))
+                {
+                    texCoordView = view;
+                }
+            }
+
+            std::vector<GltfVertex> vertices(positionView.Count);
+            for (std::size_t i = 0; i < positionView.Count; ++i)
+            {
+                const auto localPosition = ReadVec3(positionView, i);
+                vertices[i].Position = glm::vec3(worldTransform * glm::vec4(localPosition, 1.0f));
+                const auto localNormal = normalView ? ReadVec3(*normalView, i) : glm::vec3(0.0f, 1.0f, 0.0f);
+                vertices[i].Normal = glm::normalize(normalMatrix * localNormal);
+                if (texCoordView) vertices[i].TexCoord = ReadVec2(*texCoordView, i);
+            }
+
+            const auto indexView = GetAccessorView(model, primitive.indices);
+            std::vector<std::uint32_t> indices(indexView.Count);
+            for (std::size_t i = 0; i < indexView.Count; ++i)
+            {
+                indices[i] = ReadIndex(indexView, i);
+            }
+
+            GltfPrimitive outPrimitive;
+            const auto vertexBytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(GltfVertex));
+            outPrimitive.VertexBuffer.Create(device, MakeVertexBufferSpecification(vertexBytes, true));
+            outPrimitive.VertexBuffer.Upload(vertices.data(), vertexBytes);
+
+            const auto indexBytes = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
+            outPrimitive.IndexBuffer.Create(device, MakeIndexBufferSpecification(indexBytes, true));
+            outPrimitive.IndexBuffer.Upload(indices.data(), indexBytes);
+            outPrimitive.IndexCount = static_cast<std::uint32_t>(indices.size());
+            outPrimitive.MaterialIndex = primitive.material;
+
+            const auto baseVertex = static_cast<std::uint32_t>(scene.Geometry.Vertices.size());
+            scene.Geometry.Vertices.reserve(scene.Geometry.Vertices.size() + vertices.size());
+            for (const auto& vertex : vertices)
+            {
+                scene.Geometry.Vertices.push_back(vertex.Position);
+            }
+            scene.Geometry.Indices.reserve(scene.Geometry.Indices.size() + indices.size());
+            for (const auto index : indices)
+            {
+                scene.Geometry.Indices.push_back(baseVertex + index);
+            }
+
+            outMesh.Primitives.push_back(std::move(outPrimitive));
+        }
+
+        void WalkNode(const tinygltf::Model& model, int nodeIndex, const glm::mat4& parentTransform,
+                     const std::shared_ptr<VulkanDevice>& device, const std::filesystem::path& resolvedPath,
+                     const std::shared_ptr<Logger>& logger, GltfSceneData& scene)
+        {
+            if (nodeIndex < 0 || static_cast<std::size_t>(nodeIndex) >= model.nodes.size()) return;
+            const auto& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
+            const glm::mat4 worldTransform = parentTransform * LocalNodeTransform(node);
+
+            if (node.mesh >= 0 && static_cast<std::size_t>(node.mesh) < model.meshes.size())
+            {
+                const auto& mesh = model.meshes[static_cast<std::size_t>(node.mesh)];
+                GltfMesh outMesh;
+                outMesh.Name = mesh.name;
+                outMesh.Primitives.reserve(mesh.primitives.size());
+                const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
+                for (const auto& primitive : mesh.primitives)
+                {
+                    ProcessPrimitive(model, primitive, worldTransform, normalMatrix, device, resolvedPath,
+                                     logger, scene, outMesh);
+                }
+                if (!outMesh.Primitives.empty())
+                {
+                    scene.Meshes.push_back(std::move(outMesh));
+                }
+            }
+
+            for (const auto child : node.children)
+            {
+                WalkNode(model, child, worldTransform, device, resolvedPath, logger, scene);
+            }
         }
     }
 
@@ -206,96 +366,23 @@ namespace GPP
         }
 
         scene.Meshes.reserve(model.meshes.size());
-        for (const auto& mesh : model.meshes)
+        if (!model.scenes.empty())
         {
-            GltfMesh outMesh;
-            outMesh.Name = mesh.name;
-            outMesh.Primitives.reserve(mesh.primitives.size());
-
-            for (const auto& primitive : mesh.primitives)
+            const auto sceneIndex = static_cast<std::size_t>(model.defaultScene >= 0 ? model.defaultScene : 0);
+            const auto& rootNodes = model.scenes.at(sceneIndex).nodes;
+            for (const auto rootNode : rootNodes)
             {
-                const auto positionIt = primitive.attributes.find("POSITION");
-                if (positionIt == primitive.attributes.end() || primitive.indices < 0)
-                {
-                    if (logger)
-                    {
-                        logger->Warn("glTF '{}': skipping primitive with no POSITION or indices.",
-                                    resolvedPath.string());
-                    }
-                    continue;
-                }
-
-                const auto positionView = GetAccessorView(model, positionIt->second);
-                if (!IsFloatVec(positionView, kTypeVec3))
-                {
-                    if (logger)
-                    {
-                        logger->Warn("glTF '{}': skipping primitive with a non-float POSITION accessor.",
-                                    resolvedPath.string());
-                    }
-                    continue;
-                }
-
-                std::optional<AccessorView> normalView;
-                if (const auto it = primitive.attributes.find("NORMAL"); it != primitive.attributes.end())
-                {
-                    if (auto view = GetAccessorView(model, it->second); IsFloatVec(view, kTypeVec3))
-                    {
-                        normalView = view;
-                    }
-                }
-                std::optional<AccessorView> texCoordView;
-                if (const auto it = primitive.attributes.find("TEXCOORD_0"); it != primitive.attributes.end())
-                {
-                    if (auto view = GetAccessorView(model, it->second); IsFloatVec(view, kTypeVec2))
-                    {
-                        texCoordView = view;
-                    }
-                }
-
-                std::vector<GltfVertex> vertices(positionView.Count);
-                for (std::size_t i = 0; i < positionView.Count; ++i)
-                {
-                    vertices[i].Position = ReadVec3(positionView, i);
-                    if (normalView) vertices[i].Normal = ReadVec3(*normalView, i);
-                    if (texCoordView) vertices[i].TexCoord = ReadVec2(*texCoordView, i);
-                }
-
-                const auto indexView = GetAccessorView(model, primitive.indices);
-                std::vector<std::uint32_t> indices(indexView.Count);
-                for (std::size_t i = 0; i < indexView.Count; ++i)
-                {
-                    indices[i] = ReadIndex(indexView, i);
-                }
-
-                GltfPrimitive outPrimitive;
-                const auto vertexBytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(GltfVertex));
-                outPrimitive.VertexBuffer.Create(device, MakeVertexBufferSpecification(vertexBytes, true));
-                outPrimitive.VertexBuffer.Upload(vertices.data(), vertexBytes);
-
-                const auto indexBytes =
-                    static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
-                outPrimitive.IndexBuffer.Create(device, MakeIndexBufferSpecification(indexBytes, true));
-                outPrimitive.IndexBuffer.Upload(indices.data(), indexBytes);
-                outPrimitive.IndexCount = static_cast<std::uint32_t>(indices.size());
-                outPrimitive.MaterialIndex = primitive.material;
-
-                const auto baseVertex = static_cast<std::uint32_t>(scene.Geometry.Vertices.size());
-                scene.Geometry.Vertices.reserve(scene.Geometry.Vertices.size() + vertices.size());
-                for (const auto& vertex : vertices)
-                {
-                    scene.Geometry.Vertices.push_back(vertex.Position);
-                }
-                scene.Geometry.Indices.reserve(scene.Geometry.Indices.size() + indices.size());
-                for (const auto index : indices)
-                {
-                    scene.Geometry.Indices.push_back(baseVertex + index);
-                }
-
-                outMesh.Primitives.push_back(std::move(outPrimitive));
+                WalkNode(model, rootNode, glm::mat4(1.0f), device, resolvedPath, logger, scene);
             }
-
-            scene.Meshes.push_back(std::move(outMesh));
+        }
+        else
+        {
+            // No scene graph at all (rare/malformed files) -- fall back to treating every node as
+            // its own root so the mesh data isn't simply dropped.
+            for (std::size_t i = 0; i < model.nodes.size(); ++i)
+            {
+                WalkNode(model, static_cast<int>(i), glm::mat4(1.0f), device, resolvedPath, logger, scene);
+            }
         }
 
         if (logger)
