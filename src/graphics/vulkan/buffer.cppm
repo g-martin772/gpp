@@ -29,6 +29,7 @@ namespace GPP
     export VulkanBufferSpecification MakeStorageBufferSpecification(
         vk::DeviceSize size, bool hostVisible = false);
     export VulkanBufferSpecification MakeStagingBufferSpecification(vk::DeviceSize size);
+    export VulkanBufferSpecification MakeReadbackBufferSpecification(vk::DeviceSize size);
 
     export void CopyBuffer(vk::CommandBuffer commandBuffer, vk::Buffer source,
                            vk::Buffer destination, vk::DeviceSize size,

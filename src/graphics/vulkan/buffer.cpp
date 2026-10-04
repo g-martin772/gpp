@@ -65,6 +65,19 @@ namespace GPP
         return specification;
     }
 
+    VulkanBufferSpecification MakeReadbackBufferSpecification(const vk::DeviceSize size)
+    {
+        // GPU->CPU copy
+        VulkanBufferSpecification specification{};
+        specification.size = size;
+        specification.usage = vk::BufferUsageFlagBits::eTransferDst;
+        specification.memoryUsage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        specification.persistentMapping = true;
+        specification.allocationFlags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+        specification.debugName = "ReadbackBuffer";
+        return specification;
+    }
+
     void CopyBuffer(const vk::CommandBuffer commandBuffer, const vk::Buffer source,
                     const vk::Buffer destination, const vk::DeviceSize size,
                     const vk::DeviceSize sourceOffset, const vk::DeviceSize destinationOffset)
@@ -166,7 +179,15 @@ namespace GPP
         if (specification.persistentMapping)
         {
             allocationInfo.flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
-            allocationInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+            // Default to the "CPU writes, GPU reads" hint, but only if the caller hasn't already
+            // picked a host-access pattern of their own (e.g. HOST_ACCESS_RANDOM_BIT for a
+            // GPU->CPU readback buffer) -- VMA asserts if both are set at once.
+            constexpr auto hostAccessMask = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                            VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+            if ((allocationInfo.flags & hostAccessMask) == 0)
+            {
+                allocationInfo.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+            }
         }
 
         VkBuffer rawBuffer = VK_NULL_HANDLE;

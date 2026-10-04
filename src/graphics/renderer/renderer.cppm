@@ -78,6 +78,18 @@ namespace GPP
 
         [[nodiscard]] unsigned int GetMainDockspaceId() const noexcept { return m_MainDockspaceId; }
 
+        struct ReadbackResult
+        {
+            std::vector<std::uint8_t> Pixels; // tightly packed, row 0 first, 4 bytes/pixel, channel
+                                              // order given by Format (no flip needed for PNG: Vulkan
+                                              // and PNG both consider row 0 the top row)
+            vk::Extent2D Extent{};
+            vk::Format Format{};
+        };
+
+        // rt only, blocking
+        [[nodiscard]] ReadbackResult ReadBackBufferTarget(std::uint32_t bufferId);
+
         struct WindowResources
         {
             std::shared_ptr<GPP::Window> Window;
@@ -112,6 +124,8 @@ namespace GPP
         void ApplyFontPreferencesToAllContexts();
         void RenderWindow(WindowResources& resources, vk::CommandBuffer commandBuffer,
                           float elapsed, bool renderTargets, std::uint32_t frameIndex);
+        void RenderBufferTargets(vk::CommandBuffer cmd, std::uint32_t frameIndex);
+        void RenderHeadlessFrame(float deltaTime);
         Task<void> StopRenderSystem();
         void RenderLoop(std::stop_token stopToken);
 

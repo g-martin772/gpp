@@ -132,7 +132,7 @@ namespace GPP
                                   ? m_MainWindowResources.SwapChain->GetImageFormat()
                                   : vk::Format::eB8G8R8A8Unorm,
                     .usage = vk::ImageUsageFlagBits::eColorAttachment |
-                    vk::ImageUsageFlagBits::eSampled,
+                    vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
                     .aspectMask = vk::ImageAspectFlagBits::eColor,
                     .createSampler = true,
                     .debugName = "BufferTargetColor"
@@ -682,34 +682,9 @@ namespace GPP
         const auto extent = swapchain->GetExtent();
 
         if (renderTargets)
-            for (auto& [bufferId, target] : m_BufferTargets)
-            {
-                if (!target.Graph)
-                {
-                    target.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger);
-                }
-                target.Graph->Begin(frameIndex);
-                const auto colorHandle = target.Graph->ImportImage(
-                    "Target.Color", target.ColorImage, target.ColorLayout);
-                const auto depthHandle = target.Graph->ImportImage(
-                    "Target.Depth", target.DepthImage, target.DepthLayout);
-                target.Graph->SetPrimaryColorTarget(colorHandle);
-                target.Graph->SetPrimaryDepthTarget(depthHandle);
-                if (target.LayerStack)
-                {
-                    target.LayerStack->OnRenderGraph(*target.Graph);
-                }
-                target.Graph->Compile();
-                target.Graph->Execute(rawCmd);
-                target.ColorLayout = target.Graph->GetCurrentLayout(colorHandle);
-                target.DepthLayout = target.Graph->GetCurrentLayout(depthHandle);
-
-                TransitionImageLayout(
-                    rawCmd, target.ColorImage.GetImage(),
-                    target.ColorImage.GetSpecification().format, target.ColorLayout,
-                    vk::ImageLayout::eShaderReadOnlyOptimal);
-                target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            }
+        {
+            RenderBufferTargets(rawCmd, frameIndex);
+        }
 
         const auto depthFormat = swapchain->GetDepthImageFormat();
         const auto depthLayout =
@@ -787,6 +762,91 @@ namespace GPP
         resources.ImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
     }
 
+    void Renderer::RenderBufferTargets(const vk::CommandBuffer cmd, const std::uint32_t frameIndex)
+    {
+        for (auto& [bufferId, target] : m_BufferTargets)
+        {
+            if (!target.Graph)
+            {
+                target.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger);
+            }
+            target.Graph->Begin(frameIndex);
+            const auto colorHandle = target.Graph->ImportImage(
+                "Target.Color", target.ColorImage, target.ColorLayout);
+            const auto depthHandle = target.Graph->ImportImage(
+                "Target.Depth", target.DepthImage, target.DepthLayout);
+            target.Graph->SetPrimaryColorTarget(colorHandle);
+            target.Graph->SetPrimaryDepthTarget(depthHandle);
+            if (target.LayerStack)
+            {
+                target.LayerStack->OnRenderGraph(*target.Graph);
+            }
+            target.Graph->Compile();
+            target.Graph->Execute(cmd);
+            target.ColorLayout = target.Graph->GetCurrentLayout(colorHandle);
+            target.DepthLayout = target.Graph->GetCurrentLayout(depthHandle);
+
+            TransitionImageLayout(
+                cmd, target.ColorImage.GetImage(),
+                target.ColorImage.GetSpecification().format, target.ColorLayout,
+                vk::ImageLayout::eShaderReadOnlyOptimal);
+            target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+    }
+
+    void Renderer::RenderHeadlessFrame(const float deltaTime)
+    {
+        for (auto& [bufferId, target] : m_BufferTargets)
+        {
+            if (target.LayerStack)
+            {
+                target.LayerStack->OnUpdate(deltaTime);
+                target.LayerStack->OnRender();
+            }
+        }
+        if (m_BufferTargets.empty())
+        {
+            return;
+        }
+        ImmediateSubmit(*m_CommandPool, m_Device->GetGraphicsQueue(), [&](const vk::CommandBuffer cmd)
+        {
+            RenderBufferTargets(cmd, 0);
+        });
+    }
+
+    Renderer::ReadbackResult Renderer::ReadBackBufferTarget(const std::uint32_t bufferId)
+    {
+        ReadbackResult result;
+        const auto it = m_BufferTargets.find(bufferId);
+        if (it == m_BufferTargets.end())
+        {
+            return result;
+        }
+        auto& target = it->second;
+        const auto format = target.ColorImage.GetSpecification().format;
+        const auto extent = target.Extent;
+        const auto byteSize = static_cast<vk::DeviceSize>(extent.x) * extent.y * 4;
+
+        VulkanBuffer staging(m_Device, MakeReadbackBufferSpecification(byteSize), m_Logger);
+
+        ImmediateSubmit(*m_CommandPool, m_Device->GetGraphicsQueue(), [&](const vk::CommandBuffer cmd)
+        {
+            TransitionImageLayout(cmd, target.ColorImage.GetImage(), format,
+                                  target.ColorLayout, vk::ImageLayout::eTransferSrcOptimal);
+            CopyImageToBuffer(cmd, target.ColorImage.GetImage(), staging.GetBuffer(),
+                             vk::Extent3D{extent.x, extent.y, 1});
+            TransitionImageLayout(cmd, target.ColorImage.GetImage(), format,
+                                  vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        });
+        target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        result.Pixels.resize(byteSize);
+        staging.Read(result.Pixels.data(), byteSize);
+        result.Extent = vk::Extent2D{extent.x, extent.y};
+        result.Format = format;
+        return result;
+    }
+
     Task<void> Renderer::StopRenderSystem()
     {
         // TODO?
@@ -816,6 +876,12 @@ namespace GPP
             }
             if (m_WindowManager->IsHeadless())
             {
+                const float elapsed = static_cast<float>(
+                    std::chrono::duration<double>(
+                        std::chrono::high_resolution_clock::now() - start).count());
+                const float deltaTime = std::max(0.0f, elapsed - m_LastFrameElapsed);
+                m_LastFrameElapsed = elapsed;
+                RenderHeadlessFrame(deltaTime);
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
                 continue;
             }
