@@ -67,6 +67,7 @@ export namespace GPP
         float DynamicFriction{0.5f};
         float Restitution{0.1f};
         bool IsTrigger{false};
+        std::vector<glm::vec3> ConvexHullPoints;
     };
 
     struct PhysicsActorHandle

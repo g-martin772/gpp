@@ -130,18 +130,50 @@ namespace GPP
         }
     }
 
+    physx::PxConvexMesh* PhysicsSimulationModule::CookConvexMesh(const std::vector<glm::vec3>& points)
+    {
+        if (points.size() < 4)
+        {
+            if (m_Logger)
+            {
+                m_Logger->Warn("PhysicsSimulationModule: ConvexMesh collider needs at least 4 points "
+                               "(got {}); skipping entity.", points.size());
+            }
+            return nullptr;
+        }
+
+        std::vector<physx::PxVec3> pxPoints;
+        pxPoints.reserve(points.size());
+        for (const auto& point : points)
+        {
+            pxPoints.emplace_back(point.x, point.y, point.z);
+        }
+
+        physx::PxConvexMeshDesc desc;
+        desc.points.count = static_cast<physx::PxU32>(pxPoints.size());
+        desc.points.stride = sizeof(physx::PxVec3);
+        desc.points.data = pxPoints.data();
+        desc.flags = physx::PxConvexFlag::eCOMPUTE_CONVEX;
+
+        const physx::PxCookingParams cookingParams(m_Physics->getTolerancesScale());
+        auto* convexMesh = PxCreateConvexMesh(cookingParams, desc, m_Physics->getPhysicsInsertionCallback());
+        if (!convexMesh && m_Logger)
+        {
+            m_Logger->Error("PhysicsSimulationModule: failed to cook a convex mesh from {} points.",
+                           points.size());
+        }
+        return convexMesh;
+    }
+
     physx::PxRigidActor* PhysicsSimulationModule::CreateActor(
         entt::entity, const RigidBodyComponent& body, const ColliderComponent& collider,
         const TransformComponent& transform)
     {
+        physx::PxConvexMesh* convexMesh = nullptr;
         if (collider.Shape == ColliderShape::ConvexMesh)
         {
-            if (m_Logger)
-            {
-                m_Logger->Warn(
-                    "PhysicsSimulationModule: ConvexMesh colliders are not yet supported; skipping entity.");
-            }
-            return nullptr;
+            convexMesh = CookConvexMesh(collider.ConvexHullPoints);
+            if (!convexMesh) return nullptr;
         }
 
         const physx::PxTransform pxTransform(
@@ -187,7 +219,10 @@ namespace GPP
                 *actor, physx::PxPlaneGeometry(), *material);
             break;
         case ColliderShape::ConvexMesh:
-            break; // unreachable, handled above
+            shape = physx::PxRigidActorExt::createExclusiveShape(
+                *actor, physx::PxConvexMeshGeometry(convexMesh), *material);
+            convexMesh->release(); // the shape/geometry holds its own reference now
+            break;
         case ColliderShape::Box:
         default:
             shape = physx::PxRigidActorExt::createExclusiveShape(

@@ -59,6 +59,7 @@ namespace GPP
                                                        const ColliderComponent& collider,
                                                        const TransformComponent& transform);
         void SeedVelocity(entt::entity entity, Scene& scene, physx::PxRigidActor* actor);
+        [[nodiscard]] physx::PxConvexMesh* CookConvexMesh(const std::vector<glm::vec3>& points);
         void DestroyActor(physx::PxRigidActor* actor);
         [[nodiscard]] std::uint64_t GuidForActor(physx::PxRigidActor* actor) const;
 
