@@ -56,10 +56,18 @@ namespace GPP
             return it != m_ActorsByEntity.end() ? it->second : nullptr;
         }
 
+        [[nodiscard]] std::vector<physx::PxDebugLine> GetDebugLines() const
+        {
+            std::scoped_lock lock(m_DebugLinesMutex);
+            return m_DebugLinesSnapshot;
+        }
+
     private:
         void SyncActors(Scene& scene);
         void StepPhysics(float deltaTime);
         void WriteBackTransforms(Scene& scene);
+        void ApplyDebugVisualization(bool enabled);
+        void CaptureDebugLines();
         [[nodiscard]] physx::PxRigidActor* CreateActor(entt::entity entity, const RigidBodyComponent& body,
                                                        const ColliderComponent& collider,
                                                        const TransformComponent& transform);
@@ -83,5 +91,8 @@ namespace GPP
         std::unordered_map<physx::PxRigidActor*, entt::entity> m_EntitiesByActor;
         Scene* m_CurrentScene = nullptr;
         std::atomic<bool> m_DebugVisualizationEnabled{false};
+        bool m_DebugVisualizationApplied = false;
+        mutable std::mutex m_DebugLinesMutex;
+        std::vector<physx::PxDebugLine> m_DebugLinesSnapshot;
     };
 }

@@ -73,16 +73,73 @@ namespace GPP
     void PhysicsSimulationModule::OnTick(Scene& scene, const float deltaTime)
     {
         m_CurrentScene = &scene;
+
         const bool debugViz = m_DebugVisualizationEnabled.load(std::memory_order_relaxed);
-        m_Scene->setVisualizationParameter(physx::PxVisualizationParameter::eSCALE, debugViz ? 1.0f : 0.0f);
-        if (debugViz)
+        if (debugViz != m_DebugVisualizationApplied)
         {
-            m_Scene->setVisualizationParameter(physx::PxVisualizationParameter::eCOLLISION_SHAPES, 1.0f);
+            ApplyDebugVisualization(debugViz);
+            m_DebugVisualizationApplied = debugViz;
         }
+
         SyncActors(scene);
         StepPhysics(deltaTime);
+
+        if (debugViz)
+        {
+            CaptureDebugLines();
+        }
+        else
+        {
+            std::scoped_lock lock(m_DebugLinesMutex);
+            m_DebugLinesSnapshot.clear();
+        }
+
         WriteBackTransforms(scene);
         m_CurrentScene = nullptr;
+    }
+
+    void PhysicsSimulationModule::ApplyDebugVisualization(bool enabled)
+    {
+        m_Scene->setVisualizationParameter(physx::PxVisualizationParameter::eSCALE, enabled ? 1.0f : 0.0f);
+        if (!enabled) return;
+
+        static constexpr physx::PxVisualizationParameter::Enum kShapeRelatedParams[] = {
+            physx::PxVisualizationParameter::eWORLD_AXES,
+            physx::PxVisualizationParameter::eBODY_AXES,
+            physx::PxVisualizationParameter::eBODY_MASS_AXES,
+            physx::PxVisualizationParameter::eBODY_LIN_VELOCITY,
+            physx::PxVisualizationParameter::eBODY_ANG_VELOCITY,
+            physx::PxVisualizationParameter::eCONTACT_POINT,
+            physx::PxVisualizationParameter::eCONTACT_NORMAL,
+            physx::PxVisualizationParameter::eCONTACT_ERROR,
+            physx::PxVisualizationParameter::eCONTACT_IMPULSE,
+            physx::PxVisualizationParameter::eFRICTION_POINT,
+            physx::PxVisualizationParameter::eFRICTION_NORMAL,
+            physx::PxVisualizationParameter::eFRICTION_IMPULSE,
+            physx::PxVisualizationParameter::eACTOR_AXES,
+            physx::PxVisualizationParameter::eCOLLISION_AABBS,
+            physx::PxVisualizationParameter::eCOLLISION_SHAPES,
+            physx::PxVisualizationParameter::eCOLLISION_AXES,
+            physx::PxVisualizationParameter::eCOLLISION_COMPOUNDS,
+            physx::PxVisualizationParameter::eCOLLISION_FNORMALS,
+            physx::PxVisualizationParameter::eCOLLISION_EDGES,
+            physx::PxVisualizationParameter::eCOLLISION_STATIC,
+            physx::PxVisualizationParameter::eCOLLISION_DYNAMIC,
+        };
+        for (const auto param : kShapeRelatedParams)
+        {
+            m_Scene->setVisualizationParameter(param, 1.0f);
+        }
+    }
+
+    void PhysicsSimulationModule::CaptureDebugLines()
+    {
+        const auto& renderBuffer = m_Scene->getRenderBuffer();
+        const auto* lines = renderBuffer.getLines();
+        std::vector<physx::PxDebugLine> snapshot(lines, lines + renderBuffer.getNbLines());
+
+        std::scoped_lock lock(m_DebugLinesMutex);
+        m_DebugLinesSnapshot = std::move(snapshot);
     }
 
     void PhysicsSimulationModule::OnShutdown(Scene&)
