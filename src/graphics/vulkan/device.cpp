@@ -201,7 +201,6 @@ namespace GPP
         deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
 
         std::vector deviceExtensions = {
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
             VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
             VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
@@ -210,6 +209,10 @@ namespace GPP
             VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
             VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
         };
+        if (m_Requirements.Present)
+        {
+            deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        }
         deviceCreateInfo.enabledExtensionCount = deviceExtensions.size();
         deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -282,9 +285,12 @@ namespace GPP
             m_Queues.push_back(queue);
         }
 
-        m_SurfaceCapabilities = m_PhysicalDevice.getSurfaceCapabilitiesKHR(m_Requirements.Surface);
-        m_SurfaceFormats = m_PhysicalDevice.getSurfaceFormatsKHR(m_Requirements.Surface);
-        m_SurfacePresentModes = m_PhysicalDevice.getSurfacePresentModesKHR(m_Requirements.Surface);
+        if (m_Requirements.Present)
+        {
+            m_SurfaceCapabilities = m_PhysicalDevice.getSurfaceCapabilitiesKHR(m_Requirements.Surface);
+            m_SurfaceFormats = m_PhysicalDevice.getSurfaceFormatsKHR(m_Requirements.Surface);
+            m_SurfacePresentModes = m_PhysicalDevice.getSurfacePresentModesKHR(m_Requirements.Surface);
+        }
 
         std::vector depthFormats = {
             vk::Format::eD32SfloatS8Uint,
