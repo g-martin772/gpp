@@ -16,6 +16,7 @@ namespace GPP
         bool enableBlending = true;
         vk::CullModeFlags cullMode = vk::CullModeFlagBits::eBack;
         vk::FrontFace frontFace = vk::FrontFace::eCounterClockwise;
+        vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList;
     };
 
     export class VulkanPipeline
@@ -242,7 +243,7 @@ namespace GPP
                 attributes.data());
 
             // 3. Input Assembly State
-            vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList, false);
+            vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, specification.topology, false);
 
             // 4. Viewport & Scissor State
             vk::PipelineViewportStateCreateInfo viewportState({}, 1, nullptr, 1, nullptr);

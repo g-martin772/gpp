@@ -119,7 +119,7 @@ namespace GPP
                 device,
                 VulkanImageSpecification{
                     .extent = extent,
-                    .format = vk::Format::eR8G8B8A8Unorm,
+                    .format = vk::Format::eR8G8B8A8Srgb,
                     .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
                     .aspectMask = vk::ImageAspectFlagBits::eColor,
                     .createSampler = true,
@@ -129,10 +129,10 @@ namespace GPP
 
             ImmediateSubmit(uploadPool, queue, [&](const vk::CommandBuffer cmd)
             {
-                TransitionImageLayout(cmd, gpuImage->GetImage(), vk::Format::eR8G8B8A8Unorm,
+                TransitionImageLayout(cmd, gpuImage->GetImage(), vk::Format::eR8G8B8A8Srgb,
                                       vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
                 CopyBufferToImage(cmd, staging.GetBuffer(), gpuImage->GetImage(), extent);
-                TransitionImageLayout(cmd, gpuImage->GetImage(), vk::Format::eR8G8B8A8Unorm,
+                TransitionImageLayout(cmd, gpuImage->GetImage(), vk::Format::eR8G8B8A8Srgb,
                                       vk::ImageLayout::eTransferDstOptimal,
                                       vk::ImageLayout::eShaderReadOnlyOptimal);
             });

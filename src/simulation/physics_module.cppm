@@ -45,6 +45,11 @@ namespace GPP
 
         [[nodiscard]] physx::PxScene* GetPxScene() const noexcept { return m_Scene; }
 
+        void SetDebugVisualizationEnabled(bool enabled) noexcept
+        {
+            m_DebugVisualizationEnabled.store(enabled, std::memory_order_relaxed);
+        }
+
         [[nodiscard]] physx::PxRigidActor* FindActor(entt::entity entity) const
         {
             const auto it = m_ActorsByEntity.find(entity);
@@ -77,5 +82,6 @@ namespace GPP
         std::unordered_map<entt::entity, physx::PxRigidActor*> m_ActorsByEntity;
         std::unordered_map<physx::PxRigidActor*, entt::entity> m_EntitiesByActor;
         Scene* m_CurrentScene = nullptr;
+        std::atomic<bool> m_DebugVisualizationEnabled{false};
     };
 }

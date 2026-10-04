@@ -83,6 +83,9 @@ export namespace physx
 
     using physx::PxVisualizationParameter;
     using physx::PxRenderBuffer;
+    using physx::PxDebugLine;
+    using physx::PxDebugPoint;
+    using physx::PxDebugTriangle;
 
     using physx::operator|;
     using physx::operator&;

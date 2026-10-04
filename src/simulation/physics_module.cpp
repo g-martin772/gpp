@@ -73,6 +73,12 @@ namespace GPP
     void PhysicsSimulationModule::OnTick(Scene& scene, const float deltaTime)
     {
         m_CurrentScene = &scene;
+        const bool debugViz = m_DebugVisualizationEnabled.load(std::memory_order_relaxed);
+        m_Scene->setVisualizationParameter(physx::PxVisualizationParameter::eSCALE, debugViz ? 1.0f : 0.0f);
+        if (debugViz)
+        {
+            m_Scene->setVisualizationParameter(physx::PxVisualizationParameter::eCOLLISION_SHAPES, 1.0f);
+        }
         SyncActors(scene);
         StepPhysics(deltaTime);
         WriteBackTransforms(scene);
