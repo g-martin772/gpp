@@ -5,6 +5,9 @@ export module node_editor;
 
 export namespace ax::NodeEditor
 {
+    using ax::NodeEditor::Details::operator==;
+    using ax::NodeEditor::Details::operator!=;
+
     using ax::NodeEditor::EditorContext;
     using ax::NodeEditor::Config;
     using ax::NodeEditor::NodeId;
