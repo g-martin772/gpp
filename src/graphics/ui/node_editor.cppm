@@ -11,11 +11,24 @@ export namespace ax::NodeEditor
     using ax::NodeEditor::PinId;
     using ax::NodeEditor::LinkId;
     using ax::NodeEditor::PinKind;
+    using ax::NodeEditor::StyleVar;
 
     using ax::NodeEditor::CreateEditor;
     using ax::NodeEditor::DestroyEditor;
     using ax::NodeEditor::SetCurrentEditor;
     using ax::NodeEditor::GetCurrentEditor;
+
+    using ax::NodeEditor::PushStyleVar;
+    using ax::NodeEditor::PopStyleVar;
+    // StyleVar is a plain (unscoped) enum, so its enumerators live directly in ax::NodeEditor rather
+    // than nested under StyleVar:: -- each one used by a consumer needs its own using-declaration.
+    using ax::NodeEditor::StyleVar_NodePadding;
+    using ax::NodeEditor::StyleVar_NodeRounding;
+    using ax::NodeEditor::StyleVar_NodeBorderWidth;
+    using ax::NodeEditor::StyleVar_HoveredNodeBorderWidth;
+    using ax::NodeEditor::StyleVar_SelectedNodeBorderWidth;
+    using ax::NodeEditor::StyleVar_HoveredNodeBorderOffset;
+    using ax::NodeEditor::StyleVar_SelectedNodeBorderOffset;
 
     using ax::NodeEditor::Begin;
     using ax::NodeEditor::End;
@@ -45,4 +58,10 @@ export namespace ax::NodeEditor
     using ax::NodeEditor::NavigateToSelection;
     using ax::NodeEditor::SetNodePosition;
     using ax::NodeEditor::GetNodePosition;
+
+    using ax::NodeEditor::GetSelectedNodes;
+    using ax::NodeEditor::SelectNode;
+    using ax::NodeEditor::ClearSelection;
+    using ax::NodeEditor::ShowBackgroundContextMenu;
+    using ax::NodeEditor::ScreenToCanvas;
 }
