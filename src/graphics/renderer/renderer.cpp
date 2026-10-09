@@ -249,6 +249,36 @@ namespace GPP
         }
     }
 
+    void Renderer::DetachBufferTarget(const std::uint32_t bufferId)
+    {
+        PostToBufferThread([this, bufferId]
+        {
+            std::shared_ptr<BufferTargetResources> target;
+            {
+                std::unique_lock lock(m_TargetsMutex);
+                const auto it = m_BufferTargets.find(bufferId);
+                if (it == m_BufferTargets.end())
+                    return;
+                target = std::move(it->second);
+                m_BufferTargets.erase(it);
+            }
+
+            if (target->Attached.exchange(false) && target->LayerStack)
+            {
+                target->LayerStack->OnDetach();
+            }
+
+            {
+                std::scoped_lock lock(target->Mutex);
+                target->Ready.reset();
+                target->Pool.clear();
+                target->Graph.reset();
+                target->DepthImage.Destroy();
+            }
+            m_Logger->Info("Detached render target {}", bufferId);
+        });
+    }
+
     std::optional<Renderer::BufferTargetStats> Renderer::GetBufferTargetStats(const std::uint32_t bufferId) const
     {
         const auto target = FindBufferTarget(bufferId);

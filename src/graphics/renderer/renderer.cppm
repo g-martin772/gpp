@@ -167,6 +167,8 @@ namespace GPP
 
         void SetBufferTargetVisible(std::uint32_t bufferId, bool visible);
 
+        void DetachBufferTarget(std::uint32_t bufferId);
+
         [[nodiscard]] unsigned int GetMainDockspaceId() const noexcept { return m_MainDockspaceId; }
 
         struct ReadbackResult
