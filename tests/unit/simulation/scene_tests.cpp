@@ -272,3 +272,53 @@ TEST_CASE ("Scene entity order is stable across repeated save/load cycles", "[si
         CHECK(EntityNamesInOrder(yaml) == std::vector<std::string>{"Wanderer A", "Wanderer B"});
     }
 }
+
+TEST_CASE ("Scene extensions round-trip and survive clone and sync", "[simulation][scene][extensions]")
+{
+    RegisterTestComponents();
+
+    Scene scene("Ext");
+    YAML::Node graphs;
+    graphs["Version"] = 1;
+    graphs["Items"].push_back("Main");
+    scene.SetExtension("Graphs", graphs);
+
+    Scene loaded;
+    loaded.DeserializeFromYaml(scene.SerializeToYaml());
+    REQUIRE(loaded.FindExtension("Graphs") != nullptr);
+    CHECK((*loaded.FindExtension("Graphs"))["Version"].as<int>() == 1);
+    CHECK((*loaded.FindExtension("Graphs"))["Items"][0].as<std::string>() == "Main");
+
+    const Scene clone = scene.Clone();
+    REQUIRE(clone.FindExtension("Graphs") != nullptr);
+
+    Scene target("Target");
+    Scene::SyncChanges(scene, target, ChangeSet{});
+    REQUIRE(target.FindExtension("Graphs") != nullptr);
+
+    YAML::Node updated;
+    updated["Version"] = 2;
+    scene.SetExtension("Graphs", updated);
+    Scene::SyncChanges(scene, target, ChangeSet{});
+    CHECK((*target.FindExtension("Graphs"))["Version"].as<int>() == 2);
+    CHECK((*clone.FindExtension("Graphs"))["Version"].as<int>() == 1);
+}
+
+TEST_CASE ("Scene creates entities with a chosen guid and clones them", "[simulation][scene]")
+{
+    RegisterTestComponents();
+
+    Scene scene("Guid");
+    const auto entity = scene.CreateEntityWithGuid(1234, "A", "Prop");
+    REQUIRE(scene.IsValid(entity));
+    CHECK(scene.GuidOf(entity) == 1234);
+    CHECK_FALSE(scene.IsValid(scene.CreateEntityWithGuid(1234, "Dup")));
+
+    scene.Registry().emplace<TransformComponent>(entity, TransformComponent{.Position = {1.0f, 2.0f, 3.0f}});
+    const auto copy = scene.CloneEntity(entity, 99);
+    REQUIRE(scene.IsValid(copy));
+    CHECK(scene.GuidOf(copy) == 99);
+    CHECK(scene.Registry().get<MetadataComponent>(copy).Guid == 99);
+    CHECK(scene.Registry().get<MetadataComponent>(copy).Name == "A");
+    CHECK(scene.Registry().get<TransformComponent>(copy).Position == glm::vec3(1.0f, 2.0f, 3.0f));
+}

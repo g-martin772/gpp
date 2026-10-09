@@ -1,5 +1,6 @@
 module;
 #include <entt/entt.hpp>
+#include <yaml-cpp/yaml.h>
 export module GPP.Simulation:Scene;
 
 import std;
@@ -43,6 +44,8 @@ namespace GPP
         void SetName(std::string name) { m_Metadata.Name = std::move(name); }
 
         entt::entity CreateEntity(std::string name = {}, std::string typeTag = {});
+        entt::entity CreateEntityWithGuid(std::uint64_t guid, std::string name = {}, std::string typeTag = {});
+        entt::entity CloneEntity(entt::entity source, std::uint64_t newGuid);
         void DestroyEntity(entt::entity entity);
         [[nodiscard]] bool IsValid(entt::entity entity) const { return m_Registry.valid(entity); }
 
@@ -55,6 +58,11 @@ namespace GPP
         static void SyncInto(const Scene& source, Scene& target);
         static void SyncChanges(const Scene& source, Scene& target, const ChangeSet& changes);
 
+        void SetExtension(std::string name, const YAML::Node& value);
+        void RemoveExtension(const std::string& name);
+        [[nodiscard]] const YAML::Node* FindExtension(const std::string& name) const;
+        [[nodiscard]] const std::map<std::string, YAML::Node>& Extensions() const noexcept { return m_Extensions; }
+
         void MarkDirty(entt::entity entity);
         void MarkAllDirty() noexcept { m_Dirty.All = true; m_Dirty.Guids.clear(); }
         [[nodiscard]] ChangeSet TakeChanges();
@@ -64,10 +72,13 @@ namespace GPP
 
     private:
         void CopyAllFrom(const Scene& source);
+        void CopyExtensionsFrom(const Scene& source);
 
         entt::registry m_Registry;
         GuidIndex m_GuidIndex;
         SceneMetadata m_Metadata;
+        std::map<std::string, YAML::Node> m_Extensions;
+        std::uint64_t m_ExtensionRevision{0};
         ChangeSet m_Dirty{.All = true};
     };
 }
