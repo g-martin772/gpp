@@ -68,8 +68,14 @@ namespace GPP
         const auto name = scene.Metadata().Name;
         auto runner = std::make_shared<SimulationRunner>(std::move(scene), std::move(module), options);
 
-        std::scoped_lock lock(m_Mutex);
-        m_Simulations[name] = runner;
+        std::shared_ptr<SimulationRunner> replaced;
+        {
+            std::scoped_lock lock(m_Mutex);
+            auto& slot = m_Simulations[name];
+            replaced = std::move(slot);
+            slot = runner;
+        }
+        if (replaced) replaced->Stop();
         return runner;
     }
 
@@ -96,8 +102,14 @@ namespace GPP
         const auto name = scene.Metadata().Name;
         auto runner = std::make_shared<SimulationRunner>(std::move(scene), std::move(modules), options);
 
-        std::scoped_lock lock(m_Mutex);
-        m_Simulations[name] = runner;
+        std::shared_ptr<SimulationRunner> replaced;
+        {
+            std::scoped_lock lock(m_Mutex);
+            auto& slot = m_Simulations[name];
+            replaced = std::move(slot);
+            slot = runner;
+        }
+        if (replaced) replaced->Stop();
         return runner;
     }
 
