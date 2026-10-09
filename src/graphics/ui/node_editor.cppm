@@ -117,6 +117,7 @@ export namespace ax::NodeEditor
     using ax::NodeEditor::GetNodePosition;
 
     using ax::NodeEditor::GetSelectedNodes;
+    using ax::NodeEditor::GetSelectedObjectCount;
     using ax::NodeEditor::SelectNode;
     using ax::NodeEditor::ClearSelection;
     using ax::NodeEditor::ShowBackgroundContextMenu;
