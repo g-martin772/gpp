@@ -208,7 +208,7 @@ namespace GPP
 
         struct WindowResources
         {
-            std::shared_ptr<Window> Window;
+            std::shared_ptr<GPP::Window> Window;
             vk::SurfaceKHR Surface;
             std::shared_ptr<VulkanSwapChain> SwapChain;
             VulkanImage DepthImage;
