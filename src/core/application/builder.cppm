@@ -5,6 +5,7 @@ import :Logger;
 import :IO.File;
 import :DI.Container;
 import :Events;
+import :Assets;
 
 namespace GPP
 {
@@ -35,6 +36,8 @@ namespace GPP
                 return std::make_shared<FileSystem>(FS);
             });
             Services.AddSingleton<EventDispatcher>();
+            Services.Configure<AssetOptions>("GPP:Assets");
+            Services.AddSingleton<AssetDirectories>();
         }
 
         virtual ~builder() = default;
