@@ -26,6 +26,15 @@ namespace GPP
         }
     }
 
+    LuauError MakeLuauError(std::string message, std::string chunk)
+    {
+        LuauError error;
+        error.Line = Line(message);
+        error.Message = std::move(message);
+        error.Chunk = std::move(chunk);
+        return error;
+    }
+
     struct LuauVm::Impl
     {
         lua_State* L{nullptr};
@@ -68,10 +77,12 @@ namespace GPP
             auto* self = static_cast<Impl*>(lua_callbacks(state)->userdata);
             if (++self->Safepoints > self->Limits.MaxSafepoints)
             {
+                self->ResetBudget();
                 Fail(state, "script exceeded the instruction limit");
             }
             if ((self->Safepoints & 0xFF) == 0 && lua_clock() > self->Deadline)
             {
+                self->ResetBudget();
                 Fail(state, "script exceeded the time limit");
             }
         }
@@ -143,6 +154,7 @@ namespace GPP
 
     void LuauVm::SetLimits(const LuauLimits& limits) { m_Impl->Limits = limits; }
     const LuauLimits& LuauVm::Limits() const { return m_Impl->Limits; }
+    void LuauVm::ResetBudget() { m_Impl->ResetBudget(); }
     std::size_t LuauVm::BytesUsed() const { return m_Impl->Used; }
 
     void LuauVm::Register(const std::string_view table, const std::string_view name, LuauNative function)
@@ -226,6 +238,44 @@ namespace GPP
         }
         lua_settop(L, top);
         return {};
+    }
+
+    std::expected<LuauValue, LuauError> LuauVm::CallWith(const int handle, const std::string_view function,
+                                                         const std::span<const int> refs,
+                                                         const std::span<const LuauValue> args)
+    {
+        lua_State* L = m_Impl->L;
+        const int top = lua_gettop(L);
+        lua_getref(L, handle);
+        const std::string name(function);
+        lua_getfield(L, -1, name.c_str());
+        if (!lua_isfunction(L, -1))
+        {
+            lua_settop(L, top);
+            return std::unexpected(LuauError{"script has no function '" + name + "'", {}, 0});
+        }
+        LuauNativeCall call(L);
+        for (const int ref : refs) lua_getref(L, ref);
+        for (const auto& arg : args) call.PushValue(arg);
+        m_Impl->ResetBudget();
+        if (lua_pcall(L, static_cast<int>(refs.size() + args.size()), 1, 0) != 0)
+        {
+            auto error = m_Impl->Pop(L);
+            lua_settop(L, top);
+            return std::unexpected(std::move(error));
+        }
+        LuauValue result = call.ToValueAuto(-1);
+        lua_settop(L, top);
+        return result;
+    }
+
+    int LuauVm::NewTable()
+    {
+        lua_State* L = m_Impl->L;
+        lua_newtable(L);
+        const int ref = lua_ref(L, -1);
+        lua_pop(L, 1);
+        return ref;
     }
 
     void LuauVm::Release(const int handle)
@@ -383,6 +433,18 @@ namespace GPP
             else if constexpr (std::is_same_v<T, glm::vec3>) lua_pushvector(L, v.x, v.y, v.z);
             else pushVec({v.x, v.y, v.z, v.w}, impl->Vec4Ref);
         }, value);
+    }
+
+    void LuauNativeCall::PushMap(const std::span<const std::pair<std::string, LuauValue>> entries)
+    {
+        lua_State* L = Lua(m_State);
+        lua_createtable(L, 0, static_cast<int>(entries.size()));
+        for (const auto& [key, value] : entries)
+        {
+            if (std::holds_alternative<std::monostate>(value)) continue;
+            PushValue(value);
+            lua_setfield(L, -2, key.c_str());
+        }
     }
 
     void LuauNativeCall::PushValues(const std::span<const LuauValue> values)

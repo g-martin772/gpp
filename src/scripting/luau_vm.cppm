@@ -35,6 +35,8 @@ export namespace GPP
         void PushEntity(std::uint64_t guid);
         void PushValue(const LuauValue& value);
         void PushValues(std::span<const LuauValue> values);
+        // Pushes a table keyed by name; nil (monostate) values are left out.
+        void PushMap(std::span<const std::pair<std::string, LuauValue>> entries);
         // Registers the vec2/vec4 metatables, taken from the two tables on the stack.
         void StoreVectorMetatables();
 
@@ -58,6 +60,8 @@ export namespace GPP
         std::string Chunk;
         int Line{0};
     };
+
+    [[nodiscard]] LuauError MakeLuauError(std::string message, std::string chunk = {});
 
     // Maps generated-source lines to caller-defined ids (e.g. graph nodes) so errors and traces can point back.
     class LuauSourceMap
@@ -85,6 +89,8 @@ export namespace GPP
 
         void SetLimits(const LuauLimits& limits);
         [[nodiscard]] const LuauLimits& Limits() const;
+        // Restarts the instruction and time budget of the running call.
+        void ResetBudget();
 
         // Setup phase, before Seal(): natives live in a global table, trusted chunks run in the main environment.
         void Register(std::string_view table, std::string_view name, LuauNative function);
@@ -96,6 +102,12 @@ export namespace GPP
         [[nodiscard]] std::expected<int, LuauError> Load(std::string_view source, std::string_view chunkName);
         [[nodiscard]] std::expected<void, LuauError> Call(int handle, std::string_view function,
                                                           std::span<const double> args = {});
+        // Calls function with the referenced tables first, then args; yields the first result (monostate when nil).
+        [[nodiscard]] std::expected<LuauValue, LuauError> CallWith(int handle, std::string_view function,
+                                                                   std::span<const int> refs,
+                                                                   std::span<const LuauValue> args = {});
+        // A fresh empty table kept alive under the returned handle.
+        [[nodiscard]] int NewTable();
         void Release(int handle);
 
         [[nodiscard]] std::size_t BytesUsed() const;

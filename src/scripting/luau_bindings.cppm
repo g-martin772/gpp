@@ -27,7 +27,7 @@ export namespace GPP
         std::function<void(std::function<void(Scene&)>)> Write;
     };
 
-    // Installs scene.exists/get/set(entity, component, field[, value]) natives; entities are guid userdata.
+    // Installs scene.exists/get/set/find/name/query/look_at natives; entities are guid userdata.
     void RegisterSceneBindings(LuauVm& vm, const std::shared_ptr<SceneBindings>& context);
     // Global vec2()/vec4() constructors with operator metatables (vec3 is Luau's native vector); vec_meta holds them.
     void RegisterMathBindings(LuauVm& vm);

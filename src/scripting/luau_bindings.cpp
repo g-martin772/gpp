@@ -72,6 +72,50 @@ namespace GPP
             call.PushValue(ReadComponentField(*context->Read, call.Entity(1), call.String(2), call.String(3)));
             return 1;
         });
+        vm.Register("scene", "find", [context](LuauNativeCall& call)
+        {
+            if (!context->Read) return 0;
+            const std::string name = call.String(1);
+            for (auto [entity, metadata] : context->Read->Registry().view<const MetadataComponent>().each())
+            {
+                if (metadata.Name != name) continue;
+                call.PushEntity(metadata.Guid);
+                return 1;
+            }
+            return 0;
+        });
+        vm.Register("scene", "name", [context](LuauNativeCall& call)
+        {
+            if (!context->Read) return 0;
+            const entt::entity entity = context->Read->FindByGuid(call.Entity(1));
+            if (!context->Read->IsValid(entity)) return 0;
+            const auto* metadata = context->Read->Registry().try_get<MetadataComponent>(entity);
+            if (!metadata) return 0;
+            call.PushString(metadata->Name);
+            return 1;
+        });
+        vm.Register("scene", "query", [context](LuauNativeCall& call)
+        {
+            std::vector<LuauValue> found;
+            const auto* info = ComponentRegistry::Instance().FindByName(call.String(1));
+            if (context->Read && info && info->Has)
+            {
+                for (auto [entity, metadata] : context->Read->Registry().view<const MetadataComponent>().each())
+                {
+                    if (info->Has(context->Read->Registry(), entity)) found.emplace_back(metadata.Guid);
+                }
+            }
+            call.PushValues(found);
+            return 1;
+        });
+        vm.Register("scene", "look_at", [](LuauNativeCall& call)
+        {
+            const LuauValue from = call.ToValue(1, LuauType::Vec3);
+            const LuauValue target = call.ToValue(2, LuauType::Vec3);
+            if (!std::holds_alternative<glm::vec3>(from) || !std::holds_alternative<glm::vec3>(target)) return 0;
+            call.PushValue(LookAtEulerDegrees(std::get<glm::vec3>(from), std::get<glm::vec3>(target)));
+            return 1;
+        });
         vm.Register("scene", "set", [context](LuauNativeCall& call)
         {
             const auto* info = FindComponentField(call.String(2), call.String(3));
@@ -86,6 +130,12 @@ namespace GPP
     // Global vec2()/vec4() constructors with operator metatables (vec3 is Luau's native vector); vec_meta holds the metatables.
     void RegisterMathBindings(LuauVm& vm)
     {
+        vm.Register("gpp", "ease", [](LuauNativeCall& call)
+        {
+            const auto kind = EaseFromName(call.String(1));
+            call.PushNumber(kind ? Ease(*kind, static_cast<float>(call.Number(2))) : call.Number(2));
+            return 1;
+        });
         vm.Register("gpp", "vecmeta", [](LuauNativeCall& call)
         {
             call.StoreVectorMetatables();
@@ -129,6 +179,7 @@ install(M2, {"x", "y"})
 install(M4, {"x", "y", "z", "w"})
 function vec2(x, y) return setmetatable({x = x, y = y}, M2) end
 function vec4(x, y, z, w) return setmetatable({x = x, y = y, z = z, w = w}, M4) end
+ease = gpp.ease
 vec_meta = {vec2 = M2, vec4 = M4}
 gpp.vecmeta(M2, M4)
 )lua";
