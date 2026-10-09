@@ -16,6 +16,16 @@ namespace GPP
         std::string Name;
     };
 
+    export struct ChangeSet
+    {
+        bool All = false;
+        std::unordered_set<std::uint64_t> Guids;
+
+        [[nodiscard]] bool Empty() const noexcept { return !All && Guids.empty(); }
+        void Merge(const ChangeSet& other);
+        void Clear() noexcept { All = false; Guids.clear(); }
+    };
+
     export class Scene
     {
     public:
@@ -43,6 +53,11 @@ namespace GPP
         [[nodiscard]] Scene Clone() const;
 
         static void SyncInto(const Scene& source, Scene& target);
+        static void SyncChanges(const Scene& source, Scene& target, const ChangeSet& changes);
+
+        void MarkDirty(entt::entity entity);
+        void MarkAllDirty() noexcept { m_Dirty.All = true; m_Dirty.Guids.clear(); }
+        [[nodiscard]] ChangeSet TakeChanges();
 
         [[nodiscard]] std::string SerializeToYaml() const;
         void DeserializeFromYaml(const std::string& yaml);
@@ -53,5 +68,6 @@ namespace GPP
         entt::registry m_Registry;
         GuidIndex m_GuidIndex;
         SceneMetadata m_Metadata;
+        ChangeSet m_Dirty{.All = true};
     };
 }

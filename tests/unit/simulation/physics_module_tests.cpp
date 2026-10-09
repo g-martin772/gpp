@@ -145,3 +145,63 @@ TEST_CASE ("PhysicsSimulationModule removes the actor when its collider is remov
 
     physics.OnShutdown(scene);
 }
+
+TEST_CASE ("PhysicsSimulationModule honors external transform and velocity writes on dynamic bodies",
+           "[simulation][physics][authority]")
+{
+    auto dispatcher = std::make_shared<EventDispatcher>();
+    auto logger = std::make_shared<Logger>();
+    PhysicsSimulationModule physics(dispatcher, logger);
+
+    Scene scene("AuthorityTest");
+    const auto body = scene.CreateEntity("Ball");
+    scene.Registry().emplace<TransformComponent>(body, TransformComponent{.Position = {0.0f, 0.0f, 0.0f}});
+    scene.Registry().emplace<VelocityComponent>(body);
+    scene.Registry().emplace<RigidBodyComponent>(
+        body, RigidBodyComponent{.Type = RigidBodyType::Dynamic, .Mass = 1.0f});
+    scene.Registry().emplace<ColliderComponent>(
+        body, ColliderComponent{.Shape = ColliderShape::Sphere, .Radius = 0.5f});
+
+    physics.OnInit(scene);
+    constexpr float dt = 1.0f / 60.0f;
+    for (int i = 0; i < 5; ++i) physics.OnTick(scene, dt);
+    CHECK(scene.Registry().get<TransformComponent>(body).Position.x == Catch::Approx(0.0f).margin(0.001f));
+
+    scene.Registry().get<TransformComponent>(body).Position = {10.0f, 2.0f, 0.0f};
+    physics.OnTick(scene, dt);
+    CHECK(scene.Registry().get<TransformComponent>(body).Position.x == Catch::Approx(10.0f).margin(0.01f));
+    CHECK(scene.Registry().get<TransformComponent>(body).Position.y == Catch::Approx(2.0f).margin(0.01f));
+
+    scene.Registry().get<VelocityComponent>(body).Linear = {60.0f, 0.0f, 0.0f};
+    physics.OnTick(scene, dt);
+    CHECK(scene.Registry().get<TransformComponent>(body).Position.x == Catch::Approx(11.0f).margin(0.05f));
+
+    physics.OnShutdown(scene);
+}
+
+TEST_CASE ("PhysicsSimulationModule zeroes motion when a body without velocity data is teleported",
+           "[simulation][physics][authority]")
+{
+    auto dispatcher = std::make_shared<EventDispatcher>();
+    auto logger = std::make_shared<Logger>();
+    PhysicsSimulationModule physics(dispatcher, logger);
+
+    Scene scene("TeleportTest");
+    const auto body = scene.CreateEntity("Ball");
+    scene.Registry().emplace<TransformComponent>(body);
+    scene.Registry().emplace<RigidBodyComponent>(
+        body, RigidBodyComponent{.Type = RigidBodyType::Dynamic, .Mass = 1.0f, .EnableGravity = false});
+    scene.Registry().emplace<ColliderComponent>(
+        body, ColliderComponent{.Shape = ColliderShape::Sphere, .Radius = 0.5f});
+
+    physics.OnInit(scene);
+    physics.OnTick(scene, 1.0f / 60.0f);
+    auto* dynamic = physics.FindActor(body)->is<physx::PxRigidDynamic>();
+    REQUIRE(dynamic != nullptr);
+    dynamic->setLinearVelocity(physx::PxVec3(5.0f, 0.0f, 0.0f));
+
+    scene.Registry().get<TransformComponent>(body).Position = {3.0f, 0.0f, 0.0f};
+    physics.OnTick(scene, 1.0f / 60.0f);
+    CHECK(scene.Registry().get<TransformComponent>(body).Position.x == Catch::Approx(3.0f).margin(0.01f));
+    physics.OnShutdown(scene);
+}

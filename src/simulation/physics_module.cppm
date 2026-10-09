@@ -31,6 +31,9 @@ namespace GPP
         PhysicsSimulationModule(std::shared_ptr<EventDispatcher> dispatcher, std::shared_ptr<Logger> logger);
         ~PhysicsSimulationModule() override;
 
+        [[nodiscard]] SimulationPhase Phase() const noexcept override { return SimulationPhase::Integrate; }
+        [[nodiscard]] bool ReportsChanges() const noexcept override { return true; }
+
         void OnInit(Scene& scene) override;
         void OnTick(Scene& scene, float deltaTime) override;
         void OnShutdown(Scene& scene) override;
@@ -64,6 +67,15 @@ namespace GPP
 
     private:
         void SyncActors(Scene& scene);
+        struct AppliedState
+        {
+            glm::vec3 Position{0.0f};
+            glm::quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
+            glm::vec3 Linear{0.0f};
+            glm::vec3 Angular{0.0f};
+        };
+
+        void PushExternalChanges(Scene& scene, entt::entity entity, physx::PxRigidActor* actor);
         void StepPhysics(float deltaTime);
         void WriteBackTransforms(Scene& scene);
         void ApplyDebugVisualization(bool enabled);
@@ -89,6 +101,7 @@ namespace GPP
 
         std::unordered_map<entt::entity, physx::PxRigidActor*> m_ActorsByEntity;
         std::unordered_map<physx::PxRigidActor*, entt::entity> m_EntitiesByActor;
+        std::unordered_map<entt::entity, AppliedState> m_Applied;
         Scene* m_CurrentScene = nullptr;
         std::atomic<bool> m_DebugVisualizationEnabled{false};
         bool m_DebugVisualizationApplied = false;

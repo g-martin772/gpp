@@ -234,3 +234,92 @@ TEST_CASE("Pausing stops ticks, resuming does not replay the paused time", "[sim
     CHECK(module->Ticks.load() - pausedAt < 15);
     runner.Stop();
 }
+
+namespace
+{
+    struct TypedModule final : ISimulationModule
+    {
+        SimulationPhase Phase() const noexcept override { return SimulationPhase::PostSim; }
+    };
+
+    struct OrderModule final : ISimulationModule
+    {
+        OrderModule(std::vector<int>& log, int id, SimulationPhase phase) : Log(log), Id(id), PhaseValue(phase) {}
+        SimulationPhase Phase() const noexcept override { return PhaseValue; }
+        void OnTick(Scene&, float) override { Log.push_back(Id); }
+        std::vector<int>& Log;
+        int Id;
+        SimulationPhase PhaseValue;
+    };
+}
+
+TEST_CASE("Modules are found by type and ticked in phase order", "[simulation_runner][modules]")
+{
+    std::vector<int> log;
+    std::vector<std::shared_ptr<ISimulationModule>> modules{
+        std::make_shared<OrderModule>(log, 3, SimulationPhase::PostSim),
+        std::make_shared<OrderModule>(log, 1, SimulationPhase::Forces),
+        std::make_shared<TypedModule>(),
+        std::make_shared<OrderModule>(log, 2, SimulationPhase::Integrate),
+    };
+    SimulationRunner runner(Scene("Test"), std::move(modules));
+
+    CHECK(runner.GetModule<TypedModule>() != nullptr);
+    CHECK(runner.GetModule<NoopModule>() == nullptr);
+
+    runner.Start();
+    REQUIRE(WaitUntil([&] { return runner.GetStats().TickCount > 0; }));
+    runner.Stop();
+    REQUIRE(log.size() >= 3);
+    CHECK(log[0] == 1);
+    CHECK(log[1] == 2);
+    CHECK(log[2] == 3);
+}
+
+namespace
+{
+    struct MoverModule final : ISimulationModule
+    {
+        bool ReportsChanges() const noexcept override { return true; }
+        void OnTick(Scene& scene, float) override
+        {
+            for (auto [entity, transform] : scene.Registry().view<TransformComponent>().each())
+            {
+                transform.Position.x += 1.0f;
+                scene.MarkDirty(entity);
+            }
+        }
+    };
+}
+
+TEST_CASE("Incremental publish delivers module changes and edits to the snapshot", "[simulation_runner][sync]")
+{
+    Scene scene("Test");
+    const auto mover = scene.CreateEntity("Mover");
+    const auto idle = scene.CreateEntity("Idle");
+    scene.Registry().emplace<TransformComponent>(mover);
+    scene.Registry().emplace<TransformComponent>(idle);
+    const auto moverGuid = scene.GuidOf(mover);
+    const auto idleGuid = scene.GuidOf(idle);
+
+    SimulationRunner runner(std::move(scene), std::make_shared<MoverModule>());
+    runner.Start();
+    runner.SetPaused(true);
+    runner.EnqueueTrackedEdit([idleGuid](Scene& s)
+    {
+        s.Registry().get<TransformComponent>(s.FindByGuid(idleGuid)).Position.y = 4.0f;
+        s.MarkDirty(s.FindByGuid(idleGuid));
+    });
+
+    const bool synced = WaitUntil([&]
+    {
+        auto lock = runner.LockRenderScene();
+        const auto e = lock->FindByGuid(idleGuid);
+        return lock->IsValid(e) && lock->Registry().get<TransformComponent>(e).Position.y == 4.0f;
+    });
+    runner.Stop();
+    REQUIRE(synced);
+
+    auto lock = runner.LockRenderScene();
+    CHECK(lock->Registry().get<TransformComponent>(lock->FindByGuid(moverGuid)).Position.x >= 0.0f);
+}

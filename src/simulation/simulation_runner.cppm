@@ -6,9 +6,20 @@ import :Scene;
 
 namespace GPP
 {
+    export enum class SimulationPhase
+    {
+        PreSim,
+        Forces,
+        Integrate,
+        PostSim
+    };
+
     export struct ISimulationModule
     {
         virtual ~ISimulationModule() = default;
+
+        [[nodiscard]] virtual SimulationPhase Phase() const noexcept { return SimulationPhase::PreSim; }
+        [[nodiscard]] virtual bool ReportsChanges() const noexcept { return false; }
 
         virtual void OnInit(Scene& scene) {}
         virtual void OnTick(Scene& scene, float deltaTime) {}
@@ -93,13 +104,37 @@ namespace GPP
 
         [[nodiscard]] SceneSnapshot AcquireSnapshot() const { return SceneSnapshot(m_Published.load(std::memory_order_acquire)); }
         [[nodiscard]] SceneSnapshot LockRenderScene() const { return AcquireSnapshot(); }
-        [[nodiscard]] const SceneMetadata& Metadata() const noexcept { return m_SimScene.Metadata(); }
+        [[nodiscard]] SceneMetadata Metadata() const;
+
+        template <typename T>
+        [[nodiscard]] std::shared_ptr<T> GetModule() const
+        {
+            for (const auto& module : m_Modules)
+            {
+                if (auto typed = std::dynamic_pointer_cast<T>(module)) return typed;
+            }
+            return nullptr;
+        }
 
         void EnqueueEdit(std::move_only_function<void(Scene&)> edit);
+        void EnqueueTrackedEdit(std::move_only_function<void(Scene&)> edit);
 
     private:
         using Clock = std::chrono::steady_clock;
 
+        struct PendingEdit
+        {
+            std::move_only_function<void(Scene&)> Fn;
+            bool Tracked = false;
+        };
+
+        struct PoolEntry
+        {
+            std::shared_ptr<SceneSnapshot::Data> Data;
+            ChangeSet Pending;
+        };
+
+        void Enqueue(std::move_only_function<void(Scene&)> edit, bool tracked);
         void ThreadMain(std::stop_token stopToken);
         void Wake();
         bool DrainEdits();
@@ -116,13 +151,15 @@ namespace GPP
         std::atomic<double> m_TickRate{60.0};
 
         std::mutex m_EditMutex;
-        std::queue<std::move_only_function<void(Scene&)>> m_PendingEdits;
+        std::queue<PendingEdit> m_PendingEdits;
 
         std::mutex m_WakeMutex;
         std::condition_variable_any m_Wake;
         std::uint64_t m_WakeSignal = 0;
 
-        std::vector<std::shared_ptr<SceneSnapshot::Data>> m_Pool;
+        std::vector<PoolEntry> m_Pool;
+        mutable std::mutex m_MetadataMutex;
+        SceneMetadata m_Metadata;
         std::atomic<std::shared_ptr<const SceneSnapshot::Data>> m_Published;
         std::uint64_t m_Generation = 0;
 

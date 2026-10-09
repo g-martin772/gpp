@@ -33,15 +33,18 @@ namespace GPP
                                        SimulationOptions options)
         : m_SimScene(std::move(scene)),
           m_Modules(std::move(modules)),
-          m_Options(options)
+          m_Options(options),
+          m_Metadata(m_SimScene.Metadata())
     {
+        std::ranges::stable_sort(m_Modules, {}, [](const auto& module) { return module->Phase(); });
+
         const double requested = options.FixedTimestep.count() > 0.0f
                                      ? 1.0 / static_cast<double>(options.FixedTimestep.count())
                                      : 60.0;
         m_TickRate.store(std::clamp(requested, kMinTickRate, kMaxTickRate), std::memory_order_relaxed);
 
         auto initial = std::make_shared<SceneSnapshot::Data>(m_SimScene.Clone(), ++m_Generation);
-        m_Pool.push_back(initial);
+        m_Pool.push_back({initial, {}});
         m_Published.store(std::move(initial), std::memory_order_release);
     }
 
@@ -89,11 +92,27 @@ namespace GPP
         Wake();
     }
 
+    SceneMetadata SimulationRunner::Metadata() const
+    {
+        std::scoped_lock lock(m_MetadataMutex);
+        return m_Metadata;
+    }
+
     void SimulationRunner::EnqueueEdit(std::move_only_function<void(Scene&)> edit)
+    {
+        Enqueue(std::move(edit), false);
+    }
+
+    void SimulationRunner::EnqueueTrackedEdit(std::move_only_function<void(Scene&)> edit)
+    {
+        Enqueue(std::move(edit), true);
+    }
+
+    void SimulationRunner::Enqueue(std::move_only_function<void(Scene&)> edit, const bool tracked)
     {
         {
             std::scoped_lock lock(m_EditMutex);
-            m_PendingEdits.push(std::move(edit));
+            m_PendingEdits.push(PendingEdit{std::move(edit), tracked});
         }
         Wake();
     }
@@ -135,7 +154,7 @@ namespace GPP
 
     bool SimulationRunner::DrainEdits()
     {
-        std::queue<std::move_only_function<void(Scene&)>> edits;
+        std::queue<PendingEdit> edits;
         {
             std::scoped_lock lock(m_EditMutex);
             if (m_PendingEdits.empty()) return false;
@@ -145,7 +164,7 @@ namespace GPP
         {
             try
             {
-                edits.front()(m_SimScene);
+                edits.front().Fn(m_SimScene);
             }
             catch (const std::exception& e)
             {
@@ -156,7 +175,12 @@ namespace GPP
                 Logger::LogError("Edit for scene '{}' failed with an unknown exception",
                                  m_SimScene.Metadata().Name);
             }
+            if (!edits.front().Tracked) m_SimScene.MarkAllDirty();
             edits.pop();
+        }
+        {
+            std::scoped_lock lock(m_MetadataMutex);
+            m_Metadata = m_SimScene.Metadata();
         }
         return true;
     }
@@ -181,6 +205,10 @@ namespace GPP
             Logger::LogError("Simulation tick for scene '{}' failed with an unknown exception",
                              m_SimScene.Metadata().Name);
         }
+        if (std::ranges::any_of(m_Modules, [](const auto& module) { return !module->ReportsChanges(); }))
+        {
+            m_SimScene.MarkAllDirty();
+        }
         const auto end = Clock::now();
         m_TickStartNs.store(0, std::memory_order_release);
         m_TickMeter.Tick(std::chrono::duration<double, std::milli>(end - start).count(), end);
@@ -188,12 +216,20 @@ namespace GPP
 
     bool SimulationRunner::Publish()
     {
-        std::shared_ptr<SceneSnapshot::Data> target;
-        for (const auto& entry : m_Pool)
+        const auto changes = m_SimScene.TakeChanges();
+        for (auto& entry : m_Pool)
         {
-            if (entry.use_count() == 1)
+            entry.Pending.Merge(changes);
+        }
+
+        std::shared_ptr<SceneSnapshot::Data> target;
+        ChangeSet* pending = nullptr;
+        for (auto& entry : m_Pool)
+        {
+            if (entry.Data.use_count() == 1)
             {
-                target = entry;
+                target = entry.Data;
+                pending = &entry.Pending;
                 break;
             }
         }
@@ -205,11 +241,12 @@ namespace GPP
                 return false; // readers are holding every buffer; try again next time, never block
             }
             target = std::make_shared<SceneSnapshot::Data>(m_SimScene.Clone(), 0);
-            m_Pool.push_back(target);
+            m_Pool.push_back({target, {}});
         }
         else
         {
-            Scene::SyncInto(m_SimScene, target->Value);
+            Scene::SyncChanges(m_SimScene, target->Value, *pending);
+            pending->Clear();
         }
 
         target->Generation = ++m_Generation;
@@ -220,6 +257,7 @@ namespace GPP
 
     void SimulationRunner::ThreadMain(std::stop_token stopToken)
     {
+        m_SimScene.MarkAllDirty();
         for (const auto& module : m_Modules)
         {
             try

@@ -23,6 +23,39 @@ namespace GPP
         }
     }
 
+    void ChangeSet::Merge(const ChangeSet& other)
+    {
+        if (All) return;
+        if (other.All)
+        {
+            All = true;
+            Guids.clear();
+            return;
+        }
+        Guids.insert(other.Guids.begin(), other.Guids.end());
+    }
+
+    void Scene::MarkDirty(const entt::entity entity)
+    {
+        if (m_Dirty.All) return;
+        if (const auto guid = m_GuidIndex.GuidOf(entity); guid != 0)
+        {
+            m_Dirty.Guids.insert(guid);
+        }
+        else
+        {
+            m_Dirty.All = true;
+            m_Dirty.Guids.clear();
+        }
+    }
+
+    ChangeSet Scene::TakeChanges()
+    {
+        ChangeSet taken = std::move(m_Dirty);
+        m_Dirty = ChangeSet{};
+        return taken;
+    }
+
     Scene::Scene(std::string name, std::uint64_t id)
         : m_Metadata{.Id = id, .Name = std::move(name)}
     {
@@ -43,6 +76,7 @@ namespace GPP
             m_GuidIndex = GuidIndex{};
             m_Metadata = other.m_Metadata;
             CopyAllFrom(other);
+            MarkAllDirty();
         }
         return *this;
     }
@@ -55,12 +89,14 @@ namespace GPP
             .Guid = guid, .Name = std::move(name), .TypeTag = std::move(typeTag)
         });
         m_GuidIndex.Track(entity, guid);
+        MarkDirty(entity);
         return entity;
     }
 
     void Scene::DestroyEntity(entt::entity entity)
     {
         if (!m_Registry.valid(entity)) return;
+        MarkDirty(entity);
         m_GuidIndex.Untrack(entity);
         m_Registry.destroy(entity);
     }
@@ -115,6 +151,43 @@ namespace GPP
         });
     }
 
+    void Scene::SyncChanges(const Scene& source, Scene& target, const ChangeSet& changes)
+    {
+        if (changes.All)
+        {
+            SyncInto(source, target);
+            return;
+        }
+
+        using SyncFn = decltype(ComponentTypeInfo::SyncEntity);
+        std::vector<SyncFn> types;
+        ComponentRegistry::Instance().ForEach([&](const ComponentTypeInfo& info)
+        {
+            if (info.SyncToRenderState && info.SyncEntity) types.push_back(info.SyncEntity);
+        });
+
+        for (const auto guid : changes.Guids)
+        {
+            const auto srcEntity = source.m_GuidIndex.Find(guid);
+            const auto dstEntity = target.m_GuidIndex.Find(guid);
+            if (srcEntity == entt::entity{entt::null})
+            {
+                if (dstEntity != entt::entity{entt::null})
+                {
+                    target.m_GuidIndex.Untrack(dstEntity);
+                    target.m_Registry.destroy(dstEntity);
+                }
+                continue;
+            }
+
+            const auto entity = target.m_GuidIndex.GetOrCreate(target.m_Registry, guid);
+            for (const auto& sync : types)
+            {
+                sync(source.m_Registry, srcEntity, target.m_Registry, entity);
+            }
+        }
+    }
+
     std::string Scene::SerializeToYaml() const
     {
         YAML::Emitter out;
@@ -151,6 +224,7 @@ namespace GPP
     {
         m_Registry.clear();
         m_GuidIndex = GuidIndex{};
+        MarkAllDirty();
 
         const auto root = YAML::Load(yaml);
         if (root["Scene"]) m_Metadata.Name = root["Scene"].as<std::string>();

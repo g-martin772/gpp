@@ -143,6 +143,54 @@ TEST_CASE ("Scene::SyncInto mirrors create, update, and destroy", "[simulation][
     CHECK_FALSE(render.Registry().all_of<PhysicsActorHandle>(renderB));
 }
 
+TEST_CASE ("Scene::SyncChanges copies only dirty entities and matches a full sync", "[simulation][scene][sync]")
+{
+    RegisterTestComponents();
+
+    Scene sim("Sim");
+    const auto a = sim.CreateEntity("A");
+    const auto b = sim.CreateEntity("B");
+    sim.Registry().emplace<TransformComponent>(a, TransformComponent{.Position = {1.0f, 0.0f, 0.0f}});
+    sim.Registry().emplace<TransformComponent>(b, TransformComponent{.Position = {2.0f, 0.0f, 0.0f}});
+    sim.Registry().emplace<HealthComponent>(a, HealthComponent{5.0f});
+
+    Scene incremental("Same");
+    Scene full("Same");
+    Scene::SyncChanges(sim, incremental, sim.TakeChanges());
+    Scene::SyncInto(sim, full);
+    REQUIRE(sim.TakeChanges().Empty());
+
+    const auto guidA = sim.GuidOf(a);
+    const auto guidB = sim.GuidOf(b);
+
+    sim.Registry().get<TransformComponent>(a).Position = {7.0f, 0.0f, 0.0f};
+    sim.MarkDirty(a);
+    sim.Registry().get<TransformComponent>(b).Position = {8.0f, 0.0f, 0.0f};
+
+    Scene::SyncChanges(sim, incremental, sim.TakeChanges());
+    CHECK(incremental.Registry().get<TransformComponent>(incremental.FindByGuid(guidA)).Position.x == 7.0f);
+    CHECK(incremental.Registry().get<TransformComponent>(incremental.FindByGuid(guidB)).Position.x == 2.0f);
+
+    sim.Registry().remove<HealthComponent>(a);
+    const auto c = sim.CreateEntity("C");
+    sim.Registry().emplace<HealthComponent>(c, HealthComponent{3.0f});
+    sim.DestroyEntity(b);
+    Scene::SyncChanges(sim, incremental, sim.TakeChanges());
+    sim.MarkAllDirty();
+    Scene::SyncChanges(sim, incremental, sim.TakeChanges());
+    Scene::SyncInto(sim, full);
+
+    CHECK(incremental.SerializeToYaml() == full.SerializeToYaml());
+
+    sim.Registry().remove<HealthComponent>(c);
+    sim.MarkDirty(c);
+    sim.DestroyEntity(a);
+    Scene::SyncChanges(sim, incremental, sim.TakeChanges());
+    Scene::SyncInto(sim, full);
+    CHECK_FALSE(incremental.IsValid(incremental.FindByGuid(guidA)));
+    CHECK(incremental.SerializeToYaml() == full.SerializeToYaml());
+}
+
 TEST_CASE ("SimulationRunner ticks on a background thread and syncs the render scene", "[simulation][runner]")
 {
     struct CounterModule : ISimulationModule

@@ -85,6 +85,7 @@ namespace GPP
 
         std::function<void(const entt::registry&, entt::registry&)> CopyAll;
         std::function<void(const entt::registry&, const GuidIndex&, entt::registry&, GuidIndex&)> SyncAll;
+        std::function<void(const entt::registry&, entt::entity, entt::registry&, entt::entity)> SyncEntity;
     };
 
     export class ComponentRegistry
@@ -187,6 +188,19 @@ namespace GPP
                 }
             }
             for (auto e : toRemove) dst.template remove<T>(e);
+        };
+
+        info.SyncEntity = [](const entt::registry& src, entt::entity srcEntity,
+                             entt::registry& dst, entt::entity dstEntity)
+        {
+            if (const auto* component = src.template try_get<T>(srcEntity))
+            {
+                dst.template emplace_or_replace<T>(dstEntity, *component);
+            }
+            else
+            {
+                dst.template remove<T>(dstEntity);
+            }
         };
 
         if constexpr (YamlConvertible<T>)

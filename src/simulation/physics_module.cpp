@@ -150,6 +150,7 @@ namespace GPP
         }
         m_ActorsByEntity.clear();
         m_EntitiesByActor.clear();
+        m_Applied.clear();
 
         if (m_Scene) { m_Scene->release(); m_Scene = nullptr; }
         if (m_CpuDispatcher) { m_CpuDispatcher->release(); m_CpuDispatcher = nullptr; }
@@ -164,8 +165,9 @@ namespace GPP
         for (const auto entity : view)
         {
             current.insert(entity);
-            if (m_ActorsByEntity.contains(entity))
+            if (const auto existing = m_ActorsByEntity.find(entity); existing != m_ActorsByEntity.end())
             {
+                PushExternalChanges(scene, entity, existing->second);
                 continue;
             }
 
@@ -175,6 +177,13 @@ namespace GPP
             if (auto* actor = CreateActor(entity, body, collider, transform))
             {
                 SeedVelocity(entity, scene, actor);
+                AppliedState applied{.Position = transform.Position, .Rotation = transform.Rotation};
+                if (const auto* velocity = scene.Registry().try_get<VelocityComponent>(entity))
+                {
+                    applied.Linear = velocity->Linear;
+                    applied.Angular = velocity->Angular;
+                }
+                m_Applied.insert_or_assign(entity, applied);
                 m_ActorsByEntity.emplace(entity, actor);
                 m_EntitiesByActor.emplace(actor, entity);
             }
@@ -189,7 +198,52 @@ namespace GPP
             }
             DestroyActor(it->second);
             m_EntitiesByActor.erase(it->second);
+            m_Applied.erase(it->first);
             it = m_ActorsByEntity.erase(it);
+        }
+    }
+
+    void PhysicsSimulationModule::PushExternalChanges(Scene& scene, const entt::entity entity,
+                                                      physx::PxRigidActor* actor)
+    {
+        auto& applied = m_Applied[entity];
+        auto* dynamic = actor->is<physx::PxRigidDynamic>();
+        const bool simulated = dynamic && !(dynamic->getRigidBodyFlags() & physx::PxRigidBodyFlag::eKINEMATIC);
+
+        if (const auto* transform = scene.Registry().try_get<TransformComponent>(entity);
+            transform && (transform->Position != applied.Position || transform->Rotation != applied.Rotation))
+        {
+            const auto length = glm::length(transform->Rotation);
+            if (std::isfinite(length) && length > 1e-6f)
+            {
+                const auto q = transform->Rotation / length;
+                actor->setGlobalPose(physx::PxTransform(
+                    physx::PxVec3(transform->Position.x, transform->Position.y, transform->Position.z),
+                    physx::PxQuat(q.x, q.y, q.z, q.w)));
+                if (simulated)
+                {
+                    if (!scene.Registry().all_of<VelocityComponent>(entity))
+                    {
+                        dynamic->setLinearVelocity(physx::PxVec3(0.0f));
+                        dynamic->setAngularVelocity(physx::PxVec3(0.0f));
+                    }
+                    dynamic->wakeUp();
+                }
+            }
+            applied.Position = transform->Position;
+            applied.Rotation = transform->Rotation;
+        }
+
+        if (!simulated) return;
+        if (const auto* velocity = scene.Registry().try_get<VelocityComponent>(entity);
+            velocity && (velocity->Linear != applied.Linear || velocity->Angular != applied.Angular))
+        {
+            dynamic->setLinearVelocity(physx::PxVec3(velocity->Linear.x, velocity->Linear.y, velocity->Linear.z));
+            dynamic->setAngularVelocity(
+                physx::PxVec3(velocity->Angular.x, velocity->Angular.y, velocity->Angular.z));
+            dynamic->wakeUp();
+            applied.Linear = velocity->Linear;
+            applied.Angular = velocity->Angular;
         }
     }
 
@@ -384,9 +438,13 @@ namespace GPP
             {
                 continue;
             }
+            auto& applied = m_Applied[entity];
             const auto pose = actor->getGlobalPose();
             transform->Position = {pose.p.x, pose.p.y, pose.p.z};
             transform->Rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z};
+            bool changed = transform->Position != applied.Position || transform->Rotation != applied.Rotation;
+            applied.Position = transform->Position;
+            applied.Rotation = transform->Rotation;
 
             if (auto* velocity = scene.Registry().try_get<VelocityComponent>(entity))
             {
@@ -394,7 +452,11 @@ namespace GPP
                 const auto angular = dynamic->getAngularVelocity();
                 velocity->Linear = {linear.x, linear.y, linear.z};
                 velocity->Angular = {angular.x, angular.y, angular.z};
+                changed = changed || velocity->Linear != applied.Linear || velocity->Angular != applied.Angular;
+                applied.Linear = velocity->Linear;
+                applied.Angular = velocity->Angular;
             }
+            if (changed) scene.MarkDirty(entity);
         }
     }
 
