@@ -120,8 +120,16 @@ namespace GPP
         {
             const auto* info = FindComponentField(call.String(2), call.String(3));
             LuauValue value = info ? call.ToValue(4, ToLuauType(info->Type)) : LuauValue{};
-            const bool ok = info && info->Set && context->Write && !std::holds_alternative<std::monostate>(value);
-            if (ok) context->Write(MakeComponentFieldWrite(call.Entity(1), call.String(2), call.String(3), std::move(value)));
+            const bool ok = info && info->Set && (context->WriteCommand || context->Write) &&
+                            !std::holds_alternative<std::monostate>(value);
+            if (ok && context->WriteCommand)
+            {
+                context->WriteCommand(SetFieldCommand{call.Entity(1), call.String(2), call.String(3), std::move(value)});
+            }
+            else if (ok)
+            {
+                context->Write(MakeComponentFieldWrite(call.Entity(1), call.String(2), call.String(3), std::move(value)));
+            }
             call.PushBoolean(ok);
             return 1;
         });
@@ -186,6 +194,35 @@ gpp.vecmeta(M2, M4)
         if (auto result = vm.RunTrusted(prelude, "=gpp_math"); !result)
         {
             throw std::runtime_error("gpp math prelude failed: " + result.error().Message);
+        }
+    }
+
+    void RegisterRandomBindings(LuauVm& vm, std::function<SimulationRandom*()> source)
+    {
+        vm.Register("gpp", "random", [source = std::move(source)](LuauNativeCall& call)
+        {
+            static SimulationRandom fallback;
+            SimulationRandom* rng = source ? source() : nullptr;
+            if (!rng) rng = &fallback;
+            if (call.Count() == 0)
+            {
+                call.PushNumber(rng->NextDouble());
+                return 1;
+            }
+            std::int64_t low = 1;
+            std::int64_t high = static_cast<std::int64_t>(call.Number(1));
+            if (call.Count() >= 2)
+            {
+                low = static_cast<std::int64_t>(call.Number(1));
+                high = static_cast<std::int64_t>(call.Number(2));
+            }
+            call.PushNumber(static_cast<double>(rng->NextInt(low, high)));
+            return 1;
+        });
+        constexpr std::string_view prelude = "math.random = gpp.random\nmath.randomseed = function() end\n";
+        if (auto result = vm.RunTrusted(prelude, "=gpp_random"); !result)
+        {
+            throw std::runtime_error("gpp random prelude failed: " + result.error().Message);
         }
     }
 

@@ -170,6 +170,7 @@ namespace GPP
     Scene Scene::Clone() const
     {
         Scene clone(m_Metadata.Name, GenerateGuid());
+        clone.m_Metadata.Seed = m_Metadata.Seed;
         clone.m_Registry.clear();
         clone.m_GuidIndex = GuidIndex{};
         clone.CopyAllFrom(*this);
@@ -239,11 +240,56 @@ namespace GPP
         }
     }
 
+    std::string Scene::SerializeEntity(const entt::entity entity) const
+    {
+        if (!m_Registry.valid(entity)) return {};
+        YAML::Node components;
+        ComponentRegistry::Instance().ForEach([&](const ComponentTypeInfo& info)
+        {
+            if (!info.Encode || !info.Has(m_Registry, entity)) return;
+            YAML::Node node;
+            info.Encode(m_Registry, entity, node);
+            components[info.Name] = node;
+        });
+        YAML::Node root;
+        root["Components"] = components;
+        return YAML::Dump(root);
+    }
+
+    entt::entity Scene::SpawnFromYaml(const std::uint64_t guid, const std::string& yaml)
+    {
+        if (guid == 0 || m_GuidIndex.Find(guid) != entt::entity{entt::null}) return entt::entity{entt::null};
+        const auto entity = m_GuidIndex.GetOrCreate(m_Registry, guid);
+        try
+        {
+            const auto components = YAML::Load(yaml)["Components"];
+            if (components && components.IsMap())
+            {
+                for (const auto& pair : components)
+                {
+                    const auto* info = ComponentRegistry::Instance().FindByName(pair.first.as<std::string>());
+                    if (info && info->Decode) info->Decode(m_Registry, entity, pair.second);
+                }
+            }
+        }
+        catch (const YAML::Exception&)
+        {
+            m_GuidIndex.Untrack(entity);
+            m_Registry.destroy(entity);
+            return entt::entity{entt::null};
+        }
+        if (auto* metadata = m_Registry.try_get<MetadataComponent>(entity)) metadata->Guid = guid;
+        else m_Registry.emplace<MetadataComponent>(entity, MetadataComponent{.Guid = guid});
+        MarkDirty(entity);
+        return entity;
+    }
+
     std::string Scene::SerializeToYaml() const
     {
         YAML::Emitter out;
         out << YAML::BeginMap;
         out << YAML::Key << "Scene" << YAML::Value << m_Metadata.Name;
+        if (m_Metadata.Seed != 0) out << YAML::Key << "Seed" << YAML::Value << m_Metadata.Seed;
         out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
 
         for (auto entity : AllEntities(m_Registry))
@@ -285,12 +331,13 @@ namespace GPP
 
         const auto root = YAML::Load(yaml);
         if (root["Scene"]) m_Metadata.Name = root["Scene"].as<std::string>();
+        m_Metadata.Seed = root["Seed"] ? root["Seed"].as<std::uint64_t>() : 0;
         if (root.IsMap())
         {
             for (const auto& pair : root)
             {
                 const auto key = pair.first.as<std::string>();
-                if (key != "Scene" && key != "Entities") m_Extensions[key] = YAML::Clone(pair.second);
+                if (key != "Scene" && key != "Entities" && key != "Seed") m_Extensions[key] = YAML::Clone(pair.second);
             }
         }
 

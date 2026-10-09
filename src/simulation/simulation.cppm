@@ -5,6 +5,8 @@ export import :Reflection;
 export import :ComponentRegistry;
 export import :Components;
 export import :Scene;
+export import :Commands;
+export import :Random;
 export import :Runner;
 export import :SceneManager;
 export import :PhysicsModule;

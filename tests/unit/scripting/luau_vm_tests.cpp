@@ -161,3 +161,34 @@ return M)", "=bind");
     queued[0](scene);
     CHECK(scene.Registry().get<TransformComponent>(entity).Position == glm::vec3(9.0f, 8.0f, 7.0f));
 }
+
+TEST_CASE("math.random follows the bound generator and math.randomseed is inert", "[luau][random]")
+{
+    const auto run = [](std::uint64_t seed)
+    {
+        SimulationRandom rng(seed);
+        LuauVm vm;
+        std::vector<double> values;
+        vm.Register("out", "push", [&values](LuauNativeCall& call)
+        {
+            values.push_back(call.Number(1));
+            return 0;
+        });
+        RegisterRandomBindings(vm, [&rng] { return &rng; });
+        vm.Seal();
+        auto handle = vm.Load("local M = {}\nfunction M.go() math.randomseed(1) out.push(math.random()) out.push(math.random(10)) out.push(math.random(5, 6)) end\nreturn M", "=rand");
+        REQUIRE(handle.has_value());
+        REQUIRE(vm.Call(*handle, "go").has_value());
+        return values;
+    };
+    const auto first = run(99);
+    CHECK(first == run(99));
+    CHECK(first != run(100));
+    REQUIRE(first.size() == 3);
+    CHECK(first[0] >= 0.0);
+    CHECK(first[0] < 1.0);
+    CHECK(first[1] >= 1.0);
+    CHECK(first[1] <= 10.0);
+    CHECK(first[2] >= 5.0);
+    CHECK(first[2] <= 6.0);
+}

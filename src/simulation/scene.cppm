@@ -15,6 +15,7 @@ namespace GPP
     {
         std::uint64_t Id{0};
         std::string Name;
+        std::uint64_t Seed{0};
     };
 
     export struct ChangeSet
@@ -42,6 +43,7 @@ namespace GPP
         [[nodiscard]] const entt::registry& Registry() const noexcept { return m_Registry; }
         [[nodiscard]] const SceneMetadata& Metadata() const noexcept { return m_Metadata; }
         void SetName(std::string name) { m_Metadata.Name = std::move(name); }
+        void SetSeed(std::uint64_t seed) noexcept { m_Metadata.Seed = seed; }
 
         entt::entity CreateEntity(std::string name = {}, std::string typeTag = {});
         entt::entity CreateEntityWithGuid(std::uint64_t guid, std::string name = {}, std::string typeTag = {});
@@ -54,6 +56,9 @@ namespace GPP
         [[nodiscard]] const GuidIndex& Guids() const noexcept { return m_GuidIndex; }
 
         [[nodiscard]] Scene Clone() const;
+
+        [[nodiscard]] std::string SerializeEntity(entt::entity entity) const;
+        entt::entity SpawnFromYaml(std::uint64_t guid, const std::string& yaml);
 
         static void SyncInto(const Scene& source, Scene& target);
         static void SyncChanges(const Scene& source, Scene& target, const ChangeSet& changes);
