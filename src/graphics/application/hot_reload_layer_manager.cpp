@@ -95,7 +95,7 @@ namespace GPP
         {
             auto retired = entry.Asset->Commit();
             auto* newLayer = static_cast<HotReloadableLayer*>(entry.Asset->GetInstance().instance);
-            entry.Proxy->SwapActive(newLayer);
+            entry.Proxy->QueueSwap(newLayer, std::move(retired));
             m_Logger->Info("Hot-reload layer '{}' reloaded (generation {}).",
                            entry.Description.Id, entry.Asset->GetInstance().generation);
         }

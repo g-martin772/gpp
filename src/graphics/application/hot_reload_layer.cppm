@@ -26,12 +26,25 @@ namespace GPP
         void OnRenderGraph(RenderGraph& graph) override;
         void OnUiRender() override;
         void OnEvent() override;
+        void OnSafePoint() override;
 
         HotReloadableLayer* SwapActive(HotReloadableLayer* newLayer) noexcept;
+        void QueueSwap(HotReloadableLayer* newLayer, RetiredHotReloadInstance retired = {});
+
         [[nodiscard]] HotReloadableLayer* GetActive() const noexcept;
     private:
-        mutable std::mutex m_Mutex;
+        struct PendingSwap
+        {
+            HotReloadableLayer* Layer = nullptr;
+            RetiredHotReloadInstance Retired;
+        };
+
+        mutable std::shared_mutex m_CallMutex;
         HotReloadableLayer* m_Active = nullptr;
         bool m_StackAttached = false;
+
+        std::mutex m_PendingMutex;
+        std::vector<PendingSwap> m_Pending;
+        std::atomic<bool> m_HasPending{false};
     };
 }

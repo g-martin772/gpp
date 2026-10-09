@@ -44,24 +44,28 @@ namespace GPP
 
     export using RenderGraphRecordFn = std::move_only_function<void(vk::CommandBuffer, RenderGraph&)>;
 
-    // A single frame's worth of compute/graphics passes for one render target (a window or an
-    // offscreen buffer target). Layers contribute passes via GuiLayer::OnRenderGraph(); Renderer
-    // compiles and executes the result once per target per frame.
-    //
-    // v1 scope (see MoleHole migration plan §1.1): passes run in declaration order - the graph does
-    // not reorder them from a dependency analysis, so a layer that reads another layer's output
-    // must be later in the layer stack. Resource state tracking covers image layouts only; it does
-    // not track buffer read/write hazards (a pass that needs a buffer barrier records it itself).
-    // Everything runs on the single graphics queue, matching how VulkanDevice is configured today.
-    // Transient resources are cached by name across frames (recreated only if their spec changes),
-    // but nothing is aliased in memory between resources that are never alive at the same time.
+    export struct RenderGraphWorkSlice
+    {
+        std::uint32_t First = 0;
+        std::uint32_t Count = 0;
+        std::uint32_t Total = 0;
+    };
+
+    export using RenderGraphSliceRecordFn =
+        std::move_only_function<void(vk::CommandBuffer, RenderGraph&, const RenderGraphWorkSlice&)>;
+
+    export struct IRenderGraphChunkSink
+    {
+        virtual ~IRenderGraphChunkSink() = default;
+        virtual vk::CommandBuffer BeginChunk() = 0;
+        virtual double SubmitChunkAndWait() = 0;
+        [[nodiscard]] virtual bool Cancelled() const { return false; }
+    };
+
+
     export class RenderGraph
     {
     public:
-        // framesInFlight must match the number of frame-in-flight slots the caller cycles through
-        // (Renderer uses 2) - Begin(frameIndex) only resets that slot's descriptor pools, and the
-        // caller only reaches a given frameIndex again after fencing on the GPU work that last used
-        // it, so resetting it there can never race a still-executing command buffer.
         explicit RenderGraph(std::shared_ptr<VulkanDevice> device, std::shared_ptr<Logger> logger,
                             std::uint32_t framesInFlight = 2);
         ~RenderGraph();
@@ -69,8 +73,6 @@ namespace GPP
         RenderGraph(const RenderGraph&) = delete;
         RenderGraph& operator=(const RenderGraph&) = delete;
 
-        // Clears the pass list for a new frame and resets frameIndex's descriptor pool slot for
-        // reuse. Named transient resources are kept and reused rather than recreated.
         void Begin(std::uint32_t frameIndex);
 
         RenderGraphHandle ImportImage(std::string name, const RenderGraphExternalImage& image,
@@ -84,30 +86,29 @@ namespace GPP
         void AddComputePass(std::string name, std::vector<RenderGraphImageUse> imageUses,
                             std::vector<RenderGraphHandle> bufferUses, RenderGraphRecordFn record);
 
-        // extent sizes the implicit viewport/scissor (and the rendering area) the graph sets up
-        // before invoking record; a pass can still override either with its own setViewport/
-        // setScissor calls inside record.
         void AddGraphicsPass(std::string name, std::vector<RenderGraphImageUse> imageUses,
                              std::vector<RenderGraphHandle> bufferUses,
                              std::vector<RenderGraphAttachment> colorAttachments,
                              std::optional<RenderGraphAttachment> depthAttachment,
                              RenderGraphRecordFn record);
 
-        // Allocates any newly-declared transient resources for this frame. No pass reordering
-        // happens here in v1 - call this once after every layer has contributed its passes.
-        void Compile();
+        void AddBudgetedComputePass(std::string name, std::vector<RenderGraphImageUse> imageUses,
+                                    std::vector<RenderGraphHandle> bufferUses, std::uint32_t totalItems,
+                                    RenderGraphSliceRecordFn record);
 
-        // Records layout transitions and each pass's callback, in declaration order.
+
+        void Compile();
         void Execute(vk::CommandBuffer commandBuffer);
 
-        // The color/depth image this target's owning window or buffer target ultimately presents
-        // or samples - set by Renderer right after importing them, before any layer runs, so a
-        // layer can render "into whatever I'm attached to" without knowing Renderer's internal
-        // resource names.
+        vk::CommandBuffer ExecuteSliced(IRenderGraphChunkSink& sink,
+                                        const std::function<AdaptiveSlicer&(const std::string&)>& slicerFor);
+
         void SetPrimaryColorTarget(RenderGraphHandle handle) noexcept { m_PrimaryColor = handle; }
         void SetPrimaryDepthTarget(RenderGraphHandle handle) noexcept { m_PrimaryDepth = handle; }
         [[nodiscard]] RenderGraphHandle GetPrimaryColorTarget() const noexcept { return m_PrimaryColor; }
         [[nodiscard]] RenderGraphHandle GetPrimaryDepthTarget() const noexcept { return m_PrimaryDepth; }
+
+        [[nodiscard]] std::size_t PassCount() const noexcept { return m_Passes.size(); }
 
         [[nodiscard]] vk::ImageLayout GetCurrentLayout(RenderGraphHandle handle) const;
         [[nodiscard]] vk::Extent3D GetImageExtent(RenderGraphHandle handle) const;
@@ -142,7 +143,7 @@ namespace GPP
             bool HasSpecification = false;
         };
 
-        enum class PassKind : std::uint8_t { Compute, Graphics };
+        enum class PassKind : std::uint8_t { Compute, Graphics, BudgetedCompute };
 
         struct Pass
         {
@@ -153,7 +154,12 @@ namespace GPP
             std::vector<RenderGraphAttachment> ColorAttachments;
             std::optional<RenderGraphAttachment> DepthAttachment;
             RenderGraphRecordFn Record;
+            std::uint32_t TotalItems = 0;
+            RenderGraphSliceRecordFn RecordSlice;
         };
+
+        void RecordPass(vk::CommandBuffer commandBuffer, Pass& pass);
+        static void RecordPassBarrier(vk::CommandBuffer commandBuffer);
 
         void TransitionTo(vk::CommandBuffer commandBuffer, RenderGraphHandle handle,
                           vk::ImageLayout layout);

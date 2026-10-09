@@ -33,6 +33,7 @@ namespace GPP
 
         [[nodiscard]] std::shared_ptr<SimulationRunner> GetSimulation(const std::string& name) const;
         void DestroySimulation(const std::string& name);
+        void DestroySimulationAsync(const std::string& name);
 
         void SaveSceneToFile(const std::string& name, const std::filesystem::path& path);
         Scene& LoadSceneFromFile(const std::filesystem::path& path);

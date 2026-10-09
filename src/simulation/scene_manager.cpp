@@ -121,6 +121,24 @@ namespace GPP
         runner->Stop();
     }
 
+    void SceneManager::DestroySimulationAsync(const std::string& name)
+    {
+        std::shared_ptr<SimulationRunner> runner;
+        {
+            std::scoped_lock lock(m_Mutex);
+            const auto it = m_Simulations.find(name);
+            if (it == m_Simulations.end()) return;
+            runner = std::move(it->second);
+            m_Simulations.erase(it);
+        }
+        runner->RequestStop();
+        ThreadPool::Instance().Submit([runner = std::move(runner)]() mutable
+        {
+            runner->Stop();
+            runner.reset();
+        });
+    }
+
     void SceneManager::SaveSceneToFile(const std::string& name, const std::filesystem::path& path)
     {
         std::string yaml;

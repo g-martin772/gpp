@@ -8,6 +8,8 @@ import :Vulkan.Device;
 
 namespace GPP
 {
+    static constexpr float kGraphicsQueuePriorities[2] = {1.0f, 0.5f};
+
     static void AddQueueToCreateInfo(std::vector<vk::DeviceQueueCreateInfo>& queueInfos,
                                      uint32_t queueFamilyIndex,
                                      uint32_t* resultIndex)
@@ -172,8 +174,19 @@ namespace GPP
         }
 
         std::vector<vk::DeviceQueueCreateInfo> deviceQueueInfos;
+        bool wantBackgroundQueue = false;
         if (m_Requirements.Graphics)
+        {
             AddQueueToCreateInfo(deviceQueueInfos, m_QueueIndices.Graphics, &m_GraphicsIndex);
+            const auto familyProperties = m_PhysicalDevice.getQueueFamilyProperties();
+            if (m_QueueIndices.Graphics < familyProperties.size() &&
+                familyProperties[m_QueueIndices.Graphics].queueCount >= 2)
+            {
+                deviceQueueInfos[m_GraphicsIndex].queueCount = 2;
+                deviceQueueInfos[m_GraphicsIndex].pQueuePriorities = kGraphicsQueuePriorities;
+                wantBackgroundQueue = true;
+            }
+        }
         if (m_Requirements.Transfer)
             AddQueueToCreateInfo(deviceQueueInfos, m_QueueIndices.Transfer, &m_TransferIndex);
         if (m_Requirements.Compute)
@@ -284,6 +297,25 @@ namespace GPP
             vk::Queue queue = m_Device.getQueue(queueInfo.queueFamilyIndex, 0);
             m_Queues.push_back(queue);
         }
+        if (wantBackgroundQueue)
+        {
+            m_BackgroundQueue = m_Device.getQueue(m_QueueIndices.Graphics, 1);
+        }
+        m_Logger->Info("Background queue: {}",
+                       wantBackgroundQueue ? "dedicated (graphics family queue 1, low priority)"
+                                           : "shared with the graphics queue (device exposes a single queue)");
+
+        const auto registerQueue = [this](const vk::Queue queue)
+        {
+            if (!queue) return;
+            for (const auto& entry : m_QueueMutexes)
+            {
+                if (entry.first == queue) return;
+            }
+            m_QueueMutexes.emplace_back(queue, std::make_unique<std::mutex>());
+        };
+        for (const auto queue : m_Queues) registerQueue(queue);
+        registerQueue(m_BackgroundQueue);
 
         if (m_Requirements.Present)
         {
@@ -357,8 +389,30 @@ namespace GPP
                         stats.allocationCount, stats.blockCount, stats.allocationBytes, stats.blockBytes);
     }
 
+    std::mutex& VulkanDevice::GetQueueMutex(const vk::Queue queue) const
+    {
+        for (const auto& entry : m_QueueMutexes)
+        {
+            if (entry.first == queue)
+            {
+                return *entry.second;
+            }
+        }
+
+        static std::mutex fallback; //?
+        return fallback;
+    }
+
     void VulkanDevice::WaitIdle()
     {
+        if (!m_Device) return;
+        
+        std::vector<std::unique_lock<std::mutex>> locks;
+        locks.reserve(m_QueueMutexes.size());
+        for (const auto& entry : m_QueueMutexes)
+        {
+            locks.emplace_back(*entry.second);
+        }
         m_Device.waitIdle();
     }
 

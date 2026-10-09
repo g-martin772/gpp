@@ -8,8 +8,8 @@ namespace GPP
 {
     void HotReloadLayerProxy::OnAttach()
     {
-        std::scoped_lock lock(m_Mutex);
         m_StackAttached = true;
+        std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
             m_Active->OnAttach();
@@ -18,77 +18,147 @@ namespace GPP
 
     void HotReloadLayerProxy::OnDetach()
     {
-        std::scoped_lock lock(m_Mutex);
-        if (m_Active)
         {
-            m_Active->OnDetach();
+            std::shared_lock lock(m_CallMutex);
+            if (m_Active)
+            {
+                m_Active->OnDetach();
+            }
         }
         m_StackAttached = false;
     }
 
     void HotReloadLayerProxy::OnUpdate(float deltaTime)
     {
-        if (auto* active = GetActive())
+        std::shared_lock lock(m_CallMutex);
+        if (m_Active)
         {
-            active->OnUpdate(deltaTime);
+            m_Active->OnUpdate(deltaTime);
         }
     }
 
     void HotReloadLayerProxy::OnRender()
     {
-        if (auto* active = GetActive())
+        std::shared_lock lock(m_CallMutex);
+        if (m_Active)
         {
-            active->OnRender();
+            m_Active->OnRender();
         }
     }
 
     void HotReloadLayerProxy::OnRenderGraph(RenderGraph& graph)
     {
-        if (auto* active = GetActive())
+        std::shared_lock lock(m_CallMutex);
+        if (m_Active)
         {
-            active->OnRenderGraph(graph);
+            m_Active->OnRenderGraph(graph);
         }
     }
 
     void HotReloadLayerProxy::OnUiRender()
     {
-        if (auto* active = GetActive())
+        std::shared_lock lock(m_CallMutex);
+        if (m_Active)
         {
-            active->OnUiRender();
+            m_Active->OnUiRender();
         }
     }
 
     void HotReloadLayerProxy::OnEvent()
     {
-        if (auto* active = GetActive())
+        std::shared_lock lock(m_CallMutex);
+        if (m_Active)
         {
-            active->OnEvent();
+            m_Active->OnEvent();
+        }
+    }
+
+    void HotReloadLayerProxy::OnSafePoint()
+    {
+        if (!m_HasPending.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
+        std::vector<PendingSwap> pending;
+        {
+            std::scoped_lock lock(m_PendingMutex);
+            pending.swap(m_Pending);
+            m_HasPending.store(false, std::memory_order_release);
+        }
+        if (pending.empty())
+        {
+            return;
+        }
+
+        HotReloadableLayer* const target = pending.back().Layer;
+
+        HotReloadableLayer* previous = nullptr;
+        {
+            std::unique_lock lock(m_CallMutex);
+            previous = std::exchange(m_Active, nullptr);
+        }
+
+        if (m_StackAttached && previous)
+        {
+            previous->OnDetach();
+        }
+        if (target)
+        {
+            target->SetLayerTarget(GetLayerTarget());
+            if (m_StackAttached)
+            {
+                target->OnAttach();
+            }
+        }
+
+        {
+            std::unique_lock lock(m_CallMutex);
+            m_Active = target;
         }
     }
 
     HotReloadableLayer* HotReloadLayerProxy::SwapActive(HotReloadableLayer* newLayer) noexcept
     {
-        std::scoped_lock lock(m_Mutex);
-        HotReloadableLayer* previous = m_Active;
+        HotReloadableLayer* previous = nullptr;
+        {
+            std::unique_lock lock(m_CallMutex);
+            previous = std::exchange(m_Active, nullptr);
+        }
         if (m_StackAttached && previous)
         {
             previous->OnDetach();
         }
-        m_Active = newLayer;
         if (newLayer)
         {
             newLayer->SetLayerTarget(GetLayerTarget());
+            if (m_StackAttached)
+            {
+                newLayer->OnAttach();
+            }
         }
-        if (m_StackAttached && newLayer)
         {
-            newLayer->OnAttach();
+            std::unique_lock lock(m_CallMutex);
+            m_Active = newLayer;
         }
         return previous;
     }
 
+    void HotReloadLayerProxy::QueueSwap(HotReloadableLayer* newLayer, RetiredHotReloadInstance retired)
+    {
+        if (!m_StackAttached)
+        {
+            SwapActive(newLayer);
+            return;
+        }
+        std::scoped_lock lock(m_PendingMutex);
+        m_Pending.push_back(PendingSwap{newLayer, std::move(retired)});
+        m_HasPending.store(true, std::memory_order_release);
+    }
+
     HotReloadableLayer* HotReloadLayerProxy::GetActive() const noexcept
     {
-        std::scoped_lock lock(m_Mutex);
+        std::shared_lock lock(m_CallMutex);
         return m_Active;
     }
 }

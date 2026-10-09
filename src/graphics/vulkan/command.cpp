@@ -205,73 +205,12 @@ namespace GPP
 
     void VulkanCommandBuffer::Submit(vk::Queue target)
     {
-        if (m_CommandBuffer == nullptr || !m_Device)
-        {
-            m_Logger->Error("Tried to submit a uninitialized command buffer");
-            return;
-        }
-
-        vk::SubmitInfo submitInfo{};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &m_CommandBuffer;
-
-        try
-        {
-            const vk::Result result = target.submit(1, &submitInfo, nullptr);
-            if (result != vk::Result::eSuccess)
-            {
-                if (m_Logger)
-                    m_Logger->Error("Failed to submit vulkan command buffer: {}", vk::to_string(result));
-                return;
-            }
-        }
-        catch (const vk::SystemError& err)
-        {
-            if (m_Logger)
-                m_Logger->Error("Failed to submit vulkan command buffer: {}", err.what());
-            return;
-        }
-
-        if (m_IsSingleUse)
-        {
-            target.waitIdle();
-            Free();
-        }
+        SubmitInternal(target, nullptr, {}, nullptr, nullptr);
     }
 
     void VulkanCommandBuffer::Submit(vk::Queue target, vk::Fence fence)
     {
-        if (m_CommandBuffer == nullptr || !m_Device)
-        {
-            m_Logger->Error("Tried to submit a uninitialized command buffer");
-            return;
-        }
-
-        vk::SubmitInfo submitInfo{};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &m_CommandBuffer;
-
-        try
-        {
-            const vk::Result result = target.submit(1, &submitInfo, fence);
-            if (result != vk::Result::eSuccess)
-            {
-                if (m_Logger)
-                    m_Logger->Error("Failed to submit vulkan command buffer: {}", vk::to_string(result));
-                return;
-            }
-        }
-        catch (const vk::SystemError& err)
-        {
-            if (m_Logger)
-                m_Logger->Error("Failed to submit vulkan command buffer: {}", err.what());
-        }
-
-        if (m_IsSingleUse)
-        {
-            target.waitIdle();
-            Free();
-        }
+        SubmitInternal(target, nullptr, {}, nullptr, fence);
     }
 
     void VulkanCommandBuffer::Submit(vk::Queue target,
@@ -280,30 +219,61 @@ namespace GPP
                                      vk::Fence fence,
                                      vk::PipelineStageFlags waitStage)
     {
+        SubmitInternal(target, waitSemaphore, waitStage, signalSemaphore, fence);
+    }
+
+    void VulkanCommandBuffer::SubmitInternal(vk::Queue target, vk::Semaphore waitSemaphore,
+                                             vk::PipelineStageFlags waitStage, vk::Semaphore signalSemaphore,
+                                             vk::Fence fence)
+    {
         if (m_CommandBuffer == nullptr || !m_Device)
         {
             m_Logger->Error("Tried to submit a uninitialized command buffer");
             return;
         }
 
-        vk::SubmitInfo submitInfo{};
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &waitSemaphore;
-        submitInfo.pWaitDstStageMask = &waitStage;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &m_CommandBuffer;
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &signalSemaphore;
+        const auto device = m_Device->GetDevice();
 
-        try
+        vk::Fence ownedFence;
+        vk::Fence completionFence = fence;
+        if (m_IsSingleUse && !completionFence)
         {
-            const vk::Result result = target.submit(1, &submitInfo, fence);
-            if (result != vk::Result::eSuccess)
+            try
+            {
+                ownedFence = device.createFence(vk::FenceCreateInfo{});
+            }
+            catch (const vk::SystemError& err)
             {
                 if (m_Logger)
-                    m_Logger->Error("Failed to submit vulkan command buffer: {}", vk::to_string(result));
+                    m_Logger->Error("Failed to create fence for single-use submit: {}", err.what());
                 return;
             }
+            completionFence = ownedFence;
+        }
+
+        vk::SubmitInfo submitInfo{};
+        if (waitSemaphore)
+        {
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = &waitSemaphore;
+            submitInfo.pWaitDstStageMask = &waitStage;
+        }
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &m_CommandBuffer;
+        if (signalSemaphore)
+        {
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &signalSemaphore;
+        }
+
+        bool submitted = false;
+        try
+        {
+            std::scoped_lock lock(m_Device->GetQueueMutex(target));
+            const vk::Result result = target.submit(1, &submitInfo, completionFence);
+            submitted = result == vk::Result::eSuccess;
+            if (!submitted && m_Logger)
+                m_Logger->Error("Failed to submit vulkan command buffer: {}", vk::to_string(result));
         }
         catch (const vk::SystemError& err)
         {
@@ -313,7 +283,24 @@ namespace GPP
 
         if (m_IsSingleUse)
         {
-            target.waitIdle();
+            if (submitted)
+            {
+                try
+                {
+                    // waits for this submission only nothing else
+                    [[maybe_unused]] const auto waitResult = device.waitForFences(
+                        1, &completionFence, vk::True, std::numeric_limits<std::uint64_t>::max());
+                }
+                catch (const vk::SystemError& err)
+                {
+                    if (m_Logger)
+                        m_Logger->Error("Failed waiting for single-use command buffer: {}", err.what());
+                }
+            }
+            if (ownedFence)
+            {
+                device.destroyFence(ownedFence);
+            }
             Free();
         }
     }

@@ -201,6 +201,20 @@ namespace GPP
         });
     }
 
+    void RenderGraph::AddBudgetedComputePass(std::string name, std::vector<RenderGraphImageUse> imageUses,
+                                             std::vector<RenderGraphHandle> bufferUses,
+                                             const std::uint32_t totalItems, RenderGraphSliceRecordFn record)
+    {
+        m_Passes.push_back(Pass{
+            .Kind = PassKind::BudgetedCompute,
+            .Name = std::move(name),
+            .ImageUses = std::move(imageUses),
+            .BufferUses = std::move(bufferUses),
+            .TotalItems = totalItems,
+            .RecordSlice = std::move(record)
+        });
+    }
+
     void RenderGraph::Compile()
     {
         // v1: resources are created eagerly and passes execute in declaration order, so there is
@@ -233,73 +247,165 @@ namespace GPP
         return vk::Extent3D{1, 1, 1};
     }
 
+    void RenderGraph::RecordPassBarrier(const vk::CommandBuffer commandBuffer)
+    {
+        const vk::MemoryBarrier barrier{
+            vk::AccessFlagBits::eMemoryWrite,
+            vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite
+        };
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                                      vk::PipelineStageFlagBits::eAllCommands, {}, 1, &barrier, 0, nullptr, 0,
+                                      nullptr);
+    }
+
+    void RenderGraph::RecordPass(const vk::CommandBuffer commandBuffer, Pass& pass)
+    {
+        for (const auto& use : pass.ImageUses)
+        {
+            TransitionTo(commandBuffer, use.Handle, use.Layout);
+        }
+
+        if (pass.Kind == PassKind::Compute)
+        {
+            pass.Record(commandBuffer, *this);
+            return;
+        }
+
+        if (pass.Kind == PassKind::BudgetedCompute)
+        {
+            // (Vulkan guarantees 65535 workgroups in the X dimension.)
+            constexpr std::uint32_t kMaxDispatch = 65535;
+            for (std::uint32_t first = 0; first < pass.TotalItems; first += kMaxDispatch)
+            {
+                pass.RecordSlice(commandBuffer, *this,
+                                 RenderGraphWorkSlice{first, std::min(kMaxDispatch, pass.TotalItems - first),
+                                                      pass.TotalItems});
+            }
+            return;
+        }
+
+        std::vector<vk::RenderingAttachmentInfo> colorInfos;
+        colorInfos.reserve(pass.ColorAttachments.size());
+        for (const auto& attachment : pass.ColorAttachments)
+        {
+            TransitionTo(commandBuffer, attachment.Handle, vk::ImageLayout::eColorAttachmentOptimal);
+            vk::RenderingAttachmentInfo info{};
+            info.imageView = GetImageView(attachment.Handle);
+            info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            info.loadOp = attachment.LoadOp;
+            info.storeOp = vk::AttachmentStoreOp::eStore;
+            info.clearValue = attachment.Clear;
+            colorInfos.push_back(info);
+        }
+
+        std::optional<vk::RenderingAttachmentInfo> depthInfo;
+        if (pass.DepthAttachment)
+        {
+            const auto format = GetImageFormat(pass.DepthAttachment->Handle);
+            const auto hasStencil =
+                (GetImageAspectMask(format) & vk::ImageAspectFlagBits::eStencil) !=
+                vk::ImageAspectFlags{};
+            const auto layout = hasStencil
+                                     ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                                     : vk::ImageLayout::eDepthAttachmentOptimal;
+            TransitionTo(commandBuffer, pass.DepthAttachment->Handle, layout);
+            vk::RenderingAttachmentInfo info{};
+            info.imageView = GetImageView(pass.DepthAttachment->Handle);
+            info.imageLayout = layout;
+            info.loadOp = pass.DepthAttachment->LoadOp;
+            info.storeOp = vk::AttachmentStoreOp::eDontCare;
+            info.clearValue = pass.DepthAttachment->Clear;
+            depthInfo = info;
+        }
+
+        const auto area = ResolveRenderArea(pass);
+        vk::RenderingInfo renderingInfo{};
+        renderingInfo.renderArea = vk::Rect2D{{0, 0}, {area.width, area.height}};
+        renderingInfo.layerCount = 1;
+        renderingInfo.colorAttachmentCount = static_cast<std::uint32_t>(colorInfos.size());
+        renderingInfo.pColorAttachments = colorInfos.empty() ? nullptr : colorInfos.data();
+        renderingInfo.pDepthAttachment = depthInfo ? &*depthInfo : nullptr;
+
+        commandBuffer.beginRendering(renderingInfo);
+        const vk::Viewport viewport{
+            0.0f, 0.0f, static_cast<float>(area.width), static_cast<float>(area.height), 0.0f, 1.0f
+        };
+        const vk::Rect2D scissor{{0, 0}, {area.width, area.height}};
+        commandBuffer.setViewport(0, 1, &viewport);
+        commandBuffer.setScissor(0, 1, &scissor);
+        pass.Record(commandBuffer, *this);
+        commandBuffer.endRendering();
+    }
+
     void RenderGraph::Execute(const vk::CommandBuffer commandBuffer)
     {
+        bool first = true;
         for (auto& pass : m_Passes)
         {
+            if (!first)
+            {
+                RecordPassBarrier(commandBuffer);
+            }
+            first = false;
+            RecordPass(commandBuffer, pass);
+        }
+    }
+
+    vk::CommandBuffer RenderGraph::ExecuteSliced(
+        IRenderGraphChunkSink& sink, const std::function<AdaptiveSlicer&(const std::string&)>& slicerFor)
+    {
+        vk::CommandBuffer commandBuffer = sink.BeginChunk();
+        bool first = true;
+        for (auto& pass : m_Passes)
+        {
+            if (!commandBuffer)
+            {
+                commandBuffer = sink.BeginChunk();
+            }
+
+            if (!first)
+            {
+                RecordPassBarrier(commandBuffer);
+            }
+            first = false;
+
+            if (pass.Kind != PassKind::BudgetedCompute)
+            {
+                RecordPass(commandBuffer, pass);
+                continue;
+            }
+
             for (const auto& use : pass.ImageUses)
             {
                 TransitionTo(commandBuffer, use.Handle, use.Layout);
             }
 
-            if (pass.Kind == PassKind::Compute)
+            auto& slicer = slicerFor(pass.Name);
+            slicer.BeginJob();
+            std::uint32_t done = 0;
+            while (done < pass.TotalItems)
             {
-                pass.Record(commandBuffer, *this);
-                continue;
+                if (sink.Cancelled())
+                {
+                    return commandBuffer ? commandBuffer : sink.BeginChunk();
+                }
+                if (!commandBuffer)
+                {
+                    commandBuffer = sink.BeginChunk();
+                }
+                const auto count = slicer.NextSliceSize(pass.TotalItems - done);
+                pass.RecordSlice(commandBuffer, *this, RenderGraphWorkSlice{done, count, pass.TotalItems});
+                const double elapsedMs = sink.SubmitChunkAndWait();
+                commandBuffer = nullptr;
+                slicer.Report(count, elapsedMs);
+                done += count;
             }
-
-            std::vector<vk::RenderingAttachmentInfo> colorInfos;
-            colorInfos.reserve(pass.ColorAttachments.size());
-            for (const auto& attachment : pass.ColorAttachments)
-            {
-                TransitionTo(commandBuffer, attachment.Handle, vk::ImageLayout::eColorAttachmentOptimal);
-                vk::RenderingAttachmentInfo info{};
-                info.imageView = GetImageView(attachment.Handle);
-                info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-                info.loadOp = attachment.LoadOp;
-                info.storeOp = vk::AttachmentStoreOp::eStore;
-                info.clearValue = attachment.Clear;
-                colorInfos.push_back(info);
-            }
-
-            std::optional<vk::RenderingAttachmentInfo> depthInfo;
-            if (pass.DepthAttachment)
-            {
-                const auto format = GetImageFormat(pass.DepthAttachment->Handle);
-                const auto hasStencil =
-                    (GetImageAspectMask(format) & vk::ImageAspectFlagBits::eStencil) !=
-                    vk::ImageAspectFlags{};
-                const auto layout = hasStencil
-                                         ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                                         : vk::ImageLayout::eDepthAttachmentOptimal;
-                TransitionTo(commandBuffer, pass.DepthAttachment->Handle, layout);
-                vk::RenderingAttachmentInfo info{};
-                info.imageView = GetImageView(pass.DepthAttachment->Handle);
-                info.imageLayout = layout;
-                info.loadOp = pass.DepthAttachment->LoadOp;
-                info.storeOp = vk::AttachmentStoreOp::eDontCare;
-                info.clearValue = pass.DepthAttachment->Clear;
-                depthInfo = info;
-            }
-
-            const auto area = ResolveRenderArea(pass);
-            vk::RenderingInfo renderingInfo{};
-            renderingInfo.renderArea = vk::Rect2D{{0, 0}, {area.width, area.height}};
-            renderingInfo.layerCount = 1;
-            renderingInfo.colorAttachmentCount = static_cast<std::uint32_t>(colorInfos.size());
-            renderingInfo.pColorAttachments = colorInfos.empty() ? nullptr : colorInfos.data();
-            renderingInfo.pDepthAttachment = depthInfo ? &*depthInfo : nullptr;
-
-            commandBuffer.beginRendering(renderingInfo);
-            const vk::Viewport viewport{
-                0.0f, 0.0f, static_cast<float>(area.width), static_cast<float>(area.height), 0.0f, 1.0f
-            };
-            const vk::Rect2D scissor{{0, 0}, {area.width, area.height}};
-            commandBuffer.setViewport(0, 1, &viewport);
-            commandBuffer.setScissor(0, 1, &scissor);
-            pass.Record(commandBuffer, *this);
-            commandBuffer.endRendering();
         }
+        if (!commandBuffer)
+        {
+            commandBuffer = sink.BeginChunk();
+        }
+        return commandBuffer;
     }
 
     vk::ImageLayout RenderGraph::GetCurrentLayout(const RenderGraphHandle handle) const

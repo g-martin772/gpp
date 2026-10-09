@@ -1,5 +1,6 @@
 export module GPP.Graphics:Vulkan.Swapchain;
 
+import std;
 import glm;
 import vulkan;
 import GPP.Core;
@@ -10,6 +11,13 @@ namespace GPP
 {
     class VulkanDevice;
 
+    export enum class SwapchainAcquireResult : std::uint8_t
+    {
+        Acquired,
+        NotReady,
+        Recreated
+    };
+
     export class VulkanSwapChain
     {
     public:
@@ -17,10 +25,12 @@ namespace GPP
                         const std::shared_ptr<Logger>& logger,
                         glm::uvec2 size,
                         vk::SurfaceKHR surface,
-                        std::uint32_t framesInFlight = 3);
+                        std::uint32_t framesInFlight = 3,
+                        bool vsync = true);
         ~VulkanSwapChain();
 
-        void AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence, std::uint64_t timeout = -1);
+        SwapchainAcquireResult AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence,
+                                                std::uint64_t timeout = std::numeric_limits<std::uint64_t>::max());
         void Present(vk::Queue presentQueue, vk::Semaphore waitSemaphore);
         void Update(glm::uvec2 size);
         void AdvanceSemaphoreIndex();
@@ -50,6 +60,7 @@ namespace GPP
         vk::SurfaceKHR m_Surface;
         std::uint32_t m_FramesInFlight = 3, m_CurrentFrame = 0, m_SemaphoreIndex = 0;
         bool m_VSync = true;
+        bool m_RecreatePending = false;
         std::vector<vk::Image> m_Images{};
         std::vector<vk::ImageView> m_Views{};
         std::shared_ptr<VulkanDevice> m_Device;

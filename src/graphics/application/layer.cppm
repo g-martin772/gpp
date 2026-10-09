@@ -61,6 +61,10 @@ namespace GPP
         {
         }
 
+        virtual void OnSafePoint()
+        {
+        }
+
         void SetLayerTarget(const LayerTarget& target) noexcept { m_LayerTarget = target; }
         [[nodiscard]] const LayerTarget& GetLayerTarget() const noexcept { return m_LayerTarget; }
 
@@ -187,6 +191,14 @@ namespace GPP
             for (const auto layer : m_Layers)
             {
                 layer->OnEvent();
+            }
+        }
+
+        void OnSafePoint() const
+        {
+            for (const auto layer : m_Layers)
+            {
+                layer->OnSafePoint();
             }
         }
 

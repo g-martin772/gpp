@@ -2,6 +2,7 @@ module;
 #include <vk_mem_alloc.h>
 export module GPP.Graphics:Vulkan.Device;
 
+import std;
 import vulkan;
 import GPP.Core;
 import :Vulkan.Context;
@@ -56,6 +57,14 @@ namespace GPP
         vk::Queue GetSparseQueue() const { return m_Queues[m_SparseIndex]; }
         vk::Queue GetPresentQueue() const { return m_Queues[m_PresentIndex]; }
 
+        vk::Queue GetBackgroundQueue() const { return m_BackgroundQueue ? m_BackgroundQueue : GetGraphicsQueue(); }
+        [[nodiscard]] bool HasDedicatedBackgroundQueue() const noexcept
+        {
+            return m_BackgroundQueue && m_BackgroundQueue != GetGraphicsQueue();
+        }
+
+        [[nodiscard]] std::mutex& GetQueueMutex(vk::Queue queue) const;
+
         //const vk::detail::DispatchLoaderDynamic& GetDispatcher() const { return m_Dispatcher; }
 
     private:
@@ -68,6 +77,8 @@ namespace GPP
         //vk::detail::DispatchLoaderDynamic m_Dispatcher;
         VulkanQueueIndices m_QueueIndices;
         std::vector<vk::Queue> m_Queues;
+        vk::Queue m_BackgroundQueue;
+        std::vector<std::pair<vk::Queue, std::unique_ptr<std::mutex>>> m_QueueMutexes;
         uint32_t m_GraphicsIndex = 0, m_TransferIndex = 0, m_ComputeIndex = 0,
                  m_SparseIndex = 0, m_PresentIndex = 0;
         vk::Format m_DepthFormat = vk::Format::eD24UnormS8Uint;

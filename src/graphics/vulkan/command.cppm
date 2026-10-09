@@ -36,6 +36,9 @@ namespace GPP
         vk::CommandBuffer GetCommandBuffer() const { return m_CommandBuffer; }
 
     private:
+        void SubmitInternal(vk::Queue target, vk::Semaphore waitSemaphore, vk::PipelineStageFlags waitStage,
+                            vk::Semaphore signalSemaphore, vk::Fence fence);
+
         vk::CommandBuffer m_CommandBuffer = nullptr;
         bool m_IsSingleUse = false, m_RenderPassContinue = false, m_SimultaneousUse = false;
         vk::CommandPool m_CommandPool;

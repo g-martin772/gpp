@@ -31,6 +31,13 @@ namespace GPP
         bool EnableShaderHotReload = false;
         std::chrono::milliseconds ShaderHotReloadInterval{250};
 
+        bool VSync = true;
+        int UiMaxFps = 0;
+
+
+        double ViewportSliceMs = 4.0;
+        int ViewportMaxFps = 0;
+
         static RenderOptions FromConfig(const IConfigurationSection& config)
         {
             RenderOptions options;
@@ -56,6 +63,11 @@ namespace GPP
                 config.GetValue<bool>("EnableShaderHotReload", false);
             options.ShaderHotReloadInterval = std::chrono::milliseconds(
                 std::max(1, config.GetValue<int>("ShaderHotReloadIntervalMilliseconds", 250)));
+            options.VSync = config.GetValue<bool>("VSync", true);
+            options.UiMaxFps = std::max(0, config.GetValue<int>("UiMaxFps", 0));
+            options.ViewportSliceMs = std::clamp<double>(config.GetValue<float>("ViewportSliceMilliseconds", 4.0f),
+                                                         0.25, 100.0);
+            options.ViewportMaxFps = std::max(0, config.GetValue<int>("ViewportMaxFps", 0));
             return options;
         }
     };

@@ -11,9 +11,10 @@ namespace GPP
                                      const std::shared_ptr<Logger>& logger,
                                      glm::uvec2 size,
                                      vk::SurfaceKHR surface,
-                                     std::uint32_t framesInFlight)
+                                     std::uint32_t framesInFlight,
+                                     bool vsync)
         : m_Extent(size.x, size.y), m_Surface(surface), m_FramesInFlight(framesInFlight),
-          m_Device(device), m_Logger(logger)
+          m_VSync(vsync), m_Device(device), m_Logger(logger)
     {
         CreateSwapChain();
     }
@@ -27,16 +28,44 @@ namespace GPP
         DestroySwapChain();
     }
 
-    void VulkanSwapChain::AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence, std::uint64_t timeout)
+    SwapchainAcquireResult VulkanSwapChain::AcquireNextImage(vk::Semaphore semaphore, vk::Fence fence,
+                                                             std::uint64_t timeout)
     {
-        const vk::Result result =
-            m_Device->GetDevice()
-                    .acquireNextImageKHR(m_SwapChain, timeout, semaphore, fence, &m_CurrentFrame);
+        if (m_RecreatePending)
+        {
+            m_RecreatePending = false;
+            Update(m_Size);
+            return SwapchainAcquireResult::Recreated;
+        }
 
-        if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR)
-            Update(m_Size); // TODO: Get current framebuffer size!
-        else if (result != vk::Result::eSuccess)
+        vk::Result result;
+        try
+        {
+            result = m_Device->GetDevice().acquireNextImageKHR(m_SwapChain, timeout, semaphore, fence,
+                                                               &m_CurrentFrame);
+        }
+        catch (const vk::OutOfDateKHRError&)
+        {
+            result = vk::Result::eErrorOutOfDateKHR;
+        }
+
+        switch (result)
+        {
+        case vk::Result::eSuccess:
+            return SwapchainAcquireResult::Acquired;
+        case vk::Result::eSuboptimalKHR:
+            m_RecreatePending = true;
+            return SwapchainAcquireResult::Acquired;
+        case vk::Result::eErrorOutOfDateKHR:
+            Update(m_Size);
+            return SwapchainAcquireResult::Recreated;
+        case vk::Result::eTimeout:
+        case vk::Result::eNotReady:
+            return SwapchainAcquireResult::NotReady;
+        default:
             m_Logger->Error("Failed to acquire next image from vulkan swapchain: {}", vk::to_string(result));
+            return SwapchainAcquireResult::NotReady;
+        }
     }
 
     void VulkanSwapChain::AdvanceSemaphoreIndex()
@@ -64,15 +93,16 @@ namespace GPP
 
         try
         {
+            std::scoped_lock lock(m_Device->GetQueueMutex(presentQueue));
             const vk::Result result = presentQueue.presentKHR(presentInfo);
             if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR)
-                Update(m_Size); // TODO: Get current framebuffer size!
+                m_RecreatePending = true;
             else if (result != vk::Result::eSuccess)
                 m_Logger->Error("Failed to present swapchain image: {}", vk::to_string(result));
         }
-        catch (const vk::OutOfDateKHRError& err)
+        catch (const vk::OutOfDateKHRError&)
         {
-            Update(m_Size);
+            m_RecreatePending = true;
         }
     }
 
@@ -86,6 +116,7 @@ namespace GPP
         m_Device->WaitIdle();
         m_Size = size;
         m_Extent = vk::Extent2D(size.x, size.y);
+        m_RecreatePending = false;
         CreateSwapChain();
     }
 
@@ -114,35 +145,27 @@ namespace GPP
             m_Format = surfaceFormats[0].format;
         }
 
-        vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo; // always supported, vsync on
-        if (m_VSync)
+        vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+        if (!m_VSync)
         {
+            bool haveMailbox = false;
+            bool haveImmediate = false;
             for (const auto& mode : surfacePresentModes)
             {
-                if (mode == vk::PresentModeKHR::eMailbox)
-                {
-                    presentMode = mode;
-                    break;
-                }
+                haveMailbox |= mode == vk::PresentModeKHR::eMailbox;
+                haveImmediate |= mode == vk::PresentModeKHR::eImmediate;
             }
-        }
-        else
-        {
-            for (const auto& mode : surfacePresentModes)
-            {
-                if (mode == vk::PresentModeKHR::eImmediate)
-                {
-                    presentMode = mode;
-                    break;
-                }
-            }
+            if (haveMailbox) presentMode = vk::PresentModeKHR::eMailbox;
+            else if (haveImmediate) presentMode = vk::PresentModeKHR::eImmediate;
         }
 
-        if (surfaceCapabilities.currentExtent.width != -1)
+        if (surfaceCapabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
             m_Extent = surfaceCapabilities.currentExtent;
+        m_Size = glm::vec2(static_cast<float>(m_Extent.width), static_cast<float>(m_Extent.height));
 
-        if (m_FramesInFlight > surfaceCapabilities.maxImageCount)
+        if (surfaceCapabilities.maxImageCount != 0 && m_FramesInFlight > surfaceCapabilities.maxImageCount)
             m_FramesInFlight = surfaceCapabilities.maxImageCount;
+        m_FramesInFlight = std::max(m_FramesInFlight, surfaceCapabilities.minImageCount);
 
         vk::SwapchainCreateInfoKHR createInfo = {};
         createInfo.surface = m_Surface;

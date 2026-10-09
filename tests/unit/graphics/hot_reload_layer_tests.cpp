@@ -111,3 +111,36 @@ TEST_CASE("HotReloadLayerProxy does not call OnAttach/OnDetach on a swap while d
     CHECK(layerB.AttachCount == 0);
     CHECK(proxy.GetActive() == &layerB);
 }
+
+TEST_CASE("HotReloadLayerProxy defers a queued swap to the owning thread's safe point",
+          "[hotreload][layer][proxy]")
+{
+    auto logger = std::make_shared<Logger>();
+    HotReloadLayerProxy proxy(logger);
+    CountingHotReloadLayer layerA(logger);
+    CountingHotReloadLayer layerB(logger);
+
+    proxy.SwapActive(&layerA);
+    proxy.OnAttach();
+
+    proxy.QueueSwap(&layerB);
+    // Nothing changes under a caller that is mid-frame...
+    CHECK(proxy.GetActive() == &layerA);
+    proxy.OnUiRender();
+    CHECK(layerA.UiRenderCount == 1);
+
+    // ...until the owning thread reaches its safe point.
+    proxy.OnSafePoint();
+    CHECK(proxy.GetActive() == &layerB);
+    CHECK(layerA.DetachCount == 1);
+    CHECK(layerB.AttachCount == 1);
+}
+
+TEST_CASE("HotReloadLayerProxy applies a queued swap immediately while detached", "[hotreload][layer][proxy]")
+{
+    auto logger = std::make_shared<Logger>();
+    HotReloadLayerProxy proxy(logger);
+    CountingHotReloadLayer layerA(logger);
+    proxy.QueueSwap(&layerA);
+    CHECK(proxy.GetActive() == &layerA);
+}

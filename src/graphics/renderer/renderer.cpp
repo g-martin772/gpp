@@ -59,6 +59,15 @@ namespace GPP
     {
     }
 
+    Renderer::~Renderer()
+    {
+        m_Running = false;
+        if (m_RenderThread.joinable())
+        {
+            m_RenderThread.join();
+        }
+    }
+
     const std::shared_ptr<VulkanSwapChain>& Renderer::GetSwapChain(WindowId id) const noexcept
     {
         if (m_MainWindowResources.Window && id == m_MainWindowResources.Window->GetID())
@@ -114,97 +123,160 @@ namespace GPP
         co_return window;
     }
 
-    void Renderer::AttachLayerStackToBuffer(GuiLayerStack& layerStack, std::uint32_t bufferId)
+    std::shared_ptr<BufferTargetResources> Renderer::FindBufferTarget(const std::uint32_t bufferId) const
     {
-        std::scoped_lock lock(m_RenderQueueMutex);
-        m_RenderQueue.push([this, &layerStack, bufferId]
+        std::shared_lock lock(m_TargetsMutex);
+        const auto it = m_BufferTargets.find(bufferId);
+        return it == m_BufferTargets.end() ? nullptr : it->second;
+    }
+
+    std::vector<std::shared_ptr<BufferTargetResources>> Renderer::SnapshotBufferTargets() const
+    {
+        std::shared_lock lock(m_TargetsMutex);
+        std::vector<std::shared_ptr<BufferTargetResources>> targets;
+        targets.reserve(m_BufferTargets.size());
+        for (const auto& [id, target] : m_BufferTargets)
         {
-            if (m_BufferTargets.contains(bufferId))
+            targets.push_back(target);
+        }
+        std::ranges::sort(targets, {}, &BufferTargetResources::Id);
+        return targets;
+    }
+
+    void Renderer::PostToBufferThread(std::move_only_function<void()> task)
+    {
+        if (m_ViewportRunning.load(std::memory_order_acquire))
+        {
+            {
+                std::scoped_lock lock(m_ViewportMutex);
+                m_ViewportQueue.push(std::move(task));
+            }
+            WakeViewport();
+            return;
+        }
+
+        std::scoped_lock lock(m_RenderQueueMutex);
+        m_RenderQueue.push(std::move(task));
+    }
+
+    void Renderer::WakeViewport()
+    {
+        {
+            std::scoped_lock lock(m_ViewportMutex);
+            ++m_ViewportSignal;
+        }
+        m_ViewportWake.notify_all();
+    }
+
+    void Renderer::AttachLayerStackToBuffer(GuiLayerStack& layerStack, const std::uint32_t bufferId)
+    {
+        PostToBufferThread([this, &layerStack, bufferId]
+        {
+            std::shared_ptr<BufferTargetResources> target;
+            {
+                std::unique_lock lock(m_TargetsMutex);
+                auto& slot = m_BufferTargets[bufferId];
+                if (!slot)
+                    slot = std::make_shared<BufferTargetResources>(bufferId);
+                target = slot;
+            }
+            if (target->LayerStack)
                 return;
 
-            auto& target = m_BufferTargets[bufferId];
-            target.LayerStack = &layerStack;
-            target.ColorImage.Create(
+            target->LayerStack = &layerStack;
+            const auto extent = BufferTargetResources::UnpackExtent(target->DesiredExtent.load());
+            target->Extent = {std::max(extent.x, 1u), std::max(extent.y, 1u)};
+            target->DepthImage.Create(
                 m_Device,
                 VulkanImageSpecification{
-                    .extent = {target.Extent.x, target.Extent.y, 1},
-                    .format = m_MainWindowResources.SwapChain
-                                  ? m_MainWindowResources.SwapChain->GetImageFormat()
-                                  : vk::Format::eB8G8R8A8Unorm,
-                    .usage = vk::ImageUsageFlagBits::eColorAttachment |
-                    vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
-                    .aspectMask = vk::ImageAspectFlagBits::eColor,
-                    .createSampler = true,
-                    .debugName = "BufferTargetColor"
-                });
-            const auto depthFormat = m_MainWindowResources.SwapChain
-                                         ? m_MainWindowResources.SwapChain->GetDepthImageFormat()
-                                         : m_Device->GetDepthFormat();
-            target.DepthImage.Create(
-                m_Device,
-                VulkanImageSpecification{
-                    .extent = {target.Extent.x, target.Extent.y, 1},
-                    .format = depthFormat,
+                    .extent = {target->Extent.x, target->Extent.y, 1},
+                    .format = m_TargetDepthFormat,
                     .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
-                    .aspectMask = GetImageAspectMask(depthFormat),
+                    .aspectMask = GetImageAspectMask(m_TargetDepthFormat),
                     .debugName = "BufferTargetDepth"
                 });
-            if (m_MainWindowResources.ImGuiContext)
-            {
-                ImGui::SetCurrentContext(
-                    static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
-                target.ImGuiTexture = reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
-                    target.ColorImage.GetSampler(),
-                    target.ColorImage.GetImageView(),
-                    static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
-            }
-            target.LayerStack->OnAttach();
+
+            layerStack.OnAttach();
+            target->Attached.store(true, std::memory_order_release);
             m_Logger->Info("Created render target {}", bufferId);
         });
     }
 
-    std::optional<Renderer::RenderTargetInfo> Renderer::GetRenderTargetInfo(
-        const std::uint32_t bufferId) const
+    std::optional<Renderer::RenderTargetInfo> Renderer::GetRenderTargetInfo(const std::uint32_t bufferId) const
     {
-        const auto it = m_BufferTargets.find(bufferId);
-        if (it == m_BufferTargets.end())
+        const auto target = FindBufferTarget(bufferId);
+        if (!target || !target->Front)
             return std::nullopt;
+        const auto& front = *target->Front;
         return RenderTargetInfo{
-            vk::Extent2D{it->second.Extent.x, it->second.Extent.y},
-            it->second.ColorImage.GetImageView(),
-            it->second.ColorImage.GetSampler(),
-            it->second.ImGuiTexture
+            vk::Extent2D{front.Extent.x, front.Extent.y},
+            front.Color.GetImageView(),
+            front.Color.GetSampler(),
+            front.ImGuiTexture,
+            front.Serial
         };
     }
 
     void Renderer::ResizeBufferTarget(const std::uint32_t bufferId, const glm::uvec2 extent)
     {
-        const auto it = m_BufferTargets.find(bufferId);
-        if (it == m_BufferTargets.end()) return;
-        auto& target = it->second;
-        if (extent.x == 0 || extent.y == 0 || target.Extent == extent) return;
+        if (extent.x == 0 || extent.y == 0)
+            return;
 
-        m_Device->GetDevice().waitIdle();
-
-        target.Extent = extent;
-        target.ColorImage.Resize({extent.x, extent.y, 1});
-        target.DepthImage.Resize({extent.x, extent.y, 1});
-
-        target.ColorLayout = vk::ImageLayout::eUndefined;
-        target.DepthLayout = vk::ImageLayout::eUndefined;
-
-        if (m_MainWindowResources.ImGuiContext)
+        auto target = FindBufferTarget(bufferId);
+        if (!target)
         {
-            ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
-            if (target.ImGuiTexture)
-            {
-                ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(target.ImGuiTexture));
-            }
-            target.ImGuiTexture = reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
-                target.ColorImage.GetSampler(),
-                target.ColorImage.GetImageView(),
-                static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
+            std::unique_lock lock(m_TargetsMutex);
+            auto& slot = m_BufferTargets[bufferId];
+            if (!slot)
+                slot = std::make_shared<BufferTargetResources>(bufferId);
+            target = slot;
         }
+        const auto packed = BufferTargetResources::PackExtent(extent);
+        if (target->DesiredExtent.exchange(packed) != packed)
+        {
+            WakeViewport();
+        }
+    }
+
+    void Renderer::SetBufferTargetVisible(const std::uint32_t bufferId, const bool visible)
+    {
+        if (const auto target = FindBufferTarget(bufferId))
+        {
+            if (target->Visible.exchange(visible) != visible && visible)
+            {
+                WakeViewport();
+            }
+        }
+    }
+
+    std::optional<Renderer::BufferTargetStats> Renderer::GetBufferTargetStats(const std::uint32_t bufferId) const
+    {
+        const auto target = FindBufferTarget(bufferId);
+        if (!target || !target->Attached.load(std::memory_order_acquire))
+            return std::nullopt;
+        BufferTargetStats stats;
+        stats.FramesPerSecond = target->FrameMeter.PerSecond();
+        stats.FrameMs = target->FrameMeter.LastMs();
+        stats.AverageFrameMs = target->FrameMeter.AverageMs();
+        stats.GpuMs = target->LastGpuMs.load(std::memory_order_relaxed);
+        stats.Submissions = target->LastSubmissions.load(std::memory_order_relaxed);
+        stats.FramesRendered = target->FrameMeter.Total();
+        stats.Extent = BufferTargetResources::UnpackExtent(target->DesiredExtent.load(std::memory_order_relaxed));
+        stats.Visible = target->Visible.load(std::memory_order_relaxed);
+        if (const auto since = target->InFlightSinceNs.load(std::memory_order_acquire); since != 0)
+        {
+            const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            stats.CurrentFrameMs = std::max(0.0, static_cast<double>(nowNs - since) * 1e-6);
+        }
+        return stats;
+    }
+
+    Renderer::UiStats Renderer::GetUiStats() const
+    {
+        return UiStats{
+            m_UiFrameMeter.PerSecond(), m_UiFrameMeter.LastMs(), m_UiFrameMeter.AverageMs(), m_UiFrameMeter.MaxMs()
+        };
     }
 
     Task<void> Renderer::StartAsync(std::stop_token stopToken)
@@ -473,9 +545,13 @@ namespace GPP
         }
         m_CommandPool = std::make_shared<VulkanCommandPool>(
             m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
+        m_TargetDepthFormat = m_Device->GetDepthFormat();
         if (m_MainWindowResources.Window)
         {
             InitializeWindowResources(m_MainWindowResources.Window, m_MainWindowResources);
+            // The offscreen targets match the swapchain so the UI can sample them without conversion.
+            m_TargetColorFormat = m_MainWindowResources.SwapChain->GetImageFormat();
+            m_TargetDepthFormat = m_MainWindowResources.SwapChain->GetDepthImageFormat();
             for (const auto& definition : m_WindowDefinitions->Items)
             {
                 auto window = m_WindowManager->CreateWindow(
@@ -511,6 +587,7 @@ namespace GPP
                 m_CommandPool->AllocateCommandBuffer(),
                 m_Device->GetDevice())));
         }
+        m_FrameKeepAlive.assign(m_FrameResources.size(), {});
         InitializeWindowSync(m_MainWindowResources);
         for (auto& [windowId, resources] : m_WindowResources)
         {
@@ -528,7 +605,7 @@ namespace GPP
             throw std::runtime_error("Failed to create Vulkan surface for window.");
         }
         resources.SwapChain = std::make_shared<VulkanSwapChain>(
-            m_Device, m_Logger, glm::uvec2{10000, 10000}, resources.Surface);
+            m_Device, m_Logger, glm::uvec2{10000, 10000}, resources.Surface, 3, m_RenderOptions->VSync);
         const auto depthFormat = resources.SwapChain->GetDepthImageFormat();
         resources.DepthImage.Create(
             m_Device,
@@ -672,19 +749,11 @@ namespace GPP
 
     void Renderer::RenderWindow(WindowResources& resources,
                                 vk::CommandBuffer rawCmd,
-                                const float elapsed,
-                                const bool renderTargets,
                                 const std::uint32_t frameIndex)
     {
-        (void)elapsed;
         auto& swapchain = resources.SwapChain;
         const auto imageIndex = swapchain->GetCurrentImageIndex();
         const auto extent = swapchain->GetExtent();
-
-        if (renderTargets)
-        {
-            RenderBufferTargets(rawCmd, frameIndex);
-        }
 
         const auto depthFormat = swapchain->GetDepthImageFormat();
         const auto depthLayout =
@@ -762,88 +831,443 @@ namespace GPP
         resources.ImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
     }
 
-    void Renderer::RenderBufferTargets(const vk::CommandBuffer cmd, const std::uint32_t frameIndex)
+    class Renderer::ViewportChunkSink final : public IRenderGraphChunkSink
     {
-        for (auto& [bufferId, target] : m_BufferTargets)
+    public:
+        ViewportChunkSink(VulkanDevice& device, VulkanCommandPool& pool, std::stop_token stopToken)
+            : m_Device(device), m_Pool(pool), m_Queue(device.GetBackgroundQueue()), m_Stop(std::move(stopToken)),
+              m_Fence(device.GetDevice(), false)
         {
+        }
+
+        vk::CommandBuffer BeginChunk() override
+        {
+            m_Cmd.emplace(m_Pool.AllocateCommandBuffer());
+            m_Cmd->Begin();
+            return m_Cmd->GetCommandBuffer();
+        }
+
+        double SubmitChunkAndWait() override
+        {
+            if (!m_Cmd)
+                return 0.0;
+            m_Cmd->End();
+            const auto raw = m_Cmd->GetCommandBuffer();
+            vk::SubmitInfo info{};
+            info.commandBufferCount = 1;
+            info.pCommandBuffers = &raw;
+
+            const auto device = m_Device.GetDevice();
+            const auto fence = m_Fence.GetFence();
+            const auto start = std::chrono::steady_clock::now();
+            {
+                std::scoped_lock lock(m_Device.GetQueueMutex(m_Queue));
+                const auto result = m_Queue.submit(1, &info, fence);
+                if (result != vk::Result::eSuccess)
+                {
+                    m_Cmd.reset();
+                    throw std::runtime_error("vkQueueSubmit failed: " + vk::to_string(result));
+                }
+            }
+
+            while (device.waitForFences(1, &fence, vk::True, 50'000'000ull) == vk::Result::eTimeout)
+            {
+                // dupdidupdidu
+            }
+
+            if (device.resetFences(1, &fence) != vk::Result::eSuccess)
+                throw std::runtime_error("vkResetFences failed");
+            m_Cmd.reset();
+
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            m_GpuMs += ms;
+            ++m_Submissions;
+            return ms;
+        }
+
+        bool Cancelled() const override { return m_Stop.stop_requested(); }
+        void Abandon() { m_Cmd.reset(); }
+
+        [[nodiscard]] double GpuMs() const noexcept { return m_GpuMs; }
+        [[nodiscard]] std::uint32_t Submissions() const noexcept { return m_Submissions; }
+
+    private:
+        VulkanDevice& m_Device;
+        VulkanCommandPool& m_Pool;
+        vk::Queue m_Queue;
+        std::stop_token m_Stop;
+        VulkanFence m_Fence;
+        std::optional<VulkanCommandBuffer> m_Cmd;
+        double m_GpuMs = 0.0;
+        std::uint32_t m_Submissions = 0;
+    };
+
+    void Renderer::ApplyDesiredExtent(BufferTargetResources& target)
+    {
+        auto desired = BufferTargetResources::UnpackExtent(target.DesiredExtent.load(std::memory_order_relaxed));
+        desired = {std::max(desired.x, 1u), std::max(desired.y, 1u)};
+        if (desired == target.Extent)
+            return;
+        target.Extent = desired;
+        target.DepthImage.Resize({desired.x, desired.y, 1});
+        target.DepthLayout = vk::ImageLayout::eUndefined;
+    }
+
+    std::shared_ptr<TargetImage> Renderer::AcquireTargetImage(BufferTargetResources& target)
+    {
+        {
+            std::scoped_lock lock(target.Mutex);
+            std::erase_if(target.Pool, [&](const std::shared_ptr<TargetImage>& image)
+            {
+                return image.use_count() == 1 && image->Extent != target.Extent;
+            });
+
+            for (const auto& image : target.Pool)
+            {
+                if (image.use_count() == 1 && image->Extent == target.Extent)
+                {
+                    return image;
+                }
+            }
+            if (target.Pool.size() >= BufferTargetResources::kMaxImages)
+            {
+                return nullptr;
+            }
+        }
+
+        auto image = std::make_shared<TargetImage>();
+        image->Graveyard = m_TextureGraveyard;
+        image->Extent = target.Extent;
+        image->Color.Create(
+            m_Device,
+            VulkanImageSpecification{
+                .extent = {target.Extent.x, target.Extent.y, 1},
+                .format = m_TargetColorFormat,
+                .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                         vk::ImageUsageFlagBits::eTransferSrc,
+                .aspectMask = vk::ImageAspectFlagBits::eColor,
+                .createSampler = true,
+                .debugName = "BufferTargetColor"
+            });
+        std::scoped_lock lock(target.Mutex);
+        target.Pool.push_back(image);
+        return image;
+    }
+
+    bool Renderer::RenderTargetFrame(BufferTargetResources& target, VulkanCommandPool& pool,
+                                     const bool paceToConsumer, std::stop_token stopToken)
+    {
+        if (!target.LayerStack || !target.Attached.load(std::memory_order_acquire))
+            return false;
+        if (paceToConsumer)
+        {
+            std::scoped_lock lock(target.Mutex);
+            if (target.Ready)
+                return false;
+        }
+
+        std::shared_ptr<TargetImage> image;
+        try
+        {
+            ApplyDesiredExtent(target);
+            image = AcquireTargetImage(target);
+        }
+        catch (const std::exception& error)
+        {
+            m_Logger->Error("Render target {}: could not allocate a frame: {}", target.Id, error.what());
+            return false;
+        }
+        if (!image)
+            return false;
+
+        const auto frameStart = std::chrono::steady_clock::now();
+        target.InFlightSinceNs.store(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(frameStart.time_since_epoch()).count(),
+            std::memory_order_release);
+        struct InFlightGuard
+        {
+            BufferTargetResources& Target;
+            ~InFlightGuard() { Target.InFlightSinceNs.store(0, std::memory_order_release); }
+        } inFlightGuard{target};
+
+        ViewportChunkSink sink(*m_Device, pool, std::move(stopToken));
+        try
+        {
+            target.LayerStack->OnRender();
+
             if (!target.Graph)
             {
-                target.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger);
+                target.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger, 1);
             }
-            target.Graph->Begin(frameIndex);
-            const auto colorHandle = target.Graph->ImportImage(
-                "Target.Color", target.ColorImage, target.ColorLayout);
-            const auto depthHandle = target.Graph->ImportImage(
-                "Target.Depth", target.DepthImage, target.DepthLayout);
-            target.Graph->SetPrimaryColorTarget(colorHandle);
-            target.Graph->SetPrimaryDepthTarget(depthHandle);
-            if (target.LayerStack)
-            {
-                target.LayerStack->OnRenderGraph(*target.Graph);
-            }
-            target.Graph->Compile();
-            target.Graph->Execute(cmd);
-            target.ColorLayout = target.Graph->GetCurrentLayout(colorHandle);
-            target.DepthLayout = target.Graph->GetCurrentLayout(depthHandle);
+            auto& graph = *target.Graph;
+            graph.Begin(0);
+            const auto colorHandle = graph.ImportImage("Target.Color", image->Color, image->Layout);
+            const auto depthHandle = graph.ImportImage("Target.Depth", target.DepthImage, target.DepthLayout);
+            graph.SetPrimaryColorTarget(colorHandle);
+            graph.SetPrimaryDepthTarget(depthHandle);
+            target.LayerStack->OnRenderGraph(graph);
+            graph.Compile();
 
-            TransitionImageLayout(
-                cmd, target.ColorImage.GetImage(),
-                target.ColorImage.GetSpecification().format, target.ColorLayout,
-                vk::ImageLayout::eShaderReadOnlyOptimal);
-            target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            if (graph.PassCount() == 0)
+            {
+                return false;
+            }
+
+            const auto sliceMs = m_RenderOptions->ViewportSliceMs;
+            const auto cmd = graph.ExecuteSliced(sink, [&](const std::string& passName) -> AdaptiveSlicer&
+            {
+                auto [it, inserted] = target.Slicers.try_emplace(passName);
+                if (inserted)
+                {
+                    AdaptiveSlicer::Config config;
+                    config.TargetMs = sliceMs;
+                    it->second = AdaptiveSlicer(config);
+                }
+                it->second.SetTargetMs(sliceMs);
+                return it->second;
+            });
+
+            if (sink.Cancelled())
+            {
+                sink.Abandon();
+                image->Layout = vk::ImageLayout::eUndefined;
+                target.DepthLayout = vk::ImageLayout::eUndefined;
+                return false;
+            }
+
+            TransitionImageLayout(cmd, image->Color.GetImage(), image->Color.GetSpecification().format,
+                                  graph.GetCurrentLayout(colorHandle), vk::ImageLayout::eShaderReadOnlyOptimal);
+            sink.SubmitChunkAndWait();
+            image->Layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            target.DepthLayout = graph.GetCurrentLayout(depthHandle);
         }
+
+        catch (const std::exception& error)
+        {
+            sink.Abandon();
+            image->Layout = vk::ImageLayout::eUndefined;
+            target.DepthLayout = vk::ImageLayout::eUndefined;
+            m_Logger->Error("Render target {}: frame failed: {}", target.Id, error.what());
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            return false;
+        }
+
+        image->Serial = target.NextSerial++;
+        {
+            std::scoped_lock lock(target.Mutex);
+            target.Ready = std::move(image);
+        }
+
+        const auto frameEnd = std::chrono::steady_clock::now();
+        target.LastGpuMs.store(sink.GpuMs(), std::memory_order_relaxed);
+        target.LastSubmissions.store(sink.Submissions(), std::memory_order_relaxed);
+        target.FrameMeter.Tick(std::chrono::duration<double, std::milli>(frameEnd - frameStart).count(), frameEnd);
+        return true;
     }
 
-    void Renderer::RenderHeadlessFrame(const float deltaTime)
+    void Renderer::TakeFrontImages(const std::uint32_t frameSlot)
     {
-        for (auto& [bufferId, target] : m_BufferTargets)
+        bool tookFrame = false;
+        for (const auto& target : SnapshotBufferTargets())
         {
-            if (target.LayerStack)
+            if (!target->Attached.load(std::memory_order_acquire))
+                continue;
+
+            std::shared_ptr<TargetImage> ready;
             {
-                target.LayerStack->OnUpdate(deltaTime);
-                target.LayerStack->OnRender();
+                std::scoped_lock lock(target->Mutex);
+                ready = std::move(target->Ready);
+            }
+
+            if (ready)
+            {
+                if (!ready->ImGuiTexture && m_MainWindowResources.ImGuiContext)
+                {
+                    ready->ImGuiTexture = reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
+                        ready->Color.GetSampler(), ready->Color.GetImageView(),
+                        static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
+                }
+
+                target->Front = std::move(ready);
+                tookFrame = true;
+            }
+            if (target->Front)
+            {
+                m_FrameKeepAlive[frameSlot].push_back(target->Front);
             }
         }
-        if (m_BufferTargets.empty())
+        if (tookFrame)
         {
-            return;
+            WakeViewport();
         }
-        ImmediateSubmit(*m_CommandPool, m_Device->GetGraphicsQueue(), [&](const vk::CommandBuffer cmd)
-        {
-            RenderBufferTargets(cmd, 0);
-        });
     }
 
-    Renderer::ReadbackResult Renderer::ReadBackBufferTarget(const std::uint32_t bufferId)
+    void Renderer::DrainTextureGraveyard()
+    {
+        const auto items = m_TextureGraveyard->Take();
+        if (items.empty() || !m_MainWindowResources.ImGuiContext)
+            return;
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
+        for (void* texture : items)
+        {
+            ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(texture));
+        }
+    }
+
+    void Renderer::ShutdownBufferTargets()
+    {
+        for (auto& slot : m_FrameKeepAlive)
+        {
+            slot.clear();
+        }
+        std::unordered_map<std::uint32_t, std::shared_ptr<BufferTargetResources>> targets;
+        {
+            std::unique_lock lock(m_TargetsMutex);
+            targets.swap(m_BufferTargets);
+        }
+        for (auto& [id, target] : targets)
+        {
+            std::scoped_lock lock(target->Mutex);
+            target->Front.reset();
+            target->Ready.reset();
+            target->Pool.clear();
+            target->Graph.reset();
+            target->DepthImage.Destroy();
+        }
+        DrainTextureGraveyard();
+    }
+
+    void Renderer::ViewportLoop(std::stop_token stopToken)
+    {
+        VulkanCommandPool pool(m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
+        std::uint64_t seenSignal = 0;
+        auto lastFrameEnd = std::chrono::steady_clock::now();
+
+        while (!stopToken.stop_requested())
+        {
+            std::queue<std::move_only_function<void()>> tasks;
+            {
+                std::scoped_lock lock(m_ViewportMutex);
+                tasks.swap(m_ViewportQueue);
+            }
+            while (!tasks.empty())
+            {
+                try
+                {
+                    tasks.front()();
+                }
+                catch (const std::exception& error)
+                {
+                    m_Logger->Error("Viewport thread task failed: {}", error.what());
+                }
+                tasks.pop();
+            }
+
+            bool rendered = false;
+            for (const auto& target : SnapshotBufferTargets())
+            {
+                if (stopToken.stop_requested())
+                    break;
+                if (!target->Attached.load(std::memory_order_acquire))
+                    continue;
+
+                target->LayerStack->OnSafePoint();
+                if (!target->Visible.load(std::memory_order_relaxed))
+                    continue;
+                rendered |= RenderTargetFrame(*target, pool, true, stopToken);
+            }
+
+            if (rendered)
+            {
+                if (const auto maxFps = m_RenderOptions->ViewportMaxFps; maxFps > 0)
+                {
+                    const auto deadline = lastFrameEnd + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double>(1.0 / maxFps));
+                    std::unique_lock lock(m_ViewportMutex);
+                    m_ViewportWake.wait_until(lock, stopToken, deadline, [] { return false; });
+                }
+                lastFrameEnd = std::chrono::steady_clock::now();
+            }
+            else
+            {
+                std::unique_lock lock(m_ViewportMutex);
+                m_ViewportWake.wait_for(lock, stopToken, std::chrono::milliseconds(50), [&]
+                {
+                    return m_ViewportSignal != seenSignal || !m_ViewportQueue.empty();
+                });
+                seenSignal = m_ViewportSignal;
+            }
+        }
+
+        for (const auto& target : SnapshotBufferTargets())
+        {
+            if (target->Attached.exchange(false) && target->LayerStack)
+            {
+                target->LayerStack->OnDetach();
+            }
+        }
+    }
+
+    void Renderer::RenderHeadlessFrame(const float deltaTime, VulkanCommandPool& pool)
+    {
+        bool rendered = false;
+        for (const auto& target : SnapshotBufferTargets())
+        {
+            if (!target->Attached.load(std::memory_order_acquire))
+                continue;
+            target->LayerStack->OnUpdate(deltaTime);
+            rendered |= RenderTargetFrame(*target, pool, false, {});
+        }
+        if (!rendered)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
+    Renderer::ReadbackResult Renderer::ReadBackBufferTarget(const std::uint32_t bufferId, const std::uint64_t minSerial,
+                                                            const glm::uvec2 requiredExtent)
     {
         ReadbackResult result;
-        const auto it = m_BufferTargets.find(bufferId);
-        if (it == m_BufferTargets.end())
+        const auto target = FindBufferTarget(bufferId);
+        if (!target)
         {
             return result;
         }
-        auto& target = it->second;
-        const auto format = target.ColorImage.GetSpecification().format;
-        const auto extent = target.Extent;
+        std::shared_ptr<TargetImage> image;
+        {
+            std::scoped_lock lock(target->Mutex);
+            image = target->Ready ? target->Ready : target->Front;
+        }
+        if (!image || image->Serial < minSerial || image->Layout != vk::ImageLayout::eShaderReadOnlyOptimal)
+        {
+            return result;
+        }
+        if ((requiredExtent.x != 0 || requiredExtent.y != 0) && image->Extent != requiredExtent)
+        {
+            return result;
+        }
+
+        const auto format = image->Color.GetSpecification().format;
+        const auto extent = image->Extent;
         const auto byteSize = static_cast<vk::DeviceSize>(extent.x) * extent.y * 4;
 
         VulkanBuffer staging(m_Device, MakeReadbackBufferSpecification(byteSize), m_Logger);
 
         ImmediateSubmit(*m_CommandPool, m_Device->GetGraphicsQueue(), [&](const vk::CommandBuffer cmd)
         {
-            TransitionImageLayout(cmd, target.ColorImage.GetImage(), format,
-                                  target.ColorLayout, vk::ImageLayout::eTransferSrcOptimal);
-            CopyImageToBuffer(cmd, target.ColorImage.GetImage(), staging.GetBuffer(),
+            TransitionImageLayout(cmd, image->Color.GetImage(), format,
+                                  vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferSrcOptimal);
+            CopyImageToBuffer(cmd, image->Color.GetImage(), staging.GetBuffer(),
                              vk::Extent3D{extent.x, extent.y, 1});
-            TransitionImageLayout(cmd, target.ColorImage.GetImage(), format,
+            TransitionImageLayout(cmd, image->Color.GetImage(), format,
                                   vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         });
-        target.ColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
         result.Pixels.resize(byteSize);
         staging.Read(result.Pixels.data(), byteSize);
         result.Extent = vk::Extent2D{extent.x, extent.y};
         result.Format = format;
+        result.Serial = image->Serial;
         return result;
     }
 
@@ -858,9 +1282,32 @@ namespace GPP
     void Renderer::RenderLoop(std::stop_token stopToken)
     {
         InitializeRenderSystem();
+        const bool headless = m_WindowManager->IsHeadless();
+        if (!headless)
+        {
+            m_ViewportRunning.store(true, std::memory_order_release);
+            m_ViewportThread = std::jthread([this](std::stop_token token) { ViewportLoop(std::move(token)); });
+        }
         m_ReadyPromise.set_value();
+
+        std::optional<VulkanCommandPool> headlessPool;
+        if (headless)
+        {
+            headlessPool.emplace(m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
+        }
+
         int iterations = 0;
-        std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+        const auto start = std::chrono::high_resolution_clock::now();
+        auto lastUiFrame = std::chrono::steady_clock::now();
+        auto lastStatsLog = lastUiFrame;
+
+        const auto guardImGuiQueue = [this]() -> std::unique_lock<std::mutex>
+        {
+            if (m_Device->HasDedicatedBackgroundQueue())
+                return {};
+            return std::unique_lock(m_Device->GetQueueMutex(m_Device->GetGraphicsQueue()));
+        };
+
         while (m_Running && !stopToken.stop_requested())
         {
             std::queue<std::move_only_function<void()>> pendingTasks;
@@ -872,17 +1319,23 @@ namespace GPP
             {
                 auto task = std::move(pendingTasks.front());
                 pendingTasks.pop();
-                task();
+                try
+                {
+                    task();
+                }
+                catch (const std::exception& error)
+                {
+                    m_Logger->Error("Render queue task failed: {}", error.what());
+                }
             }
-            if (m_WindowManager->IsHeadless())
+            if (headless)
             {
                 const float elapsed = static_cast<float>(
                     std::chrono::duration<double>(
                         std::chrono::high_resolution_clock::now() - start).count());
                 const float deltaTime = std::max(0.0f, elapsed - m_LastFrameElapsed);
                 m_LastFrameElapsed = elapsed;
-                RenderHeadlessFrame(deltaTime);
-                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                RenderHeadlessFrame(deltaTime, *headlessPool);
                 continue;
             }
             {
@@ -914,9 +1367,14 @@ namespace GPP
                     }
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(16)); // Simulate ~60 FPS
-            //m_MainWindowResources.SwapChain->Update(glm::uvec2{100, 100});
-            iterations++;
+
+            if (m_MainWindowResources.LayerStack)
+                m_MainWindowResources.LayerStack->OnSafePoint();
+            for (auto& [windowId, resources] : m_WindowResources)
+            {
+                if (resources.LayerStack)
+                    resources.LayerStack->OnSafePoint();
+            }
 
             std::vector<WindowResources*> activeWindows;
             if (m_MainWindowResources.Window && m_MainWindowResources.SwapChain)
@@ -932,48 +1390,95 @@ namespace GPP
             }
             if (activeWindows.empty())
             {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }
 
+            if (!m_RenderOptions->VSync && m_RenderOptions->UiMaxFps > 0)
+            {
+                const auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::duration<double>(1.0 / m_RenderOptions->UiMaxFps));
+                std::this_thread::sleep_until(lastUiFrame + interval);
+            }
+
             const std::uint32_t frameSlot = m_FrameIndex;
-            FrameResources& multiWindowFrame = m_FrameResources[m_FrameIndex];
-            multiWindowFrame.InFlightFence.WaitAndReset();
+            FrameResources& frame = m_FrameResources[frameSlot];
+
+            {
+                const auto fence = frame.InFlightFence.GetFence();
+                try
+                {
+                    if (m_Device->GetDevice().waitForFences(1, &fence, vk::True, 100'000'000ull) ==
+                        vk::Result::eTimeout)
+                    {
+                        continue;
+                    }
+                }
+                catch (const vk::SystemError& error)
+                {
+                    m_Logger->Error("Waiting for the UI frame failed: {}", error.what());
+                    break;
+                }
+            }
+
+            if (!m_FrameKeepAlive[frameSlot].empty())
+            {
+                m_FrameKeepAlive[frameSlot].clear();
+                WakeViewport();
+            }
+            DrainTextureGraveyard();
+
+            std::vector<WindowResources*> framed;
+            framed.reserve(activeWindows.size());
             for (auto* resources : activeWindows)
             {
-                resources->SwapChain->AcquireNextImage(
-                    resources->ImageAvailableSemaphores[m_FrameIndex].GetSemaphore(),
-                    nullptr);
+                const auto result = resources->SwapChain->AcquireNextImage(
+                    resources->ImageAvailableSemaphores[frameSlot].GetSemaphore(), nullptr, 50'000'000ull);
+                if (result == SwapchainAcquireResult::Acquired)
+                {
+                    framed.push_back(resources);
+                }
             }
-            m_FrameIndex = (m_FrameIndex + 1) % m_FrameResources.size();
+            if (framed.empty())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
 
-            auto& multiWindowCommandBuffer = multiWindowFrame.CommandBuffer;
-            multiWindowCommandBuffer.Begin();
+            frame.InFlightFence.Reset();
+            m_FrameIndex = (m_FrameIndex + 1) % m_FrameResources.size();
+            iterations++;
+
+            auto& commandBuffer = frame.CommandBuffer;
+            commandBuffer.Begin();
+            const auto frameNow = std::chrono::steady_clock::now();
             const float elapsed = static_cast<float>(
                 std::chrono::duration<double>(
                     std::chrono::high_resolution_clock::now() - start).count());
             const float deltaTime = std::max(0.0f, elapsed - m_LastFrameElapsed);
             m_LastFrameElapsed = elapsed;
-            const auto rawMultiWindowCommandBuffer =
-                multiWindowCommandBuffer.GetCommandBuffer();
-            // Buffer-target UI (e.g. ImGui::Image widgets showing offscreen render targets)
-            // is hosted inside the main window's ImGui frame.
+            const auto rawCommandBuffer = commandBuffer.GetCommandBuffer();
+
             if (m_MainWindowResources.ImGuiContext)
             {
                 ImGui::SetCurrentContext(
                     static_cast<ImGuiContext*>(m_MainWindowResources.ImGuiContext));
-                ImGui_ImplVulkan_NewFrame();
+                {
+                    const auto queueGuard = guardImGuiQueue();
+                    TakeFrontImages(frameSlot);
+                    ImGui_ImplVulkan_NewFrame();
+                }
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
                 if (m_MainWindowResources.EnableDockSpace &&
                     (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable))
                     m_MainDockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-                for (auto& [bufferId, target] : m_BufferTargets)
+                for (const auto& target : SnapshotBufferTargets())
                 {
-                    if (target.LayerStack)
+                    if (target->Attached.load(std::memory_order_acquire))
                     {
-                        target.LayerStack->OnUpdate(deltaTime);
-                        target.LayerStack->OnRender();
-                        target.LayerStack->OnUiRender();
+                        target->LayerStack->OnUpdate(deltaTime);
+                        target->LayerStack->OnUiRender();
                     }
                 }
                 if (m_MainWindowResources.LayerStack)
@@ -983,14 +1488,16 @@ namespace GPP
                 }
                 ImGui::Render();
             }
-            // Every other window owns its own independent ImGuiContext, so each one gets
-            // its own NewFrame/UiRender/Render cycle and draw data.
-            for (auto* resources : activeWindows)
+
+            for (auto* resources : framed)
             {
                 if (resources == &m_MainWindowResources || !resources->ImGuiContext)
                     continue;
                 ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources->ImGuiContext));
-                ImGui_ImplVulkan_NewFrame();
+                {
+                    const auto queueGuard = guardImGuiQueue();
+                    ImGui_ImplVulkan_NewFrame();
+                }
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
                 if (resources->EnableDockSpace &&
@@ -1003,63 +1510,93 @@ namespace GPP
                 }
                 ImGui::Render();
             }
-            bool renderTargets = true;
-            for (auto* resources : activeWindows)
+            for (auto* resources : framed)
             {
                 if (resources->ImGuiContext)
                     ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources->ImGuiContext));
-                RenderWindow(
-                    *resources, rawMultiWindowCommandBuffer, elapsed, renderTargets, frameSlot);
-                renderTargets = false;
+                const auto queueGuard = guardImGuiQueue();
+                RenderWindow(*resources, rawCommandBuffer, frameSlot);
             }
-            multiWindowCommandBuffer.End();
+            commandBuffer.End();
 
-            std::vector<vk::Semaphore> multiWaitSemaphores;
-            std::vector<vk::PipelineStageFlags> multiWaitStages;
-            std::vector<vk::Semaphore> multiSignalSemaphores;
-            multiWaitSemaphores.reserve(activeWindows.size());
-            multiWaitStages.reserve(activeWindows.size());
-            multiSignalSemaphores.reserve(activeWindows.size());
-            for (auto* resources : activeWindows)
+            std::vector<vk::Semaphore> waitSemaphores;
+            std::vector<vk::PipelineStageFlags> waitStages;
+            std::vector<vk::Semaphore> signalSemaphores;
+            waitSemaphores.reserve(framed.size());
+            waitStages.reserve(framed.size());
+            signalSemaphores.reserve(framed.size());
+            for (auto* resources : framed)
             {
-                multiWaitSemaphores.push_back(
-                    resources->ImageAvailableSemaphores[m_FrameIndex == 0
-                                                            ? m_FrameResources.size() - 1
-                                                            : m_FrameIndex - 1]
-                    .GetSemaphore());
-                multiWaitStages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
-                multiSignalSemaphores.push_back(
+                waitSemaphores.push_back(resources->ImageAvailableSemaphores[frameSlot].GetSemaphore());
+                waitStages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+                signalSemaphores.push_back(
                     resources->RenderFinishedSemaphores[
                         resources->SwapChain->GetCurrentImageIndex()].GetSemaphore());
             }
-            vk::SubmitInfo multiWindowSubmitInfo{};
-            multiWindowSubmitInfo.waitSemaphoreCount =
-                static_cast<std::uint32_t>(multiWaitSemaphores.size());
-            multiWindowSubmitInfo.pWaitSemaphores = multiWaitSemaphores.data();
-            multiWindowSubmitInfo.pWaitDstStageMask = multiWaitStages.data();
-            multiWindowSubmitInfo.signalSemaphoreCount =
-                static_cast<std::uint32_t>(multiSignalSemaphores.size());
-            multiWindowSubmitInfo.pSignalSemaphores = multiSignalSemaphores.data();
-            const auto commandBuffer = multiWindowCommandBuffer.GetCommandBuffer();
-            multiWindowSubmitInfo.commandBufferCount = 1;
-            multiWindowSubmitInfo.pCommandBuffers = &commandBuffer;
-            const auto submitResult = m_Device->GetGraphicsQueue().submit(
-                1, &multiWindowSubmitInfo, multiWindowFrame.InFlightFence.GetFence());
+            vk::SubmitInfo submitInfo{};
+            submitInfo.waitSemaphoreCount = static_cast<std::uint32_t>(waitSemaphores.size());
+            submitInfo.pWaitSemaphores = waitSemaphores.data();
+            submitInfo.pWaitDstStageMask = waitStages.data();
+            submitInfo.signalSemaphoreCount = static_cast<std::uint32_t>(signalSemaphores.size());
+            submitInfo.pSignalSemaphores = signalSemaphores.data();
+            const auto rawSubmitBuffer = commandBuffer.GetCommandBuffer();
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &rawSubmitBuffer;
+            const auto graphicsQueue = m_Device->GetGraphicsQueue();
+            vk::Result submitResult;
+            try
+            {
+                std::scoped_lock lock(m_Device->GetQueueMutex(graphicsQueue));
+                submitResult = graphicsQueue.submit(1, &submitInfo, frame.InFlightFence.GetFence());
+            }
+            catch (const vk::SystemError& error)
+            {
+                m_Logger->Error("Failed to submit UI frame: {}", error.what());
+                break;
+            }
             if (submitResult != vk::Result::eSuccess)
             {
-                m_Logger->Error("Failed to submit multi-window frame: {}",
-                                vk::to_string(submitResult));
-                continue;
+                m_Logger->Error("Failed to submit UI frame: {}", vk::to_string(submitResult));
+                break;
             }
 
-            for (std::size_t index = 0; index < activeWindows.size(); ++index)
+            for (std::size_t index = 0; index < framed.size(); ++index)
             {
-                auto* resources = activeWindows[index];
-                resources->SwapChain->Present(
-                    m_Device->GetPresentQueue(), multiSignalSemaphores[index]);
+                framed[index]->SwapChain->Present(m_Device->GetPresentQueue(), signalSemaphores[index]);
             }
-            continue;
+
+            const auto frameEnd = std::chrono::steady_clock::now();
+            m_UiFrameMeter.Tick(std::chrono::duration<double, std::milli>(frameEnd - lastUiFrame).count(), frameEnd);
+            lastUiFrame = frameEnd;
+            (void)frameNow;
+
+            if (frameEnd - lastStatsLog >= std::chrono::seconds(5))
+            {
+                lastStatsLog = frameEnd;
+                const auto uiStats = GetUiStats();
+                m_Logger->Debug("Render stats: UI {:.1f} fps (avg {:.2f} ms, max {:.2f} ms)", uiStats.FramesPerSecond,
+                                uiStats.AverageFrameMs, uiStats.MaxFrameMs);
+                for (const auto& target : SnapshotBufferTargets())
+                {
+                    if (const auto stats = GetBufferTargetStats(target->Id))
+                    {
+                        m_Logger->Debug("Render stats: target {} {:.1f} fps (avg {:.1f} ms, gpu {:.1f} ms in {} submissions, {}x{}, {})",
+                                        target->Id, stats->FramesPerSecond, stats->AverageFrameMs, stats->GpuMs,
+                                        stats->Submissions, stats->Extent.x, stats->Extent.y,
+                                        stats->Visible ? "visible" : "hidden");
+                    }
+                }
+            }
         }
+
+        m_ViewportRunning.store(false, std::memory_order_release);
+        if (m_ViewportThread.joinable())
+        {
+            m_ViewportThread.request_stop();
+            WakeViewport();
+            m_ViewportThread.join();
+        }
+
         if (m_Device)
             m_Device->WaitIdle();
         {
@@ -1072,18 +1609,30 @@ namespace GPP
             {
                 auto task = std::move(shutdownTasks.front());
                 shutdownTasks.pop();
-                task();
+                try
+                {
+                    task();
+                }
+                catch (const std::exception& error)
+                {
+                    m_Logger->Error("Render queue task failed during shutdown: {}", error.what());
+                }
             }
         }
+        if (headless)
+        {
+            for (const auto& target : SnapshotBufferTargets())
+            {
+                if (target->Attached.exchange(false) && target->LayerStack)
+                    target->LayerStack->OnDetach();
+            }
+            headlessPool.reset();
+        }
+        ShutdownBufferTargets();
         ShutdownImGuiForWindow(m_MainWindowResources);
         for (auto& [windowId, resources] : m_WindowResources)
         {
             ShutdownImGuiForWindow(resources);
-        }
-        for (auto& [bufferId, target] : m_BufferTargets)
-        {
-            if (target.LayerStack)
-                target.LayerStack->OnDetach();
         }
         if (m_MainWindowResources.LayerStack)
             m_MainWindowResources.LayerStack->OnDetach();
@@ -1092,7 +1641,6 @@ namespace GPP
             if (resources.LayerStack)
                 resources.LayerStack->OnDetach();
         }
-        m_BufferTargets.clear();
         m_RenderFinishedSemaphores.clear();
         m_FrameResources.clear();
         m_CommandPool.reset();
@@ -1117,9 +1665,9 @@ namespace GPP
         m_MainWindowResources.Window.reset();
         m_WindowResources.clear();
         m_Device.reset();
-        std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        auto averageFps = iterations / (duration.count() / 1000.0);
+        const auto end = std::chrono::high_resolution_clock::now();
+        const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        const auto averageFps = iterations / (std::max<std::int64_t>(duration.count(), 1) / 1000.0);
         m_Logger->Info("Render thread completed. Iterations: {}, Time: {} ms, Average FPS: {}",
                        iterations, duration.count(), averageFps);
     }

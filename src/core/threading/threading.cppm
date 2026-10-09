@@ -4,3 +4,4 @@ export import :Threading.ThreadPool;
 export import :Threading.Task;
 export import :Threading.Timer;
 export import :Threading.Combinators;
+export import :Threading.Sync;
