@@ -1,6 +1,7 @@
 export module GPP.Simulation;
 export import :Physics;
 export import :Ecs;
+export import :Reflection;
 export import :ComponentRegistry;
 export import :Components;
 export import :Scene;

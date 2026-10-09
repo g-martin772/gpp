@@ -8,6 +8,7 @@ export module GPP.Simulation:Components;
 import std;
 import GPP.Core;
 import :Ecs;
+import :Reflection;
 import :ComponentRegistry;
 
 export namespace GPP
@@ -90,284 +91,6 @@ export namespace GPP
     };
 }
 
-namespace YAML
-{
-    template <>
-    struct convert<glm::vec3>
-    {
-        static Node encode(const glm::vec3& v)
-        {
-            Node node;
-            node.push_back(v.x);
-            node.push_back(v.y);
-            node.push_back(v.z);
-            node.SetStyle(EmitterStyle::Flow);
-            return node;
-        }
-
-        static bool decode(const Node& node, glm::vec3& out)
-        {
-            if (!node.IsSequence() || node.size() != 3) return false;
-            out.x = node[0].as<float>();
-            out.y = node[1].as<float>();
-            out.z = node[2].as<float>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<glm::quat>
-    {
-        static Node encode(const glm::quat& q)
-        {
-            Node node;
-            node.push_back(q.x);
-            node.push_back(q.y);
-            node.push_back(q.z);
-            node.push_back(q.w);
-            node.SetStyle(EmitterStyle::Flow);
-            return node;
-        }
-
-        static bool decode(const Node& node, glm::quat& out)
-        {
-            if (!node.IsSequence() || node.size() != 4) return false;
-            out.x = node[0].as<float>();
-            out.y = node[1].as<float>();
-            out.z = node[2].as<float>();
-            out.w = node[3].as<float>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::RigidBodyType>
-    {
-        static Node encode(const GPP::RigidBodyType& value)
-        {
-            switch (value)
-            {
-            case GPP::RigidBodyType::Static: return Node(std::string("Static"));
-            case GPP::RigidBodyType::Kinematic: return Node(std::string("Kinematic"));
-            case GPP::RigidBodyType::Dynamic: default: return Node(std::string("Dynamic"));
-            }
-        }
-
-        static bool decode(const Node& node, GPP::RigidBodyType& out)
-        {
-            const auto value = node.as<std::string>();
-            if (value == "Static") out = GPP::RigidBodyType::Static;
-            else if (value == "Kinematic") out = GPP::RigidBodyType::Kinematic;
-            else out = GPP::RigidBodyType::Dynamic;
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::ColliderShape>
-    {
-        static Node encode(const GPP::ColliderShape& value)
-        {
-            switch (value)
-            {
-            case GPP::ColliderShape::Sphere: return Node(std::string("Sphere"));
-            case GPP::ColliderShape::Capsule: return Node(std::string("Capsule"));
-            case GPP::ColliderShape::Plane: return Node(std::string("Plane"));
-            case GPP::ColliderShape::ConvexMesh: return Node(std::string("ConvexMesh"));
-            case GPP::ColliderShape::Box: default: return Node(std::string("Box"));
-            }
-        }
-
-        static bool decode(const Node& node, GPP::ColliderShape& out)
-        {
-            const auto value = node.as<std::string>();
-            if (value == "Sphere") out = GPP::ColliderShape::Sphere;
-            else if (value == "Capsule") out = GPP::ColliderShape::Capsule;
-            else if (value == "Plane") out = GPP::ColliderShape::Plane;
-            else if (value == "ConvexMesh") out = GPP::ColliderShape::ConvexMesh;
-            else out = GPP::ColliderShape::Box;
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::MetadataComponent>
-    {
-        static Node encode(const GPP::MetadataComponent& value)
-        {
-            Node node;
-            node["Guid"] = value.Guid;
-            node["Name"] = value.Name;
-            node["TypeTag"] = value.TypeTag;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::MetadataComponent& out)
-        {
-            out.Guid = node["Guid"] ? node["Guid"].as<std::uint64_t>() : 0;
-            out.Name = node["Name"] ? node["Name"].as<std::string>() : std::string{};
-            out.TypeTag = node["TypeTag"] ? node["TypeTag"].as<std::string>() : std::string{};
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::TransformComponent>
-    {
-        static Node encode(const GPP::TransformComponent& value)
-        {
-            Node node;
-            node["Position"] = value.Position;
-            node["Rotation"] = value.Rotation;
-            node["Scale"] = value.Scale;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::TransformComponent& out)
-        {
-            if (node["Position"]) out.Position = node["Position"].as<glm::vec3>();
-            if (node["Rotation"]) out.Rotation = node["Rotation"].as<glm::quat>();
-            if (node["Scale"]) out.Scale = node["Scale"].as<glm::vec3>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::HierarchyComponent>
-    {
-        static Node encode(const GPP::HierarchyComponent& value)
-        {
-            Node node;
-            node["ParentGuid"] = value.ParentGuid;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::HierarchyComponent& out)
-        {
-            out.ParentGuid = node["ParentGuid"] ? node["ParentGuid"].as<std::uint64_t>() : 0;
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::VelocityComponent>
-    {
-        static Node encode(const GPP::VelocityComponent& value)
-        {
-            Node node;
-            node["Linear"] = value.Linear;
-            node["Angular"] = value.Angular;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::VelocityComponent& out)
-        {
-            if (node["Linear"]) out.Linear = node["Linear"].as<glm::vec3>();
-            if (node["Angular"]) out.Angular = node["Angular"].as<glm::vec3>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::RigidBodyComponent>
-    {
-        static Node encode(const GPP::RigidBodyComponent& value)
-        {
-            Node node;
-            node["Type"] = value.Type;
-            node["Mass"] = value.Mass;
-            node["LinearDamping"] = value.LinearDamping;
-            node["AngularDamping"] = value.AngularDamping;
-            node["EnableGravity"] = value.EnableGravity;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::RigidBodyComponent& out)
-        {
-            if (node["Type"]) out.Type = node["Type"].as<GPP::RigidBodyType>();
-            if (node["Mass"]) out.Mass = node["Mass"].as<float>();
-            if (node["LinearDamping"]) out.LinearDamping = node["LinearDamping"].as<float>();
-            if (node["AngularDamping"]) out.AngularDamping = node["AngularDamping"].as<float>();
-            if (node["EnableGravity"]) out.EnableGravity = node["EnableGravity"].as<bool>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::ColliderComponent>
-    {
-        static Node encode(const GPP::ColliderComponent& value)
-        {
-            Node node;
-            node["Shape"] = value.Shape;
-            node["HalfExtents"] = value.HalfExtents;
-            node["Radius"] = value.Radius;
-            node["HalfHeight"] = value.HalfHeight;
-            node["StaticFriction"] = value.StaticFriction;
-            node["DynamicFriction"] = value.DynamicFriction;
-            node["Restitution"] = value.Restitution;
-            node["IsTrigger"] = value.IsTrigger;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::ColliderComponent& out)
-        {
-            if (node["Shape"]) out.Shape = node["Shape"].as<GPP::ColliderShape>();
-            if (node["HalfExtents"]) out.HalfExtents = node["HalfExtents"].as<glm::vec3>();
-            if (node["Radius"]) out.Radius = node["Radius"].as<float>();
-            if (node["HalfHeight"]) out.HalfHeight = node["HalfHeight"].as<float>();
-            if (node["StaticFriction"]) out.StaticFriction = node["StaticFriction"].as<float>();
-            if (node["DynamicFriction"]) out.DynamicFriction = node["DynamicFriction"].as<float>();
-            if (node["Restitution"]) out.Restitution = node["Restitution"].as<float>();
-            if (node["IsTrigger"]) out.IsTrigger = node["IsTrigger"].as<bool>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::MeshComponent>
-    {
-        static Node encode(const GPP::MeshComponent& value)
-        {
-            Node node;
-            node["AssetPath"] = value.AssetPath;
-            node["CenterOfMassOffset"] = value.CenterOfMassOffset;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::MeshComponent& out)
-        {
-            if (node["AssetPath"]) out.AssetPath = node["AssetPath"].as<std::string>();
-            if (node["CenterOfMassOffset"])
-                out.CenterOfMassOffset = node["CenterOfMassOffset"].as<glm::vec3>();
-            return true;
-        }
-    };
-
-    template <>
-    struct convert<GPP::CameraComponent>
-    {
-        static Node encode(const GPP::CameraComponent& value)
-        {
-            Node node;
-            node["Fov"] = value.Fov;
-            node["NearPlane"] = value.NearPlane;
-            node["FarPlane"] = value.FarPlane;
-            node["Primary"] = value.Primary;
-            return node;
-        }
-
-        static bool decode(const Node& node, GPP::CameraComponent& out)
-        {
-            if (node["Fov"]) out.Fov = node["Fov"].as<float>();
-            if (node["NearPlane"]) out.NearPlane = node["NearPlane"].as<float>();
-            if (node["FarPlane"]) out.FarPlane = node["FarPlane"].as<float>();
-            if (node["Primary"]) out.Primary = node["Primary"].as<bool>();
-            return true;
-        }
-    };
-}
-
 namespace GPP
 {
     export void RegisterBaseComponents()
@@ -375,14 +98,91 @@ namespace GPP
         static std::once_flag flag;
         std::call_once(flag, []
         {
-            RegisterComponent<MetadataComponent>("Metadata");
-            RegisterComponent<TransformComponent>("Transform");
-            RegisterComponent<HierarchyComponent>("Hierarchy");
-            RegisterComponent<VelocityComponent>("Velocity");
-            RegisterComponent<RigidBodyComponent>("RigidBody");
-            RegisterComponent<ColliderComponent>("Collider");
-            RegisterComponent<MeshComponent>("Mesh");
-            RegisterComponent<CameraComponent>("Camera");
+            RegisterComponent<MetadataComponent>("Metadata", ComponentDescription<MetadataComponent>{
+                .Inspectable = false,
+                .GraphExposed = false,
+                .Fields = {
+                    Field("Guid", &MetadataComponent::Guid, {.ReadOnly = true}),
+                    Field("Name", &MetadataComponent::Name),
+                    Field("TypeTag", &MetadataComponent::TypeTag, {.Label = "Type Tag"}),
+                }});
+
+            RegisterComponent<TransformComponent>("Transform", ComponentDescription<TransformComponent>{
+                .Fields = {
+                    Field("Position", &TransformComponent::Position, {.Speed = 0.1f}),
+                    Field("Rotation", &TransformComponent::Rotation, {.Speed = 0.5f, .Kind = FieldKind::Angle}),
+                    Field("Scale", &TransformComponent::Scale, {.Speed = 0.01f}),
+                }});
+
+            RegisterComponent<HierarchyComponent>("Hierarchy", ComponentDescription<HierarchyComponent>{
+                .Inspectable = false,
+                .GraphExposed = false,
+                .Fields = {
+                    Field("ParentGuid", &HierarchyComponent::ParentGuid,
+                          {.Label = "Parent", .Kind = FieldKind::EntityRef}),
+                }});
+
+            RegisterComponent<VelocityComponent>("Velocity", ComponentDescription<VelocityComponent>{
+                .Fields = {
+                    Field("Linear", &VelocityComponent::Linear, {.ReadOnly = true}),
+                    Field("Angular", &VelocityComponent::Angular, {.ReadOnly = true}),
+                }});
+
+            RegisterComponent<RigidBodyComponent>("RigidBody", ComponentDescription<RigidBodyComponent>{
+                .DisplayName = "Rigid Body",
+                .Fields = {
+                    Field("Type", &RigidBodyComponent::Type, {.Options = {"Static", "Kinematic", "Dynamic"}}),
+                    Field("Mass", &RigidBodyComponent::Mass,
+                          {.Label = "Mass (kg)", .Speed = 1.0e22f, .Format = "%.3e"}),
+                    Field("LinearDamping", &RigidBodyComponent::LinearDamping,
+                          {.Label = "Linear Damping", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
+                    Field("AngularDamping", &RigidBodyComponent::AngularDamping,
+                          {.Label = "Angular Damping", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
+                    Field("EnableGravity", &RigidBodyComponent::EnableGravity, {.Label = "Enable Gravity"}),
+                }});
+
+            RegisterComponent<ColliderComponent>("Collider", ComponentDescription<ColliderComponent>{
+                .Note = "Shape/size changes apply on next scene reload",
+                .Fields = {
+                    Field("Shape", &ColliderComponent::Shape,
+                          {.Options = {"Box", "Sphere", "Capsule", "Plane", "ConvexMesh"}}),
+                    Field("HalfExtents", &ColliderComponent::HalfExtents,
+                          {.Label = "Half Extents", .Min = 0.01f, .Max = 1000.0f, .Speed = 0.01f,
+                           .VisibleField = "Shape", .VisibleMask = 0b00001}),
+                    Field("Radius", &ColliderComponent::Radius,
+                          {.Min = 0.01f, .Max = 1000.0f, .Speed = 0.01f,
+                           .VisibleField = "Shape", .VisibleMask = 0b00110}),
+                    Field("HalfHeight", &ColliderComponent::HalfHeight,
+                          {.Label = "Half Height", .Min = 0.01f, .Max = 1000.0f, .Speed = 0.01f,
+                           .VisibleField = "Shape", .VisibleMask = 0b00100}),
+                    Field("StaticFriction", &ColliderComponent::StaticFriction,
+                          {.Label = "Static Friction", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
+                    Field("DynamicFriction", &ColliderComponent::DynamicFriction,
+                          {.Label = "Dynamic Friction", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
+                    Field("Restitution", &ColliderComponent::Restitution,
+                          {.Min = 0.0f, .Max = 1.0f, .Speed = 0.01f}),
+                    Field("IsTrigger", &ColliderComponent::IsTrigger, {.Label = "Is Trigger"}),
+                    Computed<ColliderComponent, int>(
+                        "HullPoints", [](const ColliderComponent& c) { return static_cast<int>(c.ConvexHullPoints.size()); },
+                        nullptr, {.Label = "Hull Points", .VisibleField = "Shape", .VisibleMask = 0b10000}),
+                }});
+
+            RegisterComponent<MeshComponent>("Mesh", ComponentDescription<MeshComponent>{
+                .Fields = {
+                    Field("AssetPath", &MeshComponent::AssetPath, {.Label = "Asset Path", .Kind = FieldKind::AssetPath}),
+                    Field("CenterOfMassOffset", &MeshComponent::CenterOfMassOffset,
+                          {.Label = "Center Of Mass Offset", .Speed = 0.01f}),
+                }});
+
+            RegisterComponent<CameraComponent>("Camera", ComponentDescription<CameraComponent>{
+                .Fields = {
+                    Field("Fov", &CameraComponent::Fov, {.Label = "FOV", .Min = 1.0f, .Max = 179.0f, .Speed = 0.1f}),
+                    Field("NearPlane", &CameraComponent::NearPlane,
+                          {.Label = "Near Plane", .Min = 0.001f, .Max = 1000.0f, .Speed = 0.01f}),
+                    Field("FarPlane", &CameraComponent::FarPlane,
+                          {.Label = "Far Plane", .Min = 1.0f, .Max = 1.0e6f, .Speed = 1.0f}),
+                    Field("Primary", &CameraComponent::Primary),
+                }});
 
             ComponentRegistrationOptions transientOptions;
             transientOptions.SyncToRenderState = false;

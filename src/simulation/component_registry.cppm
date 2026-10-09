@@ -6,6 +6,7 @@ export module GPP.Simulation:ComponentRegistry;
 import std;
 import GPP.Core;
 import :Ecs;
+import :Reflection;
 
 namespace GPP
 {
@@ -72,9 +73,27 @@ namespace GPP
         { YAML::convert<T>::decode(node, out) } -> std::same_as<bool>;
     };
 
+    export struct FieldInfo
+    {
+        std::string Name;
+        FieldType Type{FieldType::Float};
+        FieldMeta Meta;
+        bool Serialized = true;
+        std::function<FieldValue(const entt::registry&, entt::entity)> Get;
+        std::function<bool(entt::registry&, entt::entity, const FieldValue&)> Set;
+
+        [[nodiscard]] bool ReadOnly() const { return !Set; }
+    };
+
     export struct ComponentTypeInfo
     {
         std::string Name;
+        std::string DisplayName;
+        std::string Note;
+        bool Inspectable = false;
+        bool GraphExposed = false;
+        std::vector<FieldInfo> Fields;
+        std::function<void(entt::registry&, entt::entity)> Add;
         bool Serializable = false;
         bool SyncToRenderState = true;
 
@@ -148,11 +167,13 @@ namespace GPP
     // <yaml-cpp/yaml.h> directly in that translation unit before defining it: the primary
     // YAML::convert template is attached to the global module, and specializing it is only valid
     // where the header itself (not just an imported module that happens to use it) is visible.
-    export template <typename T>
-    void RegisterComponent(std::string name, ComponentRegistrationOptions options = {})
+    template <typename T>
+    ComponentTypeInfo BuildTypeInfo(std::string name, ComponentRegistrationOptions options)
     {
         ComponentTypeInfo info;
         info.Name = name;
+        info.DisplayName = name;
+        info.Add = [](entt::registry& r, entt::entity e) { r.template emplace_or_replace<T>(e); };
         info.SyncToRenderState = options.SyncToRenderState;
 
         info.Has = [](const entt::registry& r, entt::entity e) { return r.all_of<T>(e); };
@@ -217,6 +238,71 @@ namespace GPP
                 r.template emplace_or_replace<T>(e, std::move(value));
             };
         }
+
+        return info;
+    }
+
+    export template <typename T>
+    void RegisterComponent(std::string name, ComponentRegistrationOptions options = {})
+    {
+        ComponentRegistry::Instance().Register(std::type_index(typeid(T)),
+                                               BuildTypeInfo<T>(std::move(name), options));
+    }
+
+    export template <typename T>
+    void RegisterComponent(std::string name, ComponentDescription<T> description,
+                           ComponentRegistrationOptions options = {})
+    {
+        auto info = BuildTypeInfo<T>(std::move(name), options);
+        if (!description.DisplayName.empty()) info.DisplayName = description.DisplayName;
+        info.Note = description.Note;
+        info.Inspectable = description.Inspectable;
+        info.GraphExposed = description.GraphExposed;
+        info.Serializable = options.Serializable;
+
+        for (const auto& field : description.Fields)
+        {
+            FieldInfo fieldInfo{.Name = field.Name, .Type = field.Type, .Meta = field.Meta,
+                                .Serialized = field.Serialized};
+            fieldInfo.Get = [get = field.Get](const entt::registry& r, entt::entity e) -> FieldValue
+            {
+                if (const auto* c = r.template try_get<T>(e)) return get(*c);
+                return std::monostate{};
+            };
+            if (field.Set)
+            {
+                fieldInfo.Set = [set = field.Set](entt::registry& r, entt::entity e, const FieldValue& v)
+                {
+                    auto* c = r.template try_get<T>(e);
+                    return c != nullptr && set(*c, v);
+                };
+            }
+            info.Fields.push_back(std::move(fieldInfo));
+        }
+
+        info.Encode = [description](const entt::registry& r, entt::entity e, YAML::Node& node)
+        {
+            const auto& c = r.template get<T>(e);
+            for (const auto& field : description.Fields)
+            {
+                if (field.Serialized && field.Encode) field.Encode(c, node);
+            }
+            if (description.EncodeExtra) description.EncodeExtra(c, node);
+        };
+        info.Decode = [description](entt::registry& r, entt::entity e, const YAML::Node& node)
+        {
+            T value{};
+            for (const auto& field : description.Fields)
+            {
+                if (field.Serialized && field.Decode) field.Decode(value, node);
+            }
+            if (description.DecodeExtra) description.DecodeExtra(value, node);
+            r.template emplace_or_replace<T>(e, std::move(value));
+        };
+        info.Add = [defaults = description.Defaults](entt::registry& r, entt::entity e)
+        {
+            r.template emplace_or_replace<T>(e, defaults);
+        };
 
         ComponentRegistry::Instance().Register(std::type_index(typeid(T)), std::move(info));
     }
