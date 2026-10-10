@@ -4,6 +4,7 @@ target_sources(unit_tests
         PRIVATE
         ${TEST_SOURCES})
 target_link_libraries(unit_tests PRIVATE gpp)
+target_compile_definitions(unit_tests PRIVATE GPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain Vulkan::Vulkan)
 
 gpp_add_hot_reload_layer(gpp_test_hot_reload_plugin
