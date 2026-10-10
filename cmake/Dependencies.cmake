@@ -35,8 +35,8 @@ if (GPP_USE_IMGUI_DOCKING)
     FetchContent_Declare(
             imgui_docking
             GIT_REPOSITORY https://github.com/ocornut/imgui.git
-            GIT_TAG docking
-            GIT_SHALLOW TRUE)
+            GIT_TAG 64944b4520b30772de8dbf0b37d0311746477a32
+            GIT_SHALLOW FALSE)
     FetchContent_MakeAvailable(imgui_docking)
     add_library(gpp_imgui STATIC
             ${imgui_docking_SOURCE_DIR}/imgui.cpp
