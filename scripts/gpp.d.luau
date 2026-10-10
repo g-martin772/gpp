@@ -1,7 +1,7 @@
-declare class Entity
+declare extern type Entity with
 end
 
-declare class Vec2
+declare extern type Vec2 with
     x: number
     y: number
     function __add(self, other: Vec2): Vec2
@@ -11,7 +11,7 @@ declare class Vec2
     function __unm(self): Vec2
 end
 
-declare class Vec4
+declare extern type Vec4 with
     x: number
     y: number
     z: number
@@ -23,27 +23,11 @@ declare class Vec4
     function __unm(self): Vec4
 end
 
-declare class ScriptSelf
+declare extern type ScriptSelf with
     entity: Entity
     props: { [string]: any }
     [string]: any
 end
-
-type ScriptPropertyType = "float" | "int" | "bool" | "vec3" | "color" | "string" | "entity"
-
-type ScriptProperty = {
-    name: string,
-    type: ScriptPropertyType,
-    default: any?,
-    min: number?,
-    max: number?,
-}
-
-type ScriptModule = {
-    properties: { ScriptProperty }?,
-    OnStart: ((self: ScriptSelf) -> ())?,
-    OnTick: ((self: ScriptSelf, dt: number) -> ())?,
-}
 
 declare scene: {
     exists: (entity: Entity?) -> boolean,
