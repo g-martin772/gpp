@@ -34,7 +34,19 @@ namespace GPP
         LeftBracket = 0x0000005bu, RightBracket = 0x0000005du,
         Backslash = 0x0000005cu, Semicolon = 0x0000003bu, Apostrophe = 0x00000027u,
         Comma = 0x0000002cu, Period = 0x0000002eu, Slash = 0x0000002fu,
-        Minus = 0x0000002du, Equals = 0x0000003du, Grave = 0x00000060u
+        Minus = 0x0000002du, Equals = 0x0000003du, Grave = 0x00000060u,
+        F13 = 0x40000068u, F14 = 0x40000069u, F15 = 0x4000006au, F16 = 0x4000006bu,
+        F17 = 0x4000006cu, F18 = 0x4000006du, F19 = 0x4000006eu, F20 = 0x4000006fu,
+        F21 = 0x40000070u, F22 = 0x40000071u, F23 = 0x40000072u, F24 = 0x40000073u,
+        KeypadDivide = 0x40000054u, KeypadMultiply = 0x40000055u, KeypadMinus = 0x40000056u,
+        KeypadPlus = 0x40000057u, KeypadEnter = 0x40000058u,
+        Keypad1 = 0x40000059u, Keypad2 = 0x4000005au, Keypad3 = 0x4000005bu,
+        Keypad4 = 0x4000005cu, Keypad5 = 0x4000005du, Keypad6 = 0x4000005eu,
+        Keypad7 = 0x4000005fu, Keypad8 = 0x40000060u, Keypad9 = 0x40000061u,
+        Keypad0 = 0x40000062u, KeypadPeriod = 0x40000063u, KeypadEquals = 0x40000067u,
+        Application = 0x40000065u, Menu = 0x40000076u,
+        LeftControl = 0x400000e0u, LeftShift = 0x400000e1u, LeftAlt = 0x400000e2u, LeftGui = 0x400000e3u,
+        RightControl = 0x400000e4u, RightShift = 0x400000e5u, RightAlt = 0x400000e6u, RightGui = 0x400000e7u
     };
 
     export enum class ScanCode : std::uint32_t
