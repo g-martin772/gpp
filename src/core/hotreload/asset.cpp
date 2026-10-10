@@ -5,6 +5,40 @@ import std;
 
 namespace GPP
 {
+    namespace
+    {
+        bool HasElfMagic([[maybe_unused]] const std::filesystem::path& path)
+        {
+#ifdef _WIN32
+            return true;
+#else
+            std::ifstream file(path, std::ios::binary);
+            char magic[4]{};
+            return file.read(magic, 4) && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+#endif
+        }
+
+        std::string WaitUntilSettled(const std::filesystem::path& path, const HotReloadAssetDescription& description)
+        {
+            const auto deadline = std::chrono::steady_clock::now() + description.settleTimeout;
+            std::uintmax_t lastSize = 0;
+            std::filesystem::file_time_type lastTime{};
+            bool first = true;
+            while (true)
+            {
+                std::error_code error;
+                const auto size = std::filesystem::file_size(path, error);
+                const auto time = error ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(path, error);
+                if (!error && size > 0 && !first && size == lastSize && time == lastTime) return {};
+                first = false;
+                lastSize = error ? 0 : size;
+                lastTime = time;
+                if (std::chrono::steady_clock::now() >= deadline) return "library was still being written";
+                std::this_thread::sleep_for(description.settleInterval);
+            }
+        }
+    }
+
     HotReloadAsset::HotReloadAsset(std::string assetId,
                                    HotReloadAssetDescription description,
                                    std::shared_ptr<IFileSystem> fileSystem,
@@ -83,6 +117,10 @@ namespace GPP
             throw std::runtime_error(std::format(
                 "Hot-reload library does not exist: {}", resolved.string()));
         }
+        if (const auto unsettled = WaitUntilSettled(resolved, m_Description); !unsettled.empty())
+        {
+            throw std::runtime_error(std::format("Hot-reload library '{}' is not ready: {}", resolved.string(), unsettled));
+        }
         if (!m_Description.shadowCopy)
         {
             return resolved;
@@ -109,9 +147,19 @@ namespace GPP
                 resolved, destination, std::filesystem::copy_options::overwrite_existing, copyError);
             if (!copyError)
             {
-                return destination;
+                std::error_code sizeError;
+                const auto expectedSize = std::filesystem::file_size(resolved, sizeError);
+                const auto copiedSize = std::filesystem::file_size(destination, copyError);
+                if (!sizeError && !copyError && copiedSize == expectedSize && HasElfMagic(destination))
+                {
+                    return destination;
+                }
+                lastError = "copied library is incomplete or not a valid ELF file";
             }
-            lastError = copyError.message();
+            else
+            {
+                lastError = copyError.message();
+            }
             if (attempt + 1 < attempts)
             {
                 std::this_thread::sleep_for(m_Description.copyRetryDelay);
@@ -148,7 +196,7 @@ namespace GPP
         try
         {
             const auto libraryFile = PrepareLibraryFile();
-            DynamicLibrary library(libraryFile);
+            DynamicLibrary library(libraryFile, m_Description.keepResident);
 
             const auto abiVersionFn = library.GetSymbol<AbiVersionFn>(m_Description.abiVersionSymbol);
             if (!abiVersionFn)

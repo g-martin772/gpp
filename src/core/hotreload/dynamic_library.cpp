@@ -42,13 +42,13 @@ namespace GPP
 #endif
     }
 
-    DynamicLibrary::DynamicLibrary(const std::filesystem::path& path)
+    DynamicLibrary::DynamicLibrary(const std::filesystem::path& path, [[maybe_unused]] const bool keepResident)
         : m_Path(path)
     {
 #ifdef _WIN32
         m_Handle = static_cast<void*>(LoadLibraryW(path.wstring().c_str()));
 #else
-        m_Handle = dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
+        m_Handle = dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL | (keepResident ? RTLD_NODELETE : 0));
 #endif
         if (!m_Handle)
         {

@@ -18,7 +18,7 @@ namespace GPP
         DynamicLibrary() = default;
 
 
-        explicit DynamicLibrary(const std::filesystem::path& path);
+        explicit DynamicLibrary(const std::filesystem::path& path, bool keepResident = false);
 
         ~DynamicLibrary();
 

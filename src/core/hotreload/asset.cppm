@@ -29,6 +29,9 @@ namespace GPP
         bool shadowCopy = true;
         int copyRetryCount = 5;
         std::chrono::milliseconds copyRetryDelay{40};
+        std::chrono::milliseconds settleInterval{100};
+        std::chrono::milliseconds settleTimeout{5000};
+        bool keepResident = true;
 
         std::string createSymbol{"GPP_CreateHotReloadModule"};
         std::string destroySymbol{"GPP_DestroyHotReloadModule"};

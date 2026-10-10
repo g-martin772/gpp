@@ -12,7 +12,7 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
-            m_Active->OnAttach();
+            Guarded("OnAttach", [&] { m_Active->OnAttach(); });
         }
     }
 
@@ -22,7 +22,7 @@ namespace GPP
             std::shared_lock lock(m_CallMutex);
             if (m_Active)
             {
-                m_Active->OnDetach();
+                Guarded("OnDetach", [&] { m_Active->OnDetach(); });
             }
         }
         m_StackAttached = false;
@@ -33,7 +33,7 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
-            m_Active->OnUpdate(deltaTime);
+            Guarded("OnUpdate", [&] { m_Active->OnUpdate(deltaTime); });
         }
     }
 
@@ -42,7 +42,7 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
-            m_Active->OnRender();
+            Guarded("OnRender", [&] { m_Active->OnRender(); });
         }
     }
 
@@ -51,7 +51,7 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
-            m_Active->OnRenderGraph(graph);
+            Guarded("OnRenderGraph", [&] { m_Active->OnRenderGraph(graph); });
         }
     }
 
@@ -60,7 +60,7 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
-            m_Active->OnUiRender();
+            Guarded("OnUiRender", [&] { m_Active->OnUiRender(); });
         }
     }
 
@@ -69,7 +69,7 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
-            m_Active->OnEvent();
+            Guarded("OnEvent", [&] { m_Active->OnEvent(); });
         }
     }
 
@@ -101,21 +101,33 @@ namespace GPP
 
         if (m_StackAttached && previous)
         {
-            previous->OnDetach();
+            Guarded("OnDetach", [&] { previous->OnDetach(); });
         }
+        bool attached = true;
         if (target)
         {
             target->SetLayerTarget(GetLayerTarget());
             if (m_StackAttached)
             {
-                target->OnAttach();
+                attached = Guarded("OnAttach", [&] { target->OnAttach(); });
             }
         }
 
         {
             std::unique_lock lock(m_CallMutex);
-            m_Active = target;
+            m_Active = attached ? target : nullptr;
         }
+        m_ReportedFailure.store(false);
+    }
+
+    void HotReloadLayerProxy::ReportFailure(const char* hook, const char* message) noexcept
+    {
+        if (m_ReportedFailure.exchange(true) || !m_Logger)
+        {
+            return;
+        }
+        m_Logger->Error("Hot-reloaded layer threw in {}: {} (further errors suppressed until the next reload)",
+                        hook, message);
     }
 
     HotReloadableLayer* HotReloadLayerProxy::SwapActive(HotReloadableLayer* newLayer) noexcept
@@ -127,19 +139,20 @@ namespace GPP
         }
         if (m_StackAttached && previous)
         {
-            previous->OnDetach();
+            Guarded("OnDetach", [&] { previous->OnDetach(); });
         }
+        bool attached = true;
         if (newLayer)
         {
             newLayer->SetLayerTarget(GetLayerTarget());
             if (m_StackAttached)
             {
-                newLayer->OnAttach();
+                attached = Guarded("OnAttach", [&] { newLayer->OnAttach(); });
             }
         }
         {
             std::unique_lock lock(m_CallMutex);
-            m_Active = newLayer;
+            m_Active = attached ? newLayer : nullptr;
         }
         return previous;
     }

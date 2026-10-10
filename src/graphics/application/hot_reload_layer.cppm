@@ -39,7 +39,29 @@ namespace GPP
             RetiredHotReloadInstance Retired;
         };
 
+        template <typename Fn>
+        bool Guarded(const char* hook, Fn&& fn) noexcept
+        {
+            try
+            {
+                fn();
+                return true;
+            }
+            catch (const std::exception& exception)
+            {
+                ReportFailure(hook, exception.what());
+            }
+            catch (...)
+            {
+                ReportFailure(hook, "unknown exception");
+            }
+            return false;
+        }
+
+        void ReportFailure(const char* hook, const char* message) noexcept;
+
         mutable std::shared_mutex m_CallMutex;
+        std::atomic<bool> m_ReportedFailure{false};
         HotReloadableLayer* m_Active = nullptr;
         bool m_StackAttached = false;
 

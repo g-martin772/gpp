@@ -75,11 +75,26 @@ namespace GPP
             return;
         }
 
-        const auto staged = entry.Asset->Stage(*m_Provider);
+        constexpr int kMaxAttempts = 6;
+        HotReloadInstanceHandle staged;
+        for (int attempt = 1; attempt <= kMaxAttempts; ++attempt)
+        {
+            staged = entry.Asset->Stage(*m_Provider);
+            if (staged)
+            {
+                break;
+            }
+            m_Logger->Error("Hot-reload layer '{}' failed to reload (attempt {}/{}): {}",
+                            entry.Description.Id, attempt, kMaxAttempts, entry.Asset->LastError());
+            if (attempt < kMaxAttempts)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250 * attempt));
+            }
+        }
         if (!staged)
         {
-            m_Logger->Error("Hot-reload layer '{}' failed to reload: {}",
-                            entry.Description.Id, entry.Asset->LastError());
+            m_Logger->Error("Hot-reload layer '{}' keeps the previous version until the library changes again.",
+                            entry.Description.Id);
             entry.ReloadInFlight.store(false);
             return;
         }
