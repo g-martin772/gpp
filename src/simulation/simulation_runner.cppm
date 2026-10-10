@@ -48,6 +48,7 @@ namespace GPP
         bool Undoable = false;
         std::string Label;
         std::string CoalesceKey;
+        bool OnlyWhilePlaying = false; // dropped if the runner is paused when it would be applied
     };
 
     export struct RunnerState

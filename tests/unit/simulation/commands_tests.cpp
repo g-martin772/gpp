@@ -184,3 +184,24 @@ TEST_CASE("Runner undo and redo go through the command queue", "[commands][runne
     REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 9.0f; }));
     runner.Stop();
 }
+
+TEST_CASE("OnlyWhilePlaying commands are dropped while paused", "[simulation][commands]")
+{
+    Scene scene;
+    const auto guid = MakeBox(scene, "A");
+    SimulationRunner runner(std::move(scene), std::make_shared<NoopModule>());
+    runner.Start();
+    runner.SetPaused(true);
+
+    CommandOptions options;
+    options.OnlyWhilePlaying = true;
+    runner.EnqueueCommand(SetFieldCommand{guid, "Transform", "Position", glm::vec3(5, 0, 0)}, options);
+    runner.EnqueueCommand(SetFieldCommand{guid, "Transform", "Position", glm::vec3(0, 7, 0)});
+    REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).y == 7.0f; }));
+    CHECK(PositionOf(*runner.AcquireSnapshot(), guid).x == 0.0f);
+
+    runner.SetPaused(false);
+    runner.EnqueueCommand(SetFieldCommand{guid, "Transform", "Position", glm::vec3(5, 0, 0)}, options);
+    REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 5.0f; }));
+    runner.Stop();
+}

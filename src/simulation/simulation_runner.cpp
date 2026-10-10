@@ -268,6 +268,7 @@ namespace GPP
                 m_Deferred.push_back(std::move(edit));
                 continue;
             }
+            if (edit.Options.OnlyWhilePlaying && IsPaused()) continue;
             applied = true;
             if (!edit.Commands.empty())
             {
