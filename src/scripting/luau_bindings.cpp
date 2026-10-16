@@ -18,6 +18,8 @@ namespace GPP
         case FieldType::Bool: return LuauType::Bool;
         case FieldType::Int:
         case FieldType::Enum: return LuauType::Int;
+        case FieldType::Double: return LuauType::Double;
+        case FieldType::DVec3: return LuauType::DVec3;
         case FieldType::Vec2: return LuauType::Vec2;
         case FieldType::Vec3: return LuauType::Vec3;
         case FieldType::Vec4: return LuauType::Vec4;

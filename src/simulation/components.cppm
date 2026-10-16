@@ -22,15 +22,26 @@ export namespace GPP
 
     struct TransformComponent
     {
-        glm::vec3 Position{0.0f, 0.0f, 0.0f};
+        glm::dvec3 Position{0.0, 0.0, 0.0}; // m, world frame
         glm::quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
-        glm::vec3 Scale{1.0f, 1.0f, 1.0f};
+        glm::vec3 Scale{1.0f, 1.0f, 1.0f}; // dimensionless multiplier
 
-        [[nodiscard]] glm::mat4 GetMatrix() const
+        [[nodiscard]] glm::dmat4 GetMatrix() const
         {
-            return glm::translate(glm::mat4(1.0f), Position)
-                 * glm::mat4_cast(Rotation)
-                 * glm::scale(glm::mat4(1.0f), Scale);
+            return glm::translate(glm::dmat4(1.0), Position)
+                 * glm::dmat4(glm::mat4_cast(Rotation))
+                 * glm::scale(glm::dmat4(1.0), glm::dvec3(Scale));
+        }
+
+        // Boundary SI -> float render space: translation is (Position - originM) / lengthUnitM and the model-space
+        // scale (Scale * modelUnitM metres per model unit) is divided by lengthUnitM
+        [[nodiscard]] glm::mat4 GetRenderMatrix(const glm::dvec3& originM, const double lengthUnitM,
+                                                const double modelUnitM = 1.0) const
+        {
+            const glm::vec3 translation(glm::dvec3((Position - originM) / lengthUnitM));
+            const glm::vec3 scale = Scale * static_cast<float>(modelUnitM / lengthUnitM);
+            return glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(Rotation)
+                 * glm::scale(glm::mat4(1.0f), scale);
         }
     };
 
@@ -41,8 +52,8 @@ export namespace GPP
 
     struct VelocityComponent
     {
-        glm::vec3 Linear{0.0f, 0.0f, 0.0f};
-        glm::vec3 Angular{0.0f, 0.0f, 0.0f};
+        glm::dvec3 Linear{0.0, 0.0, 0.0};  // m/s
+        glm::dvec3 Angular{0.0, 0.0, 0.0}; // rad/s
     };
 
     enum class RigidBodyType : $u8 { Static, Kinematic, Dynamic };
@@ -50,7 +61,7 @@ export namespace GPP
     struct RigidBodyComponent
     {
         RigidBodyType Type{RigidBodyType::Dynamic};
-        float Mass{1.0f};
+        double Mass{1.0}; // kg
         float LinearDamping{0.0f};
         float AngularDamping{0.05f};
         bool EnableGravity{true};
@@ -61,9 +72,9 @@ export namespace GPP
     struct ColliderComponent
     {
         ColliderShape Shape{ColliderShape::Box};
-        glm::vec3 HalfExtents{0.5f, 0.5f, 0.5f};
-        float Radius{0.5f};
-        float HalfHeight{0.5f};
+        glm::dvec3 HalfExtents{0.5, 0.5, 0.5}; // m
+        double Radius{0.5};                    // m
+        double HalfHeight{0.5};                // m
         float StaticFriction{0.5f};
         float DynamicFriction{0.5f};
         float Restitution{0.1f};
@@ -79,14 +90,15 @@ export namespace GPP
     struct MeshComponent
     {
         std::string AssetPath;
-        glm::vec3 CenterOfMassOffset{0.0f, 0.0f, 0.0f};
+        glm::dvec3 CenterOfMassOffset{0.0, 0.0, 0.0}; // m
+        double MetresPerUnit{1.0};
     };
 
     struct CameraComponent
     {
         float Fov{60.0f};
-        float NearPlane{0.1f};
-        float FarPlane{1000.0f};
+        double NearPlane{0.1};   // m
+        double FarPlane{1000.0}; // m
         bool Primary{true};
     };
 }
@@ -109,7 +121,8 @@ namespace GPP
 
             RegisterComponent<TransformComponent>("Transform", ComponentDescription<TransformComponent>{
                 .Fields = {
-                    Field("Position", &TransformComponent::Position, {.Speed = 0.1f}),
+                    Field("Position", &TransformComponent::Position,
+                          {.Speed = 1.0, .Dim = Units::Dimension::Length, .LegacyScale = Units::Legacy::kLengthM}),
                     Field("Rotation", &TransformComponent::Rotation, {.Speed = 0.5f, .Kind = FieldKind::Angle}),
                     Field("Scale", &TransformComponent::Scale, {.Speed = 0.01f}),
                 }});
@@ -124,8 +137,12 @@ namespace GPP
 
             RegisterComponent<VelocityComponent>("Velocity", ComponentDescription<VelocityComponent>{
                 .Fields = {
-                    Field("Linear", &VelocityComponent::Linear, {.ReadOnly = true}),
-                    Field("Angular", &VelocityComponent::Angular, {.ReadOnly = true}),
+                    Field("Linear", &VelocityComponent::Linear,
+                          {.ReadOnly = true, .Dim = Units::Dimension::Velocity,
+                           .LegacyScale = Units::Legacy::kLengthM / Units::Legacy::kTimeS}),
+                    Field("Angular", &VelocityComponent::Angular,
+                          {.ReadOnly = true, .Dim = Units::Dimension::AngularRate,
+                           .LegacyScale = 1.0 / Units::Legacy::kTimeS}),
                 }});
 
             RegisterComponent<RigidBodyComponent>("RigidBody", ComponentDescription<RigidBodyComponent>{
@@ -133,7 +150,7 @@ namespace GPP
                 .Fields = {
                     Field("Type", &RigidBodyComponent::Type, {.Options = {"Static", "Kinematic", "Dynamic"}}),
                     Field("Mass", &RigidBodyComponent::Mass,
-                          {.Label = "Mass (kg)", .Speed = 1.0e22f, .Format = "%.3e"}),
+                          {.Label = "Mass", .Min = 0.0, .Speed = 1.0, .Dim = Units::Dimension::Mass}),
                     Field("LinearDamping", &RigidBodyComponent::LinearDamping,
                           {.Label = "Linear Damping", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
                     Field("AngularDamping", &RigidBodyComponent::AngularDamping,
@@ -147,14 +164,16 @@ namespace GPP
                     Field("Shape", &ColliderComponent::Shape,
                           {.Options = {"Box", "Sphere", "Capsule", "Plane", "ConvexMesh"}}),
                     Field("HalfExtents", &ColliderComponent::HalfExtents,
-                          {.Label = "Half Extents", .Min = 0.01f, .Max = 1000.0f, .Speed = 0.01f,
-                           .VisibleField = "Shape", .VisibleMask = 0b00001}),
+                          {.Label = "Half Extents", .Min = 1e-3, .Speed = 0.1, .VisibleField = "Shape",
+                           .VisibleMask = 0b00001, .Dim = Units::Dimension::Length,
+                           .LegacyScale = Units::Legacy::kLengthM}),
                     Field("Radius", &ColliderComponent::Radius,
-                          {.Min = 0.01f, .Max = 1000.0f, .Speed = 0.01f,
-                           .VisibleField = "Shape", .VisibleMask = 0b00110}),
+                          {.Min = 1e-3, .Speed = 0.1, .VisibleField = "Shape", .VisibleMask = 0b00110,
+                           .Dim = Units::Dimension::Length, .LegacyScale = Units::Legacy::kLengthM}),
                     Field("HalfHeight", &ColliderComponent::HalfHeight,
-                          {.Label = "Half Height", .Min = 0.01f, .Max = 1000.0f, .Speed = 0.01f,
-                           .VisibleField = "Shape", .VisibleMask = 0b00100}),
+                          {.Label = "Half Height", .Min = 1e-3, .Speed = 0.1, .VisibleField = "Shape",
+                           .VisibleMask = 0b00100, .Dim = Units::Dimension::Length,
+                           .LegacyScale = Units::Legacy::kLengthM}),
                     Field("StaticFriction", &ColliderComponent::StaticFriction,
                           {.Label = "Static Friction", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
                     Field("DynamicFriction", &ColliderComponent::DynamicFriction,
@@ -171,16 +190,22 @@ namespace GPP
                 .Fields = {
                     Field("AssetPath", &MeshComponent::AssetPath, {.Label = "Asset Path", .Kind = FieldKind::AssetPath}),
                     Field("CenterOfMassOffset", &MeshComponent::CenterOfMassOffset,
-                          {.Label = "Center Of Mass Offset", .Speed = 0.01f}),
+                          {.Label = "Center Of Mass Offset", .Speed = 0.01, .Dim = Units::Dimension::Length,
+                           .LegacyScale = Units::Legacy::kLengthM}),
+                    Field("MetresPerUnit", &MeshComponent::MetresPerUnit,
+                          {.Label = "Metres Per Model Unit", .Min = 1e-9, .Speed = 0.01,
+                           .LegacyDefault = Units::Legacy::kLengthM}),
                 }});
 
             RegisterComponent<CameraComponent>("Camera", ComponentDescription<CameraComponent>{
                 .Fields = {
-                    Field("Fov", &CameraComponent::Fov, {.Label = "FOV", .Min = 1.0f, .Max = 179.0f, .Speed = 0.1f}),
+                    Field("Fov", &CameraComponent::Fov, {.Label = "FOV (deg)", .Min = 1.0, .Max = 179.0, .Speed = 0.1}),
                     Field("NearPlane", &CameraComponent::NearPlane,
-                          {.Label = "Near Plane", .Min = 0.001f, .Max = 1000.0f, .Speed = 0.01f}),
+                          {.Label = "Near Plane", .Min = 1e-6, .Speed = 1.0, .Dim = Units::Dimension::Length,
+                           .LegacyScale = Units::Legacy::kLengthM}),
                     Field("FarPlane", &CameraComponent::FarPlane,
-                          {.Label = "Far Plane", .Min = 1.0f, .Max = 1.0e6f, .Speed = 1.0f}),
+                          {.Label = "Far Plane", .Min = 1e-3, .Speed = 1.0, .Dim = Units::Dimension::Length,
+                           .LegacyScale = Units::Legacy::kLengthM}),
                     Field("Primary", &CameraComponent::Primary),
                 }});
 

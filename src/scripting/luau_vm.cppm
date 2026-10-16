@@ -6,9 +6,9 @@ import glm;
 export namespace GPP
 {
     using LuauValue = std::variant<std::monostate, bool, int, float, glm::vec2, glm::vec3, glm::vec4, std::string,
-                                   std::uint64_t>;
+                                   std::uint64_t, double, glm::dvec3>;
 
-    enum class LuauType { Bool, Int, Float, Vec2, Vec3, Vec4, String, Entity };
+    enum class LuauType { Bool, Int, Float, Vec2, Vec3, Vec4, String, Entity, Double, DVec3 };
 
     // View over the arguments of a native function call; the Lua state stays private to the VM.
     class LuauNativeCall

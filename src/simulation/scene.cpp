@@ -290,6 +290,8 @@ namespace GPP
         out << YAML::BeginMap;
         out << YAML::Key << "Scene" << YAML::Value << m_Metadata.Name;
         if (m_Metadata.Seed != 0) out << YAML::Key << "Seed" << YAML::Value << m_Metadata.Seed;
+        out << YAML::Key << "SchemaVersion" << YAML::Value << kSceneSchemaVersion;
+        if (m_Metadata.TimeScale != 1.0) out << YAML::Key << "TimeScale" << YAML::Value << m_Metadata.TimeScale;
         out << YAML::Key << "Entities" << YAML::Value << YAML::BeginSeq;
 
         for (auto entity : AllEntities(m_Registry))
@@ -332,12 +334,20 @@ namespace GPP
         const auto root = YAML::Load(yaml);
         if (root["Scene"]) m_Metadata.Name = root["Scene"].as<std::string>();
         m_Metadata.Seed = root["Seed"] ? root["Seed"].as<std::uint64_t>() : 0;
+        const int version = root["SchemaVersion"] ? root["SchemaVersion"].as<int>() : 1;
+        m_Metadata.LoadedSchemaVersion = version;
+        m_Metadata.TimeScale = root["TimeScale"] ? root["TimeScale"].as<double>()
+                               : (version < 2 ? Units::Legacy::kTimeS : 1.0);
         if (root.IsMap())
         {
             for (const auto& pair : root)
             {
                 const auto key = pair.first.as<std::string>();
-                if (key != "Scene" && key != "Entities" && key != "Seed") m_Extensions[key] = YAML::Clone(pair.second);
+                if (key != "Scene" && key != "Entities" && key != "Seed" && key != "SchemaVersion"
+                    && key != "TimeScale")
+                {
+                    m_Extensions[key] = YAML::Clone(pair.second);
+                }
             }
         }
 
@@ -357,6 +367,13 @@ namespace GPP
                 const auto name = pair.first.as<std::string>();
                 const auto* info = ComponentRegistry::Instance().FindByName(name);
                 if (!info || !info->Decode) continue;
+                if (version < 2 && info->MigrateLegacy)
+                {
+                    YAML::Node migrated = YAML::Clone(pair.second);
+                    info->MigrateLegacy(migrated);
+                    info->Decode(m_Registry, entity, migrated);
+                    continue;
+                }
                 info->Decode(m_Registry, entity, pair.second);
             }
         }

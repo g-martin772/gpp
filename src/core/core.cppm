@@ -9,6 +9,7 @@ export import :IO;
 export import :Events;
 export import :Math;
 export import :Easing;
+export import :Units;
 export import :Orientation;
 export import :HotReload;
 export import :Assets;

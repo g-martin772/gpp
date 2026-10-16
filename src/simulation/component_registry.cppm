@@ -101,6 +101,7 @@ namespace GPP
         std::function<void(entt::registry&, entt::entity)> Remove;
         std::function<void(const entt::registry&, entt::entity, YAML::Node&)> Encode;
         std::function<void(entt::registry&, entt::entity, const YAML::Node&)> Decode;
+        std::function<void(YAML::Node&)> MigrateLegacy;
 
         std::function<void(const entt::registry&, entt::registry&)> CopyAll;
         std::function<void(const entt::registry&, const GuidIndex&, entt::registry&, GuidIndex&)> SyncAll;
@@ -299,6 +300,39 @@ namespace GPP
             if (description.DecodeExtra) description.DecodeExtra(value, node);
             r.template emplace_or_replace<T>(e, std::move(value));
         };
+        std::vector<std::tuple<std::string, double, double>> legacyScales;
+        for (const auto& field : description.Fields)
+        {
+            if (!field.Serialized) continue;
+            if (field.Meta.LegacyScale != 1.0 || !std::isnan(field.Meta.LegacyDefault))
+            {
+                legacyScales.emplace_back(field.Name, field.Meta.LegacyScale, field.Meta.LegacyDefault);
+            }
+        }
+        if (!legacyScales.empty())
+        {
+            info.MigrateLegacy = [legacyScales = std::move(legacyScales)](YAML::Node& node)
+            {
+                for (const auto& [name, factor, fallback] : legacyScales)
+                {
+                    if (!node[name] && !std::isnan(fallback))
+                    {
+                        node[name] = fallback;
+                        continue;
+                    }
+                    auto value = node[name];
+                    if (!value) continue;
+                    if (value.IsSequence())
+                    {
+                        for (std::size_t i = 0; i < value.size(); ++i) value[i] = value[i].as<double>() * factor;
+                    }
+                    else if (value.IsScalar())
+                    {
+                        value = value.as<double>() * factor;
+                    }
+                }
+            };
+        }
         info.Add = [defaults = description.Defaults](entt::registry& r, entt::entity e)
         {
             r.template emplace_or_replace<T>(e, defaults);

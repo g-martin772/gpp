@@ -71,7 +71,7 @@ TEST_CASE ("Scene copy deep-clones every registered component", "[simulation][sc
     const auto cloneEntity = clone.FindByGuid(scene.GuidOf(entity));
 
     REQUIRE(clone.IsValid(cloneEntity));
-    CHECK(clone.Registry().get<TransformComponent>(cloneEntity).Position == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(clone.Registry().get<TransformComponent>(cloneEntity).Position == glm::dvec3(1.0f, 2.0f, 3.0f));
     CHECK(clone.Registry().get<HealthComponent>(cloneEntity).Value == 42.0f);
 
     // Mutating the source after cloning must not affect the clone.
@@ -99,7 +99,7 @@ TEST_CASE ("Scene YAML round-trip preserves entities and components", "[simulati
     REQUIRE(loaded.IsValid(loadedEntity));
     CHECK(loaded.Registry().get<MetadataComponent>(loadedEntity).Name == "Rock");
     CHECK(loaded.Registry().get<MetadataComponent>(loadedEntity).TypeTag == "Prop");
-    CHECK(loaded.Registry().get<TransformComponent>(loadedEntity).Position == glm::vec3(4.0f, 5.0f, 6.0f));
+    CHECK(loaded.Registry().get<TransformComponent>(loadedEntity).Position == glm::dvec3(4.0f, 5.0f, 6.0f));
     CHECK(loaded.Registry().get<HealthComponent>(loadedEntity).Value == 7.5f);
 }
 
@@ -117,12 +117,12 @@ TEST_CASE ("Scene::SyncInto mirrors create, update, and destroy", "[simulation][
 
     const auto renderA = render.FindByGuid(sim.GuidOf(a));
     REQUIRE(render.IsValid(renderA));
-    CHECK(render.Registry().get<TransformComponent>(renderA).Position == glm::vec3(1.0f, 0.0f, 0.0f));
+    CHECK(render.Registry().get<TransformComponent>(renderA).Position == glm::dvec3(1.0f, 0.0f, 0.0f));
 
     // Update propagates.
     sim.Registry().get<TransformComponent>(a).Position = {9.0f, 0.0f, 0.0f};
     Scene::SyncInto(sim, render);
-    CHECK(render.Registry().get<TransformComponent>(renderA).Position == glm::vec3(9.0f, 0.0f, 0.0f));
+    CHECK(render.Registry().get<TransformComponent>(renderA).Position == glm::dvec3(9.0f, 0.0f, 0.0f));
 
     // A component removal on the sim side is reflected on the render side.
     sim.Registry().remove<TransformComponent>(a);
@@ -320,5 +320,5 @@ TEST_CASE ("Scene creates entities with a chosen guid and clones them", "[simula
     CHECK(scene.GuidOf(copy) == 99);
     CHECK(scene.Registry().get<MetadataComponent>(copy).Guid == 99);
     CHECK(scene.Registry().get<MetadataComponent>(copy).Name == "A");
-    CHECK(scene.Registry().get<TransformComponent>(copy).Position == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(scene.Registry().get<TransformComponent>(copy).Position == glm::dvec3(1.0f, 2.0f, 3.0f));
 }

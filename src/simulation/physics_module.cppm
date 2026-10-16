@@ -59,6 +59,8 @@ namespace GPP
             return it != m_ActorsByEntity.end() ? it->second : nullptr;
         }
 
+        [[nodiscard]] glm::dvec3 Origin() const noexcept { return m_OriginM; }
+
         [[nodiscard]] std::vector<physx::PxDebugLine> GetDebugLines() const
         {
             std::scoped_lock lock(m_DebugLinesMutex);
@@ -69,10 +71,10 @@ namespace GPP
         void SyncActors(Scene& scene);
         struct AppliedState
         {
-            glm::vec3 Position{0.0f};
+            glm::dvec3 Position{0.0};
             glm::quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
-            glm::vec3 Linear{0.0f};
-            glm::vec3 Angular{0.0f};
+            glm::dvec3 Linear{0.0};
+            glm::dvec3 Angular{0.0};
         };
 
         void PushExternalChanges(Scene& scene, entt::entity entity, physx::PxRigidActor* actor);
@@ -82,9 +84,9 @@ namespace GPP
         void CaptureDebugLines();
         [[nodiscard]] physx::PxRigidActor* CreateActor(entt::entity entity, const RigidBodyComponent& body,
                                                        const ColliderComponent& collider,
-                                                       const TransformComponent& transform);
+                                                       const TransformComponent& transform, const MeshComponent* mesh);
         void SeedVelocity(entt::entity entity, Scene& scene, physx::PxRigidActor* actor);
-        [[nodiscard]] physx::PxConvexMesh* CookConvexMesh(const std::vector<glm::vec3>& points);
+        [[nodiscard]] physx::PxConvexMesh* CookConvexMesh(const std::vector<glm::vec3>& points, double metresPerUnit);
         void DestroyActor(physx::PxRigidActor* actor);
         [[nodiscard]] std::uint64_t GuidForActor(physx::PxRigidActor* actor) const;
 
@@ -103,6 +105,7 @@ namespace GPP
         std::unordered_map<physx::PxRigidActor*, entt::entity> m_EntitiesByActor;
         std::unordered_map<entt::entity, AppliedState> m_Applied;
         Scene* m_CurrentScene = nullptr;
+        glm::dvec3 m_OriginM{0.0};
         std::atomic<bool> m_DebugVisualizationEnabled{false};
         bool m_DebugVisualizationApplied = false;
         mutable std::mutex m_DebugLinesMutex;

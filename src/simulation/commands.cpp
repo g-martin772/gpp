@@ -46,6 +46,7 @@ namespace GPP
             if (!field || !field->Set || !field->Get) return false;
             const FieldValue previous = field->Get(scene.Registry(), entity);
             if (previous == c.Value || !field->Set(scene.Registry(), entity, c.Value)) return false;
+            if (field->Get(scene.Registry(), entity) == previous) return false;
             scene.MarkDirty(entity);
             if (inverse) *inverse = SetFieldCommand{c.Guid, c.Component, c.Field, previous};
             return true;
@@ -173,8 +174,8 @@ namespace GPP
 
         std::string_view FieldTag(const FieldValue& value)
         {
-            static constexpr std::array<std::string_view, 9> kTags{"none", "bool", "int", "float", "vec2",
-                                                                   "vec3", "vec4", "string", "entity"};
+            static constexpr std::array<std::string_view, 11> kTags{"none", "bool", "int", "float", "vec2", "vec3", "vec4",
+                                                                    "string", "entity", "double", "dvec3"};
             return kTags[value.index()];
         }
 
@@ -202,6 +203,8 @@ namespace GPP
             if (tag == "vec4") return v.as<glm::vec4>();
             if (tag == "string") return v.as<std::string>();
             if (tag == "entity") return v.as<std::uint64_t>();
+            if (tag == "double") return v.as<double>();
+            if (tag == "dvec3") return v.as<glm::dvec3>();
             return std::monostate{};
         }
     }

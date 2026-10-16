@@ -325,8 +325,18 @@ namespace GPP
         case LuauType::Float:
             if (t == LUA_TNUMBER) return static_cast<float>(lua_tonumber(L, index));
             break;
+        case LuauType::Double:
+            if (t == LUA_TNUMBER) return lua_tonumber(L, index);
+            break;
         case LuauType::Int:
             if (t == LUA_TNUMBER) return static_cast<int>(lua_tonumber(L, index));
+            break;
+        case LuauType::DVec3:
+            if (t == LUA_TVECTOR)
+            {
+                const float* v = lua_tovector(L, index);
+                return glm::dvec3(v[0], v[1], v[2]);
+            }
             break;
         case LuauType::String:
             if (t == LUA_TSTRING) return String(index);
@@ -426,7 +436,10 @@ namespace GPP
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, std::monostate>) lua_pushnil(L);
             else if constexpr (std::is_same_v<T, bool>) lua_pushboolean(L, v);
-            else if constexpr (std::is_same_v<T, int> || std::is_same_v<T, float>) lua_pushnumber(L, v);
+            else if constexpr (std::is_same_v<T, int> || std::is_same_v<T, float> || std::is_same_v<T, double>)
+                lua_pushnumber(L, v);
+            else if constexpr (std::is_same_v<T, glm::dvec3>)
+                lua_pushvector(L, static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z));
             else if constexpr (std::is_same_v<T, std::string>) lua_pushlstring(L, v.data(), v.size());
             else if constexpr (std::is_same_v<T, std::uint64_t>) PushEntity(v);
             else if constexpr (std::is_same_v<T, glm::vec2>) pushVec({v.x, v.y}, impl->Vec2Ref);

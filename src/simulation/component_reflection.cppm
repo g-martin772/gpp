@@ -5,6 +5,7 @@ module;
 export module GPP.Simulation:Reflection;
 
 import std;
+import GPP.Core;
 
 namespace YAML
 {
@@ -48,6 +49,29 @@ namespace YAML
             out.x = node[0].as<float>();
             out.y = node[1].as<float>();
             out.z = node[2].as<float>();
+            return true;
+        }
+    };
+
+    template <>
+    struct convert<glm::dvec3>
+    {
+        static Node encode(const glm::dvec3& v)
+        {
+            Node node;
+            node.push_back(v.x);
+            node.push_back(v.y);
+            node.push_back(v.z);
+            node.SetStyle(EmitterStyle::Flow);
+            return node;
+        }
+
+        static bool decode(const Node& node, glm::dvec3& out)
+        {
+            if (!node.IsSequence() || node.size() != 3) return false;
+            out.x = node[0].as<double>();
+            out.y = node[1].as<double>();
+            out.z = node[2].as<double>();
             return true;
         }
     };
@@ -106,9 +130,16 @@ namespace YAML
 namespace GPP
 {
     export using FieldValue = std::variant<std::monostate, bool, int, float, glm::vec2, glm::vec3, glm::vec4,
-                                           std::string, std::uint64_t>;
+                                           std::string, std::uint64_t, double, glm::dvec3>;
 
-    export enum class FieldType { Bool, Int, Float, Vec2, Vec3, Vec4, String, Entity, Enum };
+    export enum class FieldType { Bool, Int, Float, Vec2, Vec3, Vec4, String, Entity, Enum, Double, DVec3 };
+
+    export [[nodiscard]] inline FieldValue NarrowToSingle(const FieldValue& value)
+    {
+        if (const auto* d = std::get_if<double>(&value)) return static_cast<float>(*d);
+        if (const auto* v = std::get_if<glm::dvec3>(&value)) return glm::vec3(*v);
+        return value;
+    }
 
     export enum class FieldKind { Plain, Color, Direction, Angle, AssetPath, EntityRef, Multiline };
 
@@ -116,15 +147,18 @@ namespace GPP
     {
         std::string Label;
         std::string Category;
-        float Min = 0.0f;
-        float Max = 0.0f;
-        float Speed = 0.0f;
+        double Min = 0.0;
+        double Max = 0.0;
+        double Speed = 0.0;
         FieldKind Kind = FieldKind::Plain;
         bool ReadOnly = false;
         std::vector<std::string> Options;
         std::string Format;
         std::string VisibleField;
         std::uint32_t VisibleMask = 0;
+        Units::Dimension Dim = Units::Dimension::None;
+        double LegacyScale = 1.0;
+        double LegacyDefault = std::numeric_limits<double>::quiet_NaN();
     };
 
     namespace Reflect
@@ -138,6 +172,8 @@ namespace GPP
             if constexpr (std::is_same_v<M, bool>) return FieldType::Bool;
             else if constexpr (std::is_same_v<M, int>) return FieldType::Int;
             else if constexpr (std::is_same_v<M, float>) return FieldType::Float;
+            else if constexpr (std::is_same_v<M, double>) return FieldType::Double;
+            else if constexpr (std::is_same_v<M, glm::dvec3>) return FieldType::DVec3;
             else if constexpr (std::is_same_v<M, glm::vec2>) return FieldType::Vec2;
             else if constexpr (std::is_same_v<M, glm::vec3>) return FieldType::Vec3;
             else if constexpr (std::is_same_v<M, glm::vec4>) return FieldType::Vec4;
@@ -172,6 +208,20 @@ namespace GPP
             else if constexpr (std::is_same_v<X, float>)
             {
                 if (const auto* i = std::get_if<int>(&v)) { out = static_cast<float>(*i); return true; }
+                if (const auto* d = std::get_if<double>(&v)) { out = static_cast<float>(*d); return true; }
+            }
+            else if constexpr (std::is_same_v<X, double>)
+            {
+                if (const auto* i = std::get_if<int>(&v)) { out = static_cast<double>(*i); return true; }
+                if (const auto* f = std::get_if<float>(&v)) { out = static_cast<double>(*f); return true; }
+            }
+            else if constexpr (std::is_same_v<X, glm::dvec3>)
+            {
+                if (const auto* f = std::get_if<glm::vec3>(&v)) { out = glm::dvec3(*f); return true; }
+            }
+            else if constexpr (std::is_same_v<X, glm::vec3>)
+            {
+                if (const auto* d = std::get_if<glm::dvec3>(&v)) { out = glm::vec3(*d); return true; }
             }
             else if constexpr (std::is_same_v<X, int>)
             {

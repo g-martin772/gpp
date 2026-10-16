@@ -16,7 +16,11 @@ namespace GPP
         std::uint64_t Id{0};
         std::string Name;
         std::uint64_t Seed{0};
+        double TimeScale{1.0};
+        int LoadedSchemaVersion{0};
     };
+
+    export constexpr int kSceneSchemaVersion = 2;
 
     export struct ChangeSet
     {
@@ -44,6 +48,7 @@ namespace GPP
         [[nodiscard]] const SceneMetadata& Metadata() const noexcept { return m_Metadata; }
         void SetName(std::string name) { m_Metadata.Name = std::move(name); }
         void SetSeed(std::uint64_t seed) noexcept { m_Metadata.Seed = seed; }
+        void SetTimeScale(double scale) noexcept { m_Metadata.TimeScale = scale; }
 
         entt::entity CreateEntity(std::string name = {}, std::string typeTag = {});
         entt::entity CreateEntityWithGuid(std::uint64_t guid, std::string name = {}, std::string typeTag = {});

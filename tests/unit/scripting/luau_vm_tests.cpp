@@ -159,7 +159,7 @@ return M)", "=bind");
     REQUIRE(queued.size() == 1);
     CHECK(scene.Registry().get<TransformComponent>(entity).Position.x == 1.0f);
     queued[0](scene);
-    CHECK(scene.Registry().get<TransformComponent>(entity).Position == glm::vec3(9.0f, 8.0f, 7.0f));
+    CHECK(scene.Registry().get<TransformComponent>(entity).Position == glm::dvec3(9.0f, 8.0f, 7.0f));
 }
 
 TEST_CASE("math.random follows the bound generator and math.randomseed is inert", "[luau][random]")

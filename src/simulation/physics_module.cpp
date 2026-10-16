@@ -7,6 +7,26 @@ namespace GPP
 {
     namespace
     {
+        physx::PxVec3 ToPhysXPosition(const glm::dvec3& worldM, const glm::dvec3& originM)
+        {
+            const glm::dvec3 local = worldM - originM;
+            return {static_cast<float>(local.x), static_cast<float>(local.y), static_cast<float>(local.z)};
+        }
+
+        glm::dvec3 FromPhysXPosition(const physx::PxVec3& local, const glm::dvec3& originM)
+        {
+            return originM + glm::dvec3(local.x, local.y, local.z);
+        }
+
+        physx::PxVec3 ToPhysXVector(const glm::dvec3& v)
+        {
+            return {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z)};
+        }
+
+        glm::dvec3 FromPhysXVector(const physx::PxVec3& v) { return {v.x, v.y, v.z}; }
+
+        float ToPhysXScalar(const double value) { return static_cast<float>(value); }
+
         physx::PxFilterFlags DefaultFilterShader(
             physx::PxFilterObjectAttributes attributes0, physx::PxFilterData,
             physx::PxFilterObjectAttributes attributes1, physx::PxFilterData,
@@ -63,6 +83,16 @@ namespace GPP
             throw std::runtime_error("PhysicsSimulationModule: createScene failed.");
         }
 
+        glm::dvec3 sum{0.0};
+        std::size_t count = 0;
+        for (auto [entity, body, collider, transform] :
+             scene.Registry().view<const RigidBodyComponent, const ColliderComponent, const TransformComponent>().each())
+        {
+            sum += transform.Position;
+            ++count;
+        }
+        m_OriginM = count > 0 ? sum / static_cast<double>(count) : glm::dvec3(0.0);
+
         SyncActors(scene);
         if (m_Logger)
         {
@@ -82,7 +112,7 @@ namespace GPP
         }
 
         SyncActors(scene);
-        StepPhysics(deltaTime);
+        StepPhysics(static_cast<float>(static_cast<double>(deltaTime) * scene.Metadata().TimeScale));
 
         if (debugViz)
         {
@@ -174,7 +204,7 @@ namespace GPP
             const auto& body = view.get<RigidBodyComponent>(entity);
             const auto& collider = view.get<ColliderComponent>(entity);
             const auto& transform = view.get<TransformComponent>(entity);
-            if (auto* actor = CreateActor(entity, body, collider, transform))
+            if (auto* actor = CreateActor(entity, body, collider, transform, scene.Registry().try_get<MeshComponent>(entity)))
             {
                 SeedVelocity(entity, scene, actor);
                 AppliedState applied{.Position = transform.Position, .Rotation = transform.Rotation};
@@ -218,7 +248,7 @@ namespace GPP
             {
                 const auto q = transform->Rotation / length;
                 actor->setGlobalPose(physx::PxTransform(
-                    physx::PxVec3(transform->Position.x, transform->Position.y, transform->Position.z),
+                    ToPhysXPosition(transform->Position, m_OriginM),
                     physx::PxQuat(q.x, q.y, q.z, q.w)));
                 if (simulated)
                 {
@@ -238,16 +268,15 @@ namespace GPP
         if (const auto* velocity = scene.Registry().try_get<VelocityComponent>(entity);
             velocity && (velocity->Linear != applied.Linear || velocity->Angular != applied.Angular))
         {
-            dynamic->setLinearVelocity(physx::PxVec3(velocity->Linear.x, velocity->Linear.y, velocity->Linear.z));
-            dynamic->setAngularVelocity(
-                physx::PxVec3(velocity->Angular.x, velocity->Angular.y, velocity->Angular.z));
+            dynamic->setLinearVelocity(ToPhysXVector(velocity->Linear));
+            dynamic->setAngularVelocity(ToPhysXVector(velocity->Angular));
             dynamic->wakeUp();
             applied.Linear = velocity->Linear;
             applied.Angular = velocity->Angular;
         }
     }
 
-    physx::PxConvexMesh* PhysicsSimulationModule::CookConvexMesh(const std::vector<glm::vec3>& points)
+    physx::PxConvexMesh* PhysicsSimulationModule::CookConvexMesh(const std::vector<glm::vec3>& points, const double metresPerUnit)
     {
         if (points.size() < 4)
         {
@@ -263,7 +292,8 @@ namespace GPP
         pxPoints.reserve(points.size());
         for (const auto& point : points)
         {
-            pxPoints.emplace_back(point.x, point.y, point.z);
+            pxPoints.emplace_back(ToPhysXScalar(point.x * metresPerUnit), ToPhysXScalar(point.y * metresPerUnit),
+                                  ToPhysXScalar(point.z * metresPerUnit));
         }
 
         physx::PxConvexMeshDesc desc;
@@ -284,17 +314,17 @@ namespace GPP
 
     physx::PxRigidActor* PhysicsSimulationModule::CreateActor(
         entt::entity, const RigidBodyComponent& body, const ColliderComponent& collider,
-        const TransformComponent& transform)
+        const TransformComponent& transform, const MeshComponent* mesh)
     {
         physx::PxConvexMesh* convexMesh = nullptr;
         if (collider.Shape == ColliderShape::ConvexMesh)
         {
-            convexMesh = CookConvexMesh(collider.ConvexHullPoints);
+            convexMesh = CookConvexMesh(collider.ConvexHullPoints, mesh ? mesh->MetresPerUnit : 1.0);
             if (!convexMesh) return nullptr;
         }
 
         const physx::PxTransform pxTransform(
-            physx::PxVec3(transform.Position.x, transform.Position.y, transform.Position.z),
+            ToPhysXPosition(transform.Position, m_OriginM),
             physx::PxQuat(transform.Rotation.x, transform.Rotation.y, transform.Rotation.z,
                          transform.Rotation.w));
 
@@ -325,11 +355,11 @@ namespace GPP
         {
         case ColliderShape::Sphere:
             shape = physx::PxRigidActorExt::createExclusiveShape(
-                *actor, physx::PxSphereGeometry(collider.Radius), *material);
+                *actor, physx::PxSphereGeometry(ToPhysXScalar(collider.Radius)), *material);
             break;
         case ColliderShape::Capsule:
             shape = physx::PxRigidActorExt::createExclusiveShape(
-                *actor, physx::PxCapsuleGeometry(collider.Radius, collider.HalfHeight), *material);
+                *actor, physx::PxCapsuleGeometry(ToPhysXScalar(collider.Radius), ToPhysXScalar(collider.HalfHeight)), *material);
             break;
         case ColliderShape::Plane:
             shape = physx::PxRigidActorExt::createExclusiveShape(
@@ -344,7 +374,8 @@ namespace GPP
         default:
             shape = physx::PxRigidActorExt::createExclusiveShape(
                 *actor,
-                physx::PxBoxGeometry(collider.HalfExtents.x, collider.HalfExtents.y, collider.HalfExtents.z),
+                physx::PxBoxGeometry(ToPhysXScalar(collider.HalfExtents.x), ToPhysXScalar(collider.HalfExtents.y),
+                                     ToPhysXScalar(collider.HalfExtents.z)),
                 *material);
             break;
         }
@@ -374,7 +405,7 @@ namespace GPP
             dynamic->setAngularDamping(body.AngularDamping);
             if (body.Type == RigidBodyType::Dynamic)
             {
-                physx::PxRigidBodyExt::setMassAndUpdateInertia(*dynamic, std::max(body.Mass, 0.0001f));
+                physx::PxRigidBodyExt::setMassAndUpdateInertia(*dynamic, ToPhysXScalar(std::clamp(body.Mass, 1e-4, 1e37)));
             }
         }
 
@@ -391,9 +422,8 @@ namespace GPP
         }
         if (const auto* velocity = scene.Registry().try_get<VelocityComponent>(entity))
         {
-            dynamic->setLinearVelocity(physx::PxVec3(velocity->Linear.x, velocity->Linear.y, velocity->Linear.z));
-            dynamic->setAngularVelocity(
-                physx::PxVec3(velocity->Angular.x, velocity->Angular.y, velocity->Angular.z));
+            dynamic->setLinearVelocity(ToPhysXVector(velocity->Linear));
+            dynamic->setAngularVelocity(ToPhysXVector(velocity->Angular));
         }
     }
 
@@ -440,7 +470,7 @@ namespace GPP
             }
             auto& applied = m_Applied[entity];
             const auto pose = actor->getGlobalPose();
-            transform->Position = {pose.p.x, pose.p.y, pose.p.z};
+            transform->Position = FromPhysXPosition(pose.p, m_OriginM);
             transform->Rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z};
             bool changed = transform->Position != applied.Position || transform->Rotation != applied.Rotation;
             applied.Position = transform->Position;
@@ -450,8 +480,8 @@ namespace GPP
             {
                 const auto linear = dynamic->getLinearVelocity();
                 const auto angular = dynamic->getAngularVelocity();
-                velocity->Linear = {linear.x, linear.y, linear.z};
-                velocity->Angular = {angular.x, angular.y, angular.z};
+                velocity->Linear = FromPhysXVector(linear);
+                velocity->Angular = FromPhysXVector(angular);
                 changed = changed || velocity->Linear != applied.Linear || velocity->Angular != applied.Angular;
                 applied.Linear = velocity->Linear;
                 applied.Angular = velocity->Angular;

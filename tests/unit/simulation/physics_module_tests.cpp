@@ -59,7 +59,7 @@ TEST_CASE ("PhysicsSimulationModule leaves static bodies in place", "[simulation
         physics.OnTick(scene, 1.0f / 60.0f);
     }
 
-    CHECK(scene.Registry().get<TransformComponent>(floor).Position == glm::vec3(0.0f, -5.0f, 0.0f));
+    CHECK(scene.Registry().get<TransformComponent>(floor).Position == glm::dvec3(0.0f, -5.0f, 0.0f));
     physics.OnShutdown(scene);
 }
 
