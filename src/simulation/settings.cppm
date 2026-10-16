@@ -24,13 +24,21 @@ namespace GPP
         int Cost = 0;
         // Capability key the whole setting needs (empty = none)
         std::string Requires;
+        // Enum option names, also the YAML spelling
         std::vector<std::string> Options;
+        // Display text per option when it should differ from Options
+        std::vector<std::string> OptionLabels;
         // Per-option capability keys and costs, empty or the size of Options
         std::vector<std::string> OptionRequires;
         std::vector<int> OptionCosts;
         std::string Format;
-        // Shown only while this setting is non-zero (bool/enum/int)
+        // Shown only while a condition on another setting holds: "key" (non-zero), "key=N", "key>=N", "key!=N"
         std::string VisibleWhen;
+
+        [[nodiscard]] const std::string& OptionLabel(std::size_t index) const
+        {
+            return index < OptionLabels.size() ? OptionLabels[index] : Options[index];
+        }
     };
 
     export template <typename T>
@@ -171,6 +179,41 @@ namespace GPP
                     }
                 }
             }
+        }
+
+        // False when the setting's VisibleWhen condition does not hold for `value`
+        [[nodiscard]] bool IsVisible(const T& value, const SettingDesc<T>& setting) const
+        {
+            std::string_view condition = setting.Meta.VisibleWhen;
+            if (condition.empty()) return true;
+            const auto operatorAt = condition.find_first_of("=!>");
+            const auto key = SettingDetail::Trim(condition.substr(0, operatorAt));
+            const auto* other = Find(key);
+            if (!other) return true;
+
+            double current = 0.0;
+            std::visit([&](const auto& v)
+            {
+                using V = std::remove_cvref_t<decltype(v)>;
+                if constexpr (std::is_arithmetic_v<V>) current = static_cast<double>(v);
+            }, other->Get(value));
+            if (operatorAt == std::string_view::npos) return current != 0.0;
+
+            auto rest = condition.substr(operatorAt);
+            enum class Op { Equal, NotEqual, AtLeast } op = Op::Equal;
+            if (rest.starts_with(">=")) { op = Op::AtLeast; rest.remove_prefix(2); }
+            else if (rest.starts_with("!=")) { op = Op::NotEqual; rest.remove_prefix(2); }
+            else rest.remove_prefix(1);
+            double expected = 0.0;
+            const auto text = SettingDetail::Trim(rest);
+            std::from_chars(text.data(), text.data() + text.size(), expected);
+            switch (op)
+            {
+            case Op::Equal: return current == expected;
+            case Op::NotEqual: return current != expected;
+            case Op::AtLeast: return current >= expected;
+            }
+            return true;
         }
 
         [[nodiscard]] bool Equal(const T& a, const T& b, const SettingDesc<T>& setting) const

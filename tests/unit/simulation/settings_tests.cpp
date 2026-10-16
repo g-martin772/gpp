@@ -142,3 +142,43 @@ TEST_CASE("ToText renders enum labels and plain numbers", "[settings]")
     CHECK(registry.ToText(value, *registry.Find("a.steps")) == "100");
     CHECK(registry.ToText(value, *registry.Find("a.enabled")) == "true");
 }
+
+TEST_CASE("VisibleWhen supports truthiness and comparisons", "[settings]")
+{
+    SettingRegistry<Demo> registry;
+    registry.Add(Setting("a.enabled", &Demo::Enabled, {.Group = "A"}));
+    registry.Add(Setting("a.level", &Demo::Level, {.Group = "A", .Options = {"Draft", "Final"}}));
+    registry.Add(Setting("a.steps", &Demo::Steps, {.Group = "A"}));
+    registry.Add(Setting("b.truthy", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "a.enabled"}));
+    registry.Add(Setting("b.equal", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "a.level=1"}));
+    registry.Add(Setting("b.atleast", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "a.steps>=100"}));
+    registry.Add(Setting("b.not", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "a.level!=1"}));
+    registry.Add(Setting("b.always", &Demo::Tolerance, {.Group = "B"}));
+    registry.Add(Setting("b.missing", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "nope"}));
+
+    Demo value;
+    const auto visible = [&](const char* key) { return registry.IsVisible(value, *registry.Find(key)); };
+    CHECK(visible("b.truthy"));
+    CHECK_FALSE(visible("b.equal"));
+    CHECK(visible("b.atleast"));
+    CHECK(visible("b.not"));
+    CHECK(visible("b.always"));
+    CHECK(visible("b.missing"));
+
+    value.Enabled = false;
+    value.Level = Quality::Final;
+    value.Steps = 99;
+    CHECK_FALSE(visible("b.truthy"));
+    CHECK(visible("b.equal"));
+    CHECK_FALSE(visible("b.atleast"));
+    CHECK_FALSE(visible("b.not"));
+}
+
+TEST_CASE("Option labels fall back to option names", "[settings]")
+{
+    const auto registry = MakeRegistry();
+    CHECK(registry.Find("b.level")->Meta.OptionLabel(1) == "Final");
+    SettingMeta meta{.Options = {"A", "B"}, .OptionLabels = {"First"}};
+    CHECK(meta.OptionLabel(0) == "First");
+    CHECK(meta.OptionLabel(1) == "B");
+}

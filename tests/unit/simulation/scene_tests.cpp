@@ -304,6 +304,26 @@ TEST_CASE ("Scene extensions round-trip and survive clone and sync", "[simulatio
     CHECK((*clone.FindExtension("Graphs"))["Version"].as<int>() == 1);
 }
 
+TEST_CASE ("The extension revision changes with every extension change and is copied by clones", "[simulation][scene][extensions]")
+{
+    Scene scene("Rev");
+    const auto initial = scene.ExtensionRevision();
+
+    YAML::Node node;
+    node["A"] = 1;
+    scene.SetExtension("X", node);
+    const auto afterSet = scene.ExtensionRevision();
+    CHECK(afterSet != initial);
+
+    scene.RemoveExtension("missing");
+    CHECK(scene.ExtensionRevision() == afterSet);
+    scene.RemoveExtension("X");
+    CHECK(scene.ExtensionRevision() != afterSet);
+
+    scene.SetExtension("X", node);
+    CHECK(scene.Clone().ExtensionRevision() == scene.ExtensionRevision());
+}
+
 TEST_CASE ("Scene creates entities with a chosen guid and clones them", "[simulation][scene]")
 {
     RegisterTestComponents();

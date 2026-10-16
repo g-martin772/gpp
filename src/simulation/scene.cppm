@@ -70,6 +70,8 @@ namespace GPP
 
         void SetExtension(std::string name, const YAML::Node& value);
         void RemoveExtension(const std::string& name);
+        // Changes whenever any extension does; equal revisions mean the extensions are identical
+        [[nodiscard]] std::uint64_t ExtensionRevision() const noexcept { return m_ExtensionRevision; }
         [[nodiscard]] const YAML::Node* FindExtension(const std::string& name) const;
         [[nodiscard]] const std::map<std::string, YAML::Node>& Extensions() const noexcept { return m_Extensions; }
 
