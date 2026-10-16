@@ -74,6 +74,19 @@ namespace GPP
             call.PushValue(ReadComponentField(*context->Read, call.Entity(1), call.String(2), call.String(3)));
             return 1;
         });
+        vm.Register("scene", "get_xyz", [context](LuauNativeCall& call)
+        {
+            if (!context->Read) return 0;
+            const auto value = ReadComponentField(*context->Read, call.Entity(1), call.String(2), call.String(3));
+            glm::dvec3 v;
+            if (const auto* wide = std::get_if<glm::dvec3>(&value)) v = *wide;
+            else if (const auto* narrow = std::get_if<glm::vec3>(&value)) v = *narrow;
+            else return 0;
+            call.PushNumber(v.x);
+            call.PushNumber(v.y);
+            call.PushNumber(v.z);
+            return 3;
+        });
         vm.Register("scene", "find", [context](LuauNativeCall& call)
         {
             if (!context->Read) return 0;
@@ -118,6 +131,26 @@ namespace GPP
             call.PushValue(LookAtEulerDegrees(std::get<glm::vec3>(from), std::get<glm::vec3>(target)));
             return 1;
         });
+        vm.Register("scene", "set_xyz", [context](LuauNativeCall& call)
+        {
+            const auto* info = FindComponentField(call.String(2), call.String(3));
+            const glm::dvec3 v(call.Number(4), call.Number(5), call.Number(6));
+            LuauValue value;
+            if (info && info->Type == FieldType::DVec3) value = v;
+            else if (info && info->Type == FieldType::Vec3) value = glm::vec3(v);
+            const bool ok = info && info->Set && (context->WriteCommand || context->Write) &&
+                            !std::holds_alternative<std::monostate>(value);
+            if (ok && context->WriteCommand)
+            {
+                context->WriteCommand(SetFieldCommand{call.Entity(1), call.String(2), call.String(3), std::move(value)});
+            }
+            else if (ok)
+            {
+                context->Write(MakeComponentFieldWrite(call.Entity(1), call.String(2), call.String(3), std::move(value)));
+            }
+            call.PushBoolean(ok);
+            return 1;
+        });
         vm.Register("scene", "set", [context](LuauNativeCall& call)
         {
             const auto* info = FindComponentField(call.String(2), call.String(3));
@@ -144,6 +177,23 @@ namespace GPP
         {
             const auto kind = EaseFromName(call.String(1));
             call.PushNumber(kind ? Ease(*kind, static_cast<float>(call.Number(2))) : call.Number(2));
+            return 1;
+        });
+        vm.Register("units", "convert", [](LuauNativeCall& call)
+        {
+            const auto from = call.String(2);
+            const auto to = call.String(3);
+            const auto result = Units::Convert(call.Number(1), from, to);
+            if (!result) throw std::runtime_error("units.convert: cannot convert '" + from + "' to '" + to + "'");
+            call.PushNumber(*result);
+            return 1;
+        });
+        vm.Register("units", "const", [](LuauNativeCall& call)
+        {
+            const auto name = call.String(1);
+            const auto value = Units::FindConstant(name);
+            if (!value) throw std::runtime_error("units.const: unknown constant '" + name + "'");
+            call.PushNumber(*value);
             return 1;
         });
         vm.Register("gpp", "vecmeta", [](LuauNativeCall& call)

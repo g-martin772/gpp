@@ -33,6 +33,8 @@ declare scene: {
     exists: (entity: Entity?) -> boolean,
     get: (entity: Entity, component: string, field: string) -> any,
     set: (entity: Entity, component: string, field: string, value: any) -> boolean,
+    get_xyz: (entity: Entity, component: string, field: string) -> (number, number, number),
+    set_xyz: (entity: Entity, component: string, field: string, x: number, y: number, z: number) -> boolean,
     find: (name: string) -> Entity?,
     name: (entity: Entity) -> string?,
     query: (component: string) -> { Entity },
@@ -42,6 +44,11 @@ declare scene: {
 declare gpp: {
     ease: (name: string, t: number) -> number,
     random: ((() -> number) & ((max: number) -> number) & ((min: number, max: number) -> number)),
+}
+
+declare units: {
+    convert: (value: number, from: string, to: string) -> number,
+    const: (name: "c" | "G" | "h" | "hbar" | "kB" | "e" | "NA" | "sigma" | "eps0" | "mu0" | "mp" | "me" | "sigmaT" | "Msun" | "Rsun" | "Lsun" | "Mearth" | "Mjup" | "AU" | "pc" | "ly" | "year" | "day") -> number,
 }
 
 declare ease: (name: string, t: number) -> number

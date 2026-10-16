@@ -21,9 +21,10 @@ export namespace GPP
         float Min{0.0f};
         float Max{0.0f};
         bool HasRange{false};
+        Units::Dimension Dim{Units::Dimension::None};
     };
 
-    // What a script's header table declares: `properties = { {name=, type=, default=, min=, max=}, ... }`.
+    // What a script's header table declares: `properties = { {name=, type=, default=, min=, max=, unit=}, ... }`.
     struct ScriptDescriptor
     {
         std::string Name;

@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 import GPP;
 import std;
 
 using namespace GPP;
+using Catch::Approx;
 
 namespace
 {
@@ -162,6 +164,56 @@ return M)", "=bind");
     CHECK(scene.Registry().get<TransformComponent>(entity).Position == glm::dvec3(9.0f, 8.0f, 7.0f));
 }
 
+TEST_CASE("scene.get_xyz and set_xyz keep double precision for large positions", "[luau][bindings][units]")
+{
+    RegisterBaseComponents();
+    Scene scene("WidePositions");
+    const auto entity = scene.CreateEntity("Far");
+    const glm::dvec3 start(1.5e11 + 0.25, -2.0e12, 3.0);
+    scene.Registry().emplace<TransformComponent>(entity).Position = start;
+    const auto guid = scene.GuidOf(entity);
+
+    auto context = std::make_shared<SceneBindings>();
+    context->Read = &scene;
+    std::vector<std::function<void(Scene&)>> queued;
+    context->Write = [&queued](std::function<void(Scene&)> write) { queued.push_back(std::move(write)); };
+
+    LuauVm vm;
+    std::vector<double> seen;
+    vm.Register("test", "guid", [guid](LuauNativeCall& call)
+    {
+        call.PushEntity(guid);
+        return 1;
+    });
+    vm.Register("test", "push", [&seen](LuauNativeCall& call)
+    {
+        seen.push_back(call.Number(1));
+        return 0;
+    });
+    RegisterSceneBindings(vm, context);
+    vm.Seal();
+    auto handle = vm.Load(R"(local M = {}
+function M.run()
+    local e = test.guid()
+    local x, y, z = scene.get_xyz(e, "Transform", "Position")
+    test.push(x) test.push(y) test.push(z)
+    assert(scene.set_xyz(e, "Transform", "Position", x + 0.125, y, z))
+    assert(not scene.set_xyz(e, "Transform", "Nope", 1, 2, 3))
+    assert(scene.get_xyz(e, "Transform", "Nope") == nil)
+end
+return M)", "=xyz");
+    REQUIRE(handle.has_value());
+    auto result = vm.Call(*handle, "run");
+    INFO((result ? "" : result.error().Message));
+    REQUIRE(result.has_value());
+    REQUIRE(seen.size() == 3);
+    CHECK(seen[0] == start.x);
+    CHECK(seen[1] == start.y);
+    REQUIRE(queued.size() == 1);
+    queued[0](scene);
+    CHECK(scene.Registry().get<TransformComponent>(entity).Position.x == start.x + 0.125);
+}
+
 TEST_CASE("math.random follows the bound generator and math.randomseed is inert", "[luau][random]")
 {
     const auto run = [](std::uint64_t seed)
@@ -191,4 +243,40 @@ TEST_CASE("math.random follows the bound generator and math.randomseed is inert"
     CHECK(first[1] <= 10.0);
     CHECK(first[2] >= 5.0);
     CHECK(first[2] <= 6.0);
+}
+
+TEST_CASE("units.convert and units.const expose the C++ unit table to scripts", "[luau][units]")
+{
+    LuauVm vm;
+    std::vector<double> values;
+    vm.Register("out", "push", [&values](LuauNativeCall& call)
+    {
+        values.push_back(call.Number(1));
+        return 0;
+    });
+    RegisterMathBindings(vm);
+    vm.Seal();
+    auto handle = vm.Load(
+        "local M = {}\n"
+        "function M.go()\n"
+        "  out.push(units.convert(1, \"Msun\", \"kg\"))\n"
+        "  out.push(units.convert(1, \"AU\", \"km\"))\n"
+        "  out.push(units.convert(90, \"min\", \"h\"))\n"
+        "  out.push(units.const(\"c\"))\n"
+        "  out.push(units.const(\"G\"))\n"
+        "end\n"
+        "function M.badunit() return units.convert(1, \"Msun\", \"m\") end\n"
+        "function M.badconst() return units.const(\"nope\") end\n"
+        "return M",
+        "=units");
+    REQUIRE(handle.has_value());
+    REQUIRE(vm.Call(*handle, "go").has_value());
+    REQUIRE(values.size() == 5);
+    CHECK(values[0] == Approx(Units::kSolarMass));
+    CHECK(values[1] == Approx(Units::kAstronomicalUnit / 1000.0));
+    CHECK(values[2] == Approx(1.5));
+    CHECK(values[3] == 299792458.0);
+    CHECK(values[4] == Approx(6.67430e-11));
+    CHECK_FALSE(vm.Call(*handle, "badunit").has_value());
+    CHECK_FALSE(vm.Call(*handle, "badconst").has_value());
 }

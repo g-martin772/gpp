@@ -118,6 +118,7 @@ namespace GPP
             meta.Min = property.Min;
             meta.Max = property.Max;
         }
+        meta.Dim = property.Dim;
         if (property.Type == ScriptPropType::Color) meta.Kind = FieldKind::Color;
         if (property.Type == ScriptPropType::Entity) meta.Kind = FieldKind::EntityRef;
         return meta;
@@ -285,6 +286,15 @@ namespace GPP
                 property.Min = static_cast<float>(call.Number(5));
                 property.Max = static_cast<float>(call.Number(6));
             }
+            if (!call.IsNil(7))
+            {
+                const auto unit = Units::FindUnitAny(call.String(7));
+                if (!unit || *type != ScriptPropType::Float)
+                {
+                    throw std::runtime_error(where + ": 'unit' needs a known unit on a float property, got '" + call.String(7) + "'");
+                }
+                property.Dim = unit->Dim;
+            }
             sink->Properties.push_back(std::move(property));
             return 0;
         });
@@ -299,7 +309,7 @@ function script.describe(mod)
     if type(props) ~= "table" then return end
     for i, p in props do
         if type(p) ~= "table" then error("properties[" .. i .. "] must be a table", 0) end
-        gpp.declare(i, p.name, p.type, p.default, p.min, p.max)
+        gpp.declare(i, p.name, p.type, p.default, p.min, p.max, p.unit)
     end
 end
 gpp.script = script

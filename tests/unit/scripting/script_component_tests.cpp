@@ -80,6 +80,23 @@ TEST_CASE("A script header declares typed properties with defaults and ranges", 
     CHECK(ToFieldType(ScriptPropType::Entity) == FieldType::Entity);
 }
 
+TEST_CASE("A float property can declare a unit that becomes the field dimension", "[scripting][components][units]")
+{
+    ScriptDir dir("units");
+    dir.Write("arm", "return { properties = { { name = 'Length', type = 'float', unit = 'km', default = 5 } } }");
+    dir.Write("badunit", "return { properties = { { name = 'A', type = 'float', unit = 'parsnips' } } }");
+    dir.Write("inttype", "return { properties = { { name = 'A', type = 'int', unit = 'm' } } }");
+    AssetDirectories assets(dir.Options);
+    ScriptCatalog catalog(assets, std::chrono::milliseconds(0));
+
+    const auto arm = catalog.Describe("arm");
+    INFO(arm->Error);
+    REQUIRE(arm->Ok());
+    CHECK(PropertyMeta(*arm->Find("Length")).Dim == Units::Dimension::Length);
+    CHECK(catalog.Describe("badunit")->Error.find("unit") != std::string::npos);
+    CHECK(catalog.Describe("inttype")->Error.find("unit") != std::string::npos);
+}
+
 TEST_CASE("Bad headers and missing scripts produce descriptor errors", "[scripting][components]")
 {
     ScriptDir dir("badheader");
