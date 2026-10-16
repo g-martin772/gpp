@@ -10,6 +10,17 @@ namespace GPP
 {
     namespace
     {
+        // Process-wide, so equal revisions mean equal extensions even across restores (Scene::SyncInto copies the
+        // source's revision, which would otherwise let a later edit reuse a number a published snapshot already holds)
+        std::uint64_t NextExtensionRevision()
+        {
+            static std::atomic<std::uint64_t> counter{0};
+            return ++counter;
+        }
+    }
+
+    namespace
+    {
         std::vector<entt::entity> AllEntities(const entt::registry& registry)
         {
             std::vector<entt::entity> entities;
@@ -120,12 +131,12 @@ namespace GPP
     void Scene::SetExtension(std::string name, const YAML::Node& value)
     {
         m_Extensions[std::move(name)] = YAML::Clone(value);
-        ++m_ExtensionRevision;
+        m_ExtensionRevision = NextExtensionRevision();
     }
 
     void Scene::RemoveExtension(const std::string& name)
     {
-        if (m_Extensions.erase(name) > 0) ++m_ExtensionRevision;
+        if (m_Extensions.erase(name) > 0) m_ExtensionRevision = NextExtensionRevision();
     }
 
     const YAML::Node* Scene::FindExtension(const std::string& name) const
@@ -328,7 +339,7 @@ namespace GPP
         m_Registry.clear();
         m_GuidIndex = GuidIndex{};
         m_Extensions.clear();
-        ++m_ExtensionRevision;
+        m_ExtensionRevision = NextExtensionRevision();
         MarkAllDirty();
 
         const auto root = YAML::Load(yaml);

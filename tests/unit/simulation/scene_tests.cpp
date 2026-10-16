@@ -324,6 +324,28 @@ TEST_CASE ("The extension revision changes with every extension change and is co
     CHECK(scene.Clone().ExtensionRevision() == scene.ExtensionRevision());
 }
 
+TEST_CASE ("A restore never lets a later extension edit reuse a revision", "[simulation][scene][extensions]")
+{
+    Scene live("Live");
+    YAML::Node first;
+    first["V"] = 1;
+    live.SetExtension("X", first);
+    const Scene snapshot = live.Clone();
+
+    YAML::Node second;
+    second["V"] = 2;
+    live.SetExtension("X", second);
+    const auto published = live.ExtensionRevision(); // what a published snapshot of the live scene holds
+
+    Scene::SyncInto(snapshot, live);
+    CHECK(live.ExtensionRevision() == snapshot.ExtensionRevision());
+    YAML::Node third;
+    third["V"] = 3;
+    live.SetExtension("X", third);
+    CHECK(live.ExtensionRevision() != published);
+    CHECK(live.ExtensionRevision() != snapshot.ExtensionRevision());
+}
+
 TEST_CASE ("Scene creates entities with a chosen guid and clones them", "[simulation][scene]")
 {
     RegisterTestComponents();
