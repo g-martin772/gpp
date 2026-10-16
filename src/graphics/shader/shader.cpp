@@ -13,6 +13,18 @@ namespace GPP
 {
     namespace
     {
+        std::mutex& GlobalDefinesMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        std::unordered_map<std::string, std::string>& GlobalDefines()
+        {
+            static std::unordered_map<std::string, std::string> defines;
+            return defines;
+        }
+
         std::uint64_t HashBytes(std::string_view bytes)
         {
             std::uint64_t hash = 14695981039346656037ull;
@@ -480,9 +492,20 @@ namespace GPP
         }
     }
 
-    CompiledShader ShaderCompiler::Compile(const ShaderSource& source,
+    void SetGlobalShaderDefines(std::unordered_map<std::string, std::string> defines)
+    {
+        std::scoped_lock lock(GlobalDefinesMutex());
+        GlobalDefines() = std::move(defines);
+    }
+
+    CompiledShader ShaderCompiler::Compile(const ShaderSource& unmerged,
                                            const ShaderCompileOptions& options) const
     {
+        ShaderSource source = unmerged;
+        {
+            std::scoped_lock lock(GlobalDefinesMutex());
+            for (const auto& [name, value] : GlobalDefines()) source.defines.try_emplace(name, value);
+        }
         if (source.path.empty())
         {
             throw std::invalid_argument("Shader source path cannot be empty.");

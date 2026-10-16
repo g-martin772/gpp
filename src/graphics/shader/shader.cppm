@@ -114,6 +114,8 @@ namespace GPP
         std::unordered_map<std::string, std::string> defines;
     };
 
+    export void SetGlobalShaderDefines(std::unordered_map<std::string, std::string> defines);
+
     export struct ShaderCompileOptions
     {
         std::filesystem::path cacheDirectory;
