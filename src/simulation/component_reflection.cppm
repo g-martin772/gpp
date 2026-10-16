@@ -267,10 +267,43 @@ namespace GPP
             }
         }
 
+        // `{value: 10, unit: Msun}` (value may be a sequence) and `"10 Msun"` become the plain SI node; anything else is returned as is.
+        inline YAML::Node ResolveTagged(const YAML::Node& node, const FieldMeta& meta)
+        {
+            if (!node || meta.Dim == Units::Dimension::None) return node;
+            if (node.IsScalar())
+            {
+                double plain = 0.0;
+                const auto text = node.as<std::string>();
+                if (std::from_chars(text.data(), text.data() + text.size(), plain).ec == std::errc{}
+                    && !text.empty() && std::isdigit(static_cast<unsigned char>(text.back())))
+                {
+                    return node;
+                }
+                const auto parsed = Units::ParseQuantity(text, meta.Dim);
+                return parsed ? YAML::Node(parsed->ValueSi) : node;
+            }
+            if (!node.IsMap() || !node["value"] || !node["unit"]) return node;
+            const auto resolved = Units::FindUnit(meta.Dim, node["unit"].as<std::string>());
+            if (!resolved)
+            {
+                throw std::runtime_error("unknown unit '" + node["unit"].as<std::string>() + "' for field '" + meta.Label + "'");
+            }
+            const auto toSi = [&](const YAML::Node& n)
+            {
+                return Units::ToSi(n.as<double>(), *resolved->Unit) * resolved->ExtraFactor;
+            };
+            const auto value = node["value"];
+            if (!value.IsSequence()) return YAML::Node(toSi(value));
+            YAML::Node out(YAML::NodeType::Sequence);
+            for (std::size_t i = 0; i < value.size(); ++i) out.push_back(toSi(value[i]));
+            return out;
+        }
+
         template <typename M>
         void FromYaml(const YAML::Node& node, const std::string& name, M& out, const FieldMeta& meta)
         {
-            const auto child = node[name];
+            const auto child = ResolveTagged(node[name], meta);
             if (!child) return;
             if constexpr (std::is_enum_v<M>)
             {

@@ -113,3 +113,32 @@ TEST_CASE("Double fields accept narrower values and report SI doubles", "[scene]
     CHECK(field->Type == FieldType::Double);
     CHECK(field->Meta.Dim == Units::Dimension::Mass);
 }
+
+TEST_CASE("Schema 2 scenes accept tagged and textual quantities and save plain SI", "[scene][units]")
+{
+    constexpr const char* yaml = R"(
+Scene: Tagged
+SchemaVersion: 2
+Entities:
+  - Guid: 21
+    Components:
+      Metadata: {Guid: 21, Name: Probe, TypeTag: Mesh}
+      Transform: {Position: {value: [1, 2, 0.5], unit: AU}, Rotation: [0, 0, 0, 1], Scale: [1, 1, 1]}
+      RigidBody: {Type: Dynamic, Mass: {value: 2, unit: Msun}}
+      Collider: {Shape: Sphere, Radius: "3 km"}
+)";
+    Scene scene;
+    scene.DeserializeFromYaml(yaml);
+    const auto entity = scene.FindByGuid(21);
+    REQUIRE(scene.IsValid(entity));
+    const auto& registry = scene.Registry();
+    CHECK(registry.get<TransformComponent>(entity).Position.y == Approx(2.0 * Units::kAstronomicalUnit));
+    CHECK(registry.get<RigidBodyComponent>(entity).Mass == Approx(2.0 * Units::kSolarMass));
+    CHECK(registry.get<ColliderComponent>(entity).Radius == Approx(3000.0));
+
+    const auto saved = scene.SerializeToYaml();
+    CHECK(saved.find("unit:") == std::string::npos);
+    Scene reloaded;
+    reloaded.DeserializeFromYaml(saved);
+    CHECK(reloaded.Registry().get<RigidBodyComponent>(reloaded.FindByGuid(21)).Mass == Approx(2.0 * Units::kSolarMass));
+}

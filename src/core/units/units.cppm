@@ -154,6 +154,13 @@ export namespace GPP::Units
         return Narrow<Real>(kGravitationalConstantW / (kSpeedOfLightW * kSpeedOfLightW * kSpeedOfLightW)) * massKg;
     }
 
+    // Kerr-Newman has a horizon iff a*^2 + q*^2 <= 1 (equality is the extremal case)
+    template <typename Real = double>
+    [[nodiscard]] bool HasHorizon(const Real spinStar, const Real chargeStar)
+    {
+        return spinStar * spinStar + chargeStar * chargeStar <= Real(1);
+    }
+
     // Outer/inner horizon radii in units of r_g: 1 +- sqrt(1 - a*^2 - q*^2); NaN for no horizon
     template <typename Real = double>
     [[nodiscard]] Real HorizonRadiusInGravitationalRadii(const Real spinStar, const Real chargeStar,
@@ -251,8 +258,8 @@ export namespace GPP::Units
                 {"cm", "centimetre", L, 1e-2, kNoAuto, {}, false},
                 {"m", "metre", L, 1.0, 1e-2, {"meter", "metres", "meters"}, true},
                 {"km", "kilometre", L, 1e3, 1e3, {"kilometer"}, false},
-                {"R\xE2\x98\x89", "solar radius", L, static_cast<double>(kSolarRadius), kNoAuto,
-                 {"Rsun", "Rsol", "R_sun"}, false},
+                {"Rsun", "solar radius", L, static_cast<double>(kSolarRadius), kNoAuto,
+                 {"Rsol", "R_sun", "R\xE2\x98\x89"}, false},
                 {"AU", "astronomical unit", L, au, 0.01 * au, {"au", "ua"}, false},
                 {"ly", "light year", L, ly, 0.1 * ly, {"Lj", "lj", "lightyear", "lightyears"}, false},
                 {"pc", "parsec", L, pc, pc, {"parsec"}, false},
@@ -263,10 +270,10 @@ export namespace GPP::Units
                 {"g", "gram", M, 1e-3, kNoAuto, {}, false},
                 {"kg", "kilogram", M, 1.0, 0.0, {"kilogram"}, false},
                 {"t", "tonne", M, 1e3, kNoAuto, {"tonne"}, false},
-                {"M\xE2\x8A\x95", "earth mass", M, static_cast<double>(kEarthMass), kNoAuto,
-                 {"Mearth", "Me", "M_earth"}, false},
+                {"Mearth", "earth mass", M, static_cast<double>(kEarthMass), kNoAuto,
+                 {"Me", "M_earth", "M\xE2\x8A\x95"}, false},
                 {"MJ", "jupiter mass", M, static_cast<double>(kJupiterMass), kNoAuto, {"Mjup", "M_jup"}, false},
-                {"M\xE2\x98\x89", "solar mass", M, sun, 0.1 * sun, {"Msun", "Msol", "M_sun", "Ms"}, false},
+                {"Msun", "solar mass", M, sun, 0.1 * sun, {"Msol", "M_sun", "Ms", "M\xE2\x98\x89"}, false},
                 {"Sgr A*", "Sagittarius A* mass", M, static_cast<double>(kSagittariusAStarMass),
                  0.5 * static_cast<double>(kSagittariusAStarMass), {"SgrA*", "SgrA", "Sgr A"}, false},
                 {"M87*", "M87* mass", M, static_cast<double>(kM87StarMass),
@@ -317,11 +324,95 @@ export namespace GPP::Units
         return nullptr;
     }
 
+    enum class DisplayPreset { Auto, Human, Stellar, Galactic };
+
+    inline constexpr std::array<DisplayPreset, 4> kDisplayPresets{DisplayPreset::Auto, DisplayPreset::Human,
+                                                                  DisplayPreset::Stellar, DisplayPreset::Galactic};
+
+    [[nodiscard]] constexpr std::string_view DisplayPresetName(const DisplayPreset preset)
+    {
+        switch (preset)
+        {
+        case DisplayPreset::Human: return "Human";
+        case DisplayPreset::Stellar: return "Stellar";
+        case DisplayPreset::Galactic: return "Galactic";
+        default: return "Auto";
+        }
+    }
+
+    [[nodiscard]] inline std::optional<DisplayPreset> DisplayPresetFromName(const std::string_view name)
+    {
+        for (const auto preset : kDisplayPresets)
+        {
+            const auto candidate = DisplayPresetName(preset);
+            if (std::ranges::equal(candidate, name, [](const char a, const char b)
+                                   { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); }))
+            {
+                return preset;
+            }
+        }
+        return std::nullopt;
+    }
+
+    namespace Detail
+    {
+        inline std::atomic<DisplayPreset> g_DisplayPreset{DisplayPreset::Auto};
+
+        // Symbols a preset may show per dimension; the largest one not above the magnitude wins.
+        [[nodiscard]] inline std::span<const std::string_view> PresetUnits(const DisplayPreset preset, const Dimension dimension)
+        {
+            using Symbols = std::span<const std::string_view>;
+            static constexpr std::array<std::string_view, 5> humanLength{"nm", "\xC2\xB5m", "mm", "m", "km"};
+            static constexpr std::array<std::string_view, 3> humanMass{"g", "kg", "t"};
+            static constexpr std::array<std::string_view, 7> humanTime{"ns", "\xC2\xB5s", "ms", "s", "min", "h", "d"};
+            static constexpr std::array<std::string_view, 4> stellarLength{"m", "km", "Rsun", "AU"};
+            static constexpr std::array<std::string_view, 3> stellarMass{"kg", "Mearth", "Msun"};
+            static constexpr std::array<std::string_view, 4> stellarTime{"s", "h", "d", "yr"};
+            static constexpr std::array<std::string_view, 6> galacticLength{"AU", "ly", "pc", "kpc", "Mpc", "Gpc"};
+            static constexpr std::array<std::string_view, 3> galacticMass{"Msun", "Sgr A*", "M87*"};
+            static constexpr std::array<std::string_view, 4> galacticTime{"yr", "kyr", "Myr", "Gyr"};
+            if (preset == DisplayPreset::Human)
+            {
+                if (dimension == Dimension::Length) return humanLength;
+                if (dimension == Dimension::Mass) return humanMass;
+                if (dimension == Dimension::Time) return humanTime;
+            }
+            else if (preset == DisplayPreset::Stellar)
+            {
+                if (dimension == Dimension::Length) return stellarLength;
+                if (dimension == Dimension::Mass) return stellarMass;
+                if (dimension == Dimension::Time) return stellarTime;
+            }
+            else if (preset == DisplayPreset::Galactic)
+            {
+                if (dimension == Dimension::Length) return galacticLength;
+                if (dimension == Dimension::Mass) return galacticMass;
+                if (dimension == Dimension::Time) return galacticTime;
+            }
+            return {};
+        }
+    }
+
+    inline void SetDisplayPreset(const DisplayPreset preset) { Detail::g_DisplayPreset.store(preset, std::memory_order_relaxed); }
+    [[nodiscard]] inline DisplayPreset GetDisplayPreset() { return Detail::g_DisplayPreset.load(std::memory_order_relaxed); }
+
     [[nodiscard]] inline const UnitDef* PickDisplayUnit(const Dimension dimension, const double valueSi)
     {
         const UnitDef* base = BaseUnit(dimension);
         if (!std::isfinite(valueSi) || valueSi == 0.0) return base;
         const double magnitude = std::fabs(valueSi);
+        if (const auto symbols = Detail::PresetUnits(GetDisplayPreset(), dimension); !symbols.empty())
+        {
+            const UnitDef* smallest = nullptr;
+            const UnitDef* chosen = nullptr;
+            for (const auto& unit : AllUnits())
+            {
+                if (unit.Dim != dimension || std::ranges::find(symbols, unit.Symbol) == symbols.end()) continue;
+                if (!smallest || unit.Scale < smallest->Scale) smallest = &unit;
+                if (unit.Scale <= magnitude && (!chosen || unit.Scale > chosen->Scale)) chosen = &unit;
+            }
+            if (chosen || smallest) return chosen ? chosen : smallest;
+        }
         const UnitDef* chosen = nullptr;
         for (const auto& unit : AllUnits())
         {
@@ -398,6 +489,92 @@ export namespace GPP::Units
                     return ResolvedUnit{&unit, prefix.Factor};
                 }
             }
+        }
+        return std::nullopt;
+    }
+
+    struct AnyUnit
+    {
+        Dimension Dim = Dimension::None;
+        ResolvedUnit Resolved;
+    };
+
+    // Exact symbols across all dimensions win over case-insensitive ones ("ms" is a millisecond, not "Ms").
+    [[nodiscard]] inline std::optional<AnyUnit> FindUnitAny(const std::string_view text)
+    {
+        constexpr std::array dimensions{Dimension::Length, Dimension::Mass, Dimension::Time, Dimension::Velocity,
+                                        Dimension::AngularRate, Dimension::Temperature};
+        for (const bool exact : {true, false})
+        {
+            for (const auto dimension : dimensions)
+            {
+                for (const auto& unit : AllUnits())
+                {
+                    if (unit.Dim == dimension && Detail::Matches(unit, text, exact)) return AnyUnit{dimension, {&unit, 1.0}};
+                }
+            }
+        }
+        for (const auto dimension : dimensions)
+        {
+            if (const auto resolved = FindUnit(dimension, text)) return AnyUnit{dimension, *resolved};
+        }
+        return std::nullopt;
+    }
+
+    // value in `from` to `to`; nullopt when a unit is unknown or the dimensions differ.
+    [[nodiscard]] inline std::optional<double> Convert(const double value, const std::string_view from,
+                                                       const std::string_view to)
+    {
+        const auto source = FindUnitAny(from);
+        if (!source) return std::nullopt;
+        const auto target = FindUnit(source->Dim, to);
+        if (!target) return std::nullopt;
+        const double si = ToSi(value, *source->Resolved.Unit) * source->Resolved.ExtraFactor;
+        return FromSi(si, *target->Unit) / target->ExtraFactor;
+    }
+
+    struct NamedConstant
+    {
+        std::string_view Name;
+        double ValueSi;
+        std::string_view Unit;
+    };
+
+    [[nodiscard]] inline const std::vector<NamedConstant>& NamedConstants()
+    {
+        static const std::vector<NamedConstant> constants{
+            {"c", kSpeedOfLight, "m/s"},
+            {"G", kGravitationalConstant, "m^3 kg^-1 s^-2"},
+            {"h", kPlanckConstant, "J s"},
+            {"hbar", kPlanckConstant / (2.0 * static_cast<double>(Pi())), "J s"},
+            {"kB", kBoltzmannConstant, "J/K"},
+            {"e", kElementaryCharge, "C"},
+            {"NA", kAvogadroConstant, "1/mol"},
+            {"sigma", kStefanBoltzmann, "W m^-2 K^-4"},
+            {"eps0", kVacuumPermittivity, "F/m"},
+            {"mu0", kVacuumPermeability, "N/A^2"},
+            {"mp", kProtonMass, "kg"},
+            {"me", kElectronMass, "kg"},
+            {"sigmaT", kThomsonCrossSection, "m^2"},
+            {"Msun", kSolarMass, "kg"},
+            {"Rsun", kSolarRadius, "m"},
+            {"Lsun", kSolarLuminosity, "W"},
+            {"Mearth", kEarthMass, "kg"},
+            {"Mjup", kJupiterMass, "kg"},
+            {"AU", kAstronomicalUnit, "m"},
+            {"pc", kParsec, "m"},
+            {"ly", kLightYear, "m"},
+            {"year", kJulianYear, "s"},
+            {"day", kDay, "s"},
+        };
+        return constants;
+    }
+
+    [[nodiscard]] inline std::optional<double> FindConstant(const std::string_view name)
+    {
+        for (const auto& constant : NamedConstants())
+        {
+            if (constant.Name == name) return constant.ValueSi;
         }
         return std::nullopt;
     }

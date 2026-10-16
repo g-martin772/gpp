@@ -39,6 +39,8 @@ TEST_CASE("Geometrized quantities match textbook values", "[units]")
     CHECK(HorizonRadiusInGravitationalRadii(0.0, 0.0) == Approx(2.0));
     CHECK(HorizonRadiusInGravitationalRadii(0.6, 0.0, false) == Approx(0.2));
     CHECK(std::isnan(HorizonRadiusInGravitationalRadii(0.8, 0.8)));
+    CHECK(HasHorizon(0.6, 0.8));
+    CHECK_FALSE(HasHorizon(0.8, 0.8));
     CHECK(EddingtonLuminosity(kSolarMass) == Approx(1.257e31).epsilon(2e-3));
 
     const double mass = 10.0 * kSolarMass;
@@ -71,8 +73,8 @@ TEST_CASE("Display unit selection follows the magnitude", "[units][display]")
 
     CHECK(PickDisplayUnit(Dimension::Mass, 1e20)->Symbol == "kg");
     CHECK(PickDisplayUnit(Dimension::Mass, 0.09 * kSolarMass)->Symbol == "kg");
-    CHECK(PickDisplayUnit(Dimension::Mass, 0.1 * kSolarMass)->Symbol == "M\xE2\x98\x89");
-    CHECK(PickDisplayUnit(Dimension::Mass, 10.0 * kSolarMass)->Symbol == "M\xE2\x98\x89");
+    CHECK(PickDisplayUnit(Dimension::Mass, 0.1 * kSolarMass)->Symbol == "Msun");
+    CHECK(PickDisplayUnit(Dimension::Mass, 10.0 * kSolarMass)->Symbol == "Msun");
     CHECK(PickDisplayUnit(Dimension::Mass, kSagittariusAStarMass)->Symbol == "Sgr A*");
 
     CHECK(PickDisplayUnit(Dimension::Time, 0.5)->Symbol == "ms");
@@ -152,4 +154,31 @@ TEST_CASE("Shader defines carry the constants as full precision literals", "[uni
     const auto defines = ShaderDefines();
     REQUIRE(defines.contains("GPP_STEFAN_BOLTZMANN"));
     CHECK(std::stod(defines.at("GPP_STEFAN_BOLTZMANN")) == kStefanBoltzmann);
+}
+
+TEST_CASE("Display presets restrict the unit PickDisplayUnit may choose", "[units]")
+{
+    struct Restore
+    {
+        ~Restore() { SetDisplayPreset(DisplayPreset::Auto); }
+    } restore;
+
+    SetDisplayPreset(DisplayPreset::Human);
+    CHECK(PickDisplayUnit(Dimension::Length, 3.0e12)->Symbol == "km");
+    CHECK(PickDisplayUnit(Dimension::Mass, 2.0e30)->Symbol == "t");
+    CHECK(PickDisplayUnit(Dimension::Length, 5.0e-12)->Symbol == "nm");
+
+    SetDisplayPreset(DisplayPreset::Stellar);
+    CHECK(PickDisplayUnit(Dimension::Length, 3.0e12)->Symbol == "AU");
+    CHECK(PickDisplayUnit(Dimension::Length, 2.0e9)->Symbol == "Rsun");
+    CHECK(PickDisplayUnit(Dimension::Mass, 2.0e30)->Symbol == "Msun");
+    CHECK(PickDisplayUnit(Dimension::Velocity, 5.0)->Symbol == "m/s");
+
+    SetDisplayPreset(DisplayPreset::Galactic);
+    CHECK(PickDisplayUnit(Dimension::Length, 1.0e3)->Symbol == "AU");
+    CHECK(PickDisplayUnit(Dimension::Length, 3.0e20)->Symbol == "kpc");
+    CHECK(PickDisplayUnit(Dimension::Time, 3.2e16)->Symbol == "Gyr");
+
+    CHECK(DisplayPresetFromName("stellar") == DisplayPreset::Stellar);
+    CHECK_FALSE(DisplayPresetFromName("nonsense").has_value());
 }
