@@ -4,6 +4,7 @@ module GPP.Graphics;
 
 import vulkan;
 import GPP.Core;
+import :Vulkan.Capabilities;
 import :Vulkan.Device;
 
 namespace GPP
@@ -32,19 +33,118 @@ namespace GPP
         *resultIndex = queueInfos.size() - 1;
     }
 
+    namespace
+    {
+        bool HasExtension(const std::vector<vk::ExtensionProperties>& extensions, const char* name)
+        {
+            return std::ranges::any_of(extensions, [name](const vk::ExtensionProperties& e)
+            {
+                return std::string_view(e.extensionName.data()) == name;
+            });
+        }
+
+        GpuType ToGpuType(const vk::PhysicalDeviceType type)
+        {
+            switch (type)
+            {
+            case vk::PhysicalDeviceType::eDiscreteGpu: return GpuType::Discrete;
+            case vk::PhysicalDeviceType::eIntegratedGpu: return GpuType::Integrated;
+            case vk::PhysicalDeviceType::eVirtualGpu: return GpuType::Virtual;
+            case vk::PhysicalDeviceType::eCpu: return GpuType::Cpu;
+            default: return GpuType::Other;
+            }
+        }
+
+        // Optional features are only reported when their extension is listed, so the feature query never
+        // chains a structure the device does not know.
+        GpuCapabilities ProbeCapabilities(const vk::PhysicalDevice device)
+        {
+            const auto properties = device.getProperties();
+            const auto extensions = device.enumerateDeviceExtensionProperties();
+
+            GpuCapabilities caps;
+            caps.DeviceName = properties.deviceName.data();
+            caps.VendorId = properties.vendorID;
+            caps.ApiVersion = properties.apiVersion;
+            caps.Type = ToGpuType(properties.deviceType);
+            caps.DriverVersion = std::format("{}.{}.{}", VK_VERSION_MAJOR(properties.driverVersion),
+                                             VK_VERSION_MINOR(properties.driverVersion),
+                                             VK_VERSION_PATCH(properties.driverVersion));
+            const auto memory = device.getMemoryProperties();
+            for (uint32_t i = 0; i < memory.memoryHeapCount; ++i)
+            {
+                if (memory.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)
+                    caps.DeviceLocalBytes = std::max<std::uint64_t>(caps.DeviceLocalBytes, memory.memoryHeaps[i].size);
+            }
+
+            const bool hasAs = HasExtension(extensions, VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)
+                               && HasExtension(extensions, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+            const bool hasRayQueryExt = HasExtension(extensions, VK_KHR_RAY_QUERY_EXTENSION_NAME);
+            const bool hasRtPipelineExt = HasExtension(extensions, VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+            const bool hasAtomicFloatExt = HasExtension(extensions, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
+            caps.HdrMetadata = HasExtension(extensions, VK_EXT_HDR_METADATA_EXTENSION_NAME);
+
+            vk::PhysicalDeviceFeatures2 features2;
+            vk::PhysicalDeviceAccelerationStructureFeaturesKHR asFeatures;
+            vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures;
+            vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures;
+            vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures;
+            vk::PhysicalDeviceVulkan12Features vulkan12Features;
+            const bool api12 = properties.apiVersion >= VK_API_VERSION_1_2;
+            void* head = nullptr;
+            const auto link = [&head](auto& feature)
+            {
+                feature.pNext = head;
+                head = &feature;
+            };
+            if (hasAs) link(asFeatures);
+            if (hasAs && hasRayQueryExt) link(rayQueryFeatures);
+            if (hasAs && hasRtPipelineExt) link(rtPipelineFeatures);
+            if (hasAtomicFloatExt) link(atomicFloatFeatures);
+            if (api12) link(vulkan12Features);
+            features2.pNext = head;
+            device.getFeatures2(&features2);
+
+            caps.ShaderFloat64 = features2.features.shaderFloat64 == VK_TRUE;
+            caps.AccelerationStructure = hasAs && asFeatures.accelerationStructure == VK_TRUE;
+            caps.RayQuery = caps.AccelerationStructure && hasRayQueryExt && rayQueryFeatures.rayQuery == VK_TRUE;
+            caps.RayTracingPipeline = caps.AccelerationStructure && hasRtPipelineExt
+                                      && rtPipelineFeatures.rayTracingPipeline == VK_TRUE;
+            caps.AtomicFloat = hasAtomicFloatExt && atomicFloatFeatures.shaderBufferFloat32AtomicAdd == VK_TRUE;
+            caps.DescriptorIndexing = api12 && vulkan12Features.runtimeDescriptorArray == VK_TRUE
+                                      && vulkan12Features.descriptorBindingPartiallyBound == VK_TRUE
+                                      && vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE
+                                      && vulkan12Features.descriptorBindingVariableDescriptorCount == VK_TRUE;
+
+            // Hardware overrides: GPP_GPU_DISABLE=rayQuery,shaderFloat64 behaves like a GPU without them
+            if (const char* disabled = std::getenv("GPP_GPU_DISABLE"))
+            {
+                std::string_view list(disabled);
+                while (!list.empty())
+                {
+                    const auto comma = list.find(',');
+                    caps.Disable(list.substr(0, comma));
+                    list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+                }
+            }
+            return caps;
+        }
+    }
+
     void VulkanDevice::PickPhysicalDevice()
     {
         const std::vector<vk::PhysicalDevice>& devices = m_VulkanContext->GetPhysicalDevices();
 
+        std::vector<GpuCandidate> candidates;
+        std::vector<VulkanQueueIndices> candidateQueues;
         VulkanDevice::m_Logger->Info("Available Graphics Devices:");
         for (const auto& device : devices)
         {
-            bool suitable = true;
             vk::PhysicalDeviceProperties properties = device.getProperties();
             vk::PhysicalDeviceFeatures features = device.getFeatures();
             std::vector<vk::QueueFamilyProperties> queueFamilyProperties = device.getQueueFamilyProperties();
 
-            VulkanDevice::m_Logger->Info("\t{}", properties.deviceName.data());
+            VulkanDevice::m_Logger->Trace("\t{}", properties.deviceName.data());
             VulkanDevice::m_Logger->Trace("\t\t Driver Version: {}.{}.{}",
                                           VK_VERSION_MAJOR(properties.driverVersion),
                                           VK_VERSION_MINOR(properties.driverVersion),
@@ -124,13 +224,44 @@ namespace GPP
                 }
             }
 
-            if (suitable && !VulkanDevice::m_PhysicalDevice)
+            GpuCandidate candidate;
+            candidate.Caps = ProbeCapabilities(device);
+            candidate.Suitable = (!m_Requirements.Graphics || queueIndices.Graphics != -1)
+                                 && (!m_Requirements.Compute || queueIndices.Compute != -1)
+                                 && (!m_Requirements.Transfer || queueIndices.Transfer != -1)
+                                 && (!m_Requirements.Present || queueIndices.Present != -1);
+            if (m_Requirements.Present)
             {
-                VulkanDevice::m_PhysicalDevice = device;
-                VulkanDevice::m_QueueIndices = queueIndices;
-                break;
+                candidate.Suitable = candidate.Suitable &&
+                    HasExtension(device.enumerateDeviceExtensionProperties(), VK_KHR_SWAPCHAIN_EXTENSION_NAME);
             }
+            VulkanDevice::m_Logger->Info("\t{} [{}, {} GiB, score {}{}]", candidate.Caps.DeviceName,
+                                         GpuTypeName(candidate.Caps.Type), candidate.Caps.DeviceLocalBytes >> 30,
+                                         ScoreGpu(candidate.Caps), candidate.Suitable ? "" : ", unsuitable");
+            VulkanDevice::m_Logger->Info("\t\t rayQuery={} accelerationStructure={} shaderFloat64={} atomicFloat={} descriptorIndexing={} hdrMetadata={}",
+                                         candidate.Caps.RayQuery, candidate.Caps.AccelerationStructure,
+                                         candidate.Caps.ShaderFloat64, candidate.Caps.AtomicFloat,
+                                         candidate.Caps.DescriptorIndexing, candidate.Caps.HdrMetadata);
+            candidates.push_back(std::move(candidate));
+            candidateQueues.push_back(queueIndices);
         }
+
+        const char* preferred = std::getenv("GPP_GPU");
+        const auto chosen = ChooseGpu(candidates, preferred ? preferred : "");
+        if (!chosen) return;
+
+        const auto lower = [](std::string_view text)
+        {
+            std::string out(text);
+            std::ranges::transform(out, out.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return out;
+        };
+        const bool forced = preferred && *preferred
+                            && lower(candidates[*chosen].Caps.DeviceName).contains(lower(preferred));
+        m_PhysicalDevice = devices[*chosen];
+        m_QueueIndices = candidateQueues[*chosen];
+        m_Capabilities = candidates[*chosen].Caps;
+        m_Capabilities.Reason = DescribeChoice(candidates, *chosen, forced);
     }
 
     VulkanDevice::VulkanDevice(const DeviceRequirements& requirements,
@@ -145,7 +276,7 @@ namespace GPP
             m_Logger->Error("No suitable Vulkan physical device found!");
             return;
         }
-        m_Logger->Info("Picked {}", m_PhysicalDevice.getProperties().deviceName.data());
+        m_Logger->Info("Picked {}: {}", m_Capabilities.DeviceName, m_Capabilities.Reason);
 
         if (m_Requirements.Graphics && m_QueueIndices.Graphics == -1)
         {
@@ -213,18 +344,25 @@ namespace GPP
         if (m_PhysicalDevice.getFeatures().wideLines) deviceFeatures.wideLines = VK_TRUE;
         deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
 
-        std::vector deviceExtensions = {
-            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+        std::vector<const char*> deviceExtensions = {
             VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
             VK_KHR_SPIRV_1_4_EXTENSION_NAME,
             VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
             VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
         };
+        if (m_Capabilities.AccelerationStructure)
+        {
+            deviceExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+            deviceExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        }
+        if (m_Capabilities.RayTracingPipeline) deviceExtensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        if (m_Capabilities.RayQuery) deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        if (m_Capabilities.AtomicFloat) deviceExtensions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
         if (m_Requirements.Present)
         {
             deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+            // Needs the swapchain extension, so a headless device leaves it off
+            if (m_Capabilities.HdrMetadata) deviceExtensions.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
         }
         deviceCreateInfo.enabledExtensionCount = deviceExtensions.size();
         deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
@@ -237,29 +375,46 @@ namespace GPP
         dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
         dynamicRenderingFeatures.pNext = &bufferDeviceAddressFeatures;
 
+        vk::PhysicalDeviceSynchronization2Features synchronization2Features{};
+        synchronization2Features.synchronization2 = VK_TRUE;
+        synchronization2Features.pNext = &dynamicRenderingFeatures;
+
+        void* featureChain = &synchronization2Features;
+        const auto link = [&featureChain](auto& feature)
+        {
+            feature.pNext = featureChain;
+            featureChain = &feature;
+        };
         vk::PhysicalDeviceAccelerationStructureFeaturesKHR asFeatures;
         asFeatures.accelerationStructure = VK_TRUE;
-        asFeatures.pNext = &dynamicRenderingFeatures;
-
+        if (m_Capabilities.AccelerationStructure) link(asFeatures);
         vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rtFeatures;
         rtFeatures.rayTracingPipeline = VK_TRUE;
-        rtFeatures.pNext = &asFeatures;
+        if (m_Capabilities.RayTracingPipeline) link(rtFeatures);
+        vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures;
+        rayQueryFeatures.rayQuery = VK_TRUE;
+        if (m_Capabilities.RayQuery) link(rayQueryFeatures);
+        vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures;
+        atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
+        if (m_Capabilities.AtomicFloat) link(atomicFloatFeatures);
+        vk::PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures;
+        descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
+        descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+        descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        if (m_Capabilities.DescriptorIndexing) link(descriptorIndexingFeatures);
 
         vk::PhysicalDeviceFeatures2 deviceFeatures2;
-        if (m_PhysicalDevice.getFeatures().fillModeNonSolid) deviceFeatures2.features.fillModeNonSolid = VK_TRUE;
-        if (m_PhysicalDevice.getFeatures().samplerAnisotropy) deviceFeatures2.features.samplerAnisotropy = VK_TRUE;
-        if (m_PhysicalDevice.getFeatures().wideLines) deviceFeatures2.features.wideLines = VK_TRUE;
+        const auto supported = m_PhysicalDevice.getFeatures();
+        if (supported.fillModeNonSolid) deviceFeatures2.features.fillModeNonSolid = VK_TRUE;
+        if (supported.samplerAnisotropy) deviceFeatures2.features.samplerAnisotropy = VK_TRUE;
+        if (supported.wideLines) deviceFeatures2.features.wideLines = VK_TRUE;
         // Enable shaderInt64 for buffer addresses if needed, but usually implied or separate
         deviceFeatures2.features.shaderInt64 = VK_TRUE;
         // fp64 in shaders is optional (1/32 - 1/64 rate on consumer GPUs)
-        m_ShaderFloat64 = m_PhysicalDevice.getFeatures().shaderFloat64 == VK_TRUE;
-        if (m_ShaderFloat64) deviceFeatures2.features.shaderFloat64 = VK_TRUE;
+        if (m_Capabilities.ShaderFloat64) deviceFeatures2.features.shaderFloat64 = VK_TRUE;
 
-        vk::PhysicalDeviceSynchronization2Features synchronization2Features{};
-        synchronization2Features.synchronization2 = VK_TRUE;
-        synchronization2Features.pNext = &rtFeatures;
-
-        deviceFeatures2.pNext = &synchronization2Features;
+        deviceFeatures2.pNext = featureChain;
 
         deviceCreateInfo.pEnabledFeatures = nullptr;
         deviceCreateInfo.pNext = &deviceFeatures2;

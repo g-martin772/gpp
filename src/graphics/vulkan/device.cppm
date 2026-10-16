@@ -6,6 +6,7 @@ import std;
 import vulkan;
 import GPP.Core;
 import :Vulkan.Context;
+export import :Vulkan.Capabilities;
 
 namespace GPP
 {
@@ -47,7 +48,8 @@ namespace GPP
         vk::SurfaceCapabilitiesKHR GetSurfaceCapabilities() const { return m_SurfaceCapabilities; }
         std::vector<vk::SurfaceFormatKHR> GetSurfaceFormats() const { return m_SurfaceFormats; }
         std::vector<vk::PresentModeKHR> GetSurfacePresentModes() const { return m_SurfacePresentModes; }
-        [[nodiscard]] bool SupportsShaderFloat64() const noexcept { return m_ShaderFloat64; }
+        [[nodiscard]] bool SupportsShaderFloat64() const noexcept { return m_Capabilities.ShaderFloat64; }
+        [[nodiscard]] const GpuCapabilities& GetCapabilities() const noexcept { return m_Capabilities; }
         VmaAllocator GetAllocator() const noexcept { return m_Allocator; }
         VulkanMemoryStats GetMemoryStats() const;
         void DumpMemoryStats() const;
@@ -87,7 +89,7 @@ namespace GPP
         std::vector<vk::SurfaceFormatKHR> m_SurfaceFormats;
         std::vector<vk::PresentModeKHR> m_SurfacePresentModes;
         VmaAllocator m_Allocator = nullptr;
-        bool m_ShaderFloat64 = false;
+        GpuCapabilities m_Capabilities;
     };
 
     class VulkanFence {
