@@ -10,6 +10,7 @@ export namespace ax::NodeEditor
 
     using ax::NodeEditor::EditorContext;
     using ax::NodeEditor::Config;
+    using ax::NodeEditor::SaveReasonFlags;
     using ax::NodeEditor::NodeId;
     using ax::NodeEditor::PinId;
     using ax::NodeEditor::LinkId;
