@@ -251,6 +251,9 @@ namespace GPP
         if (m_PhysicalDevice.getFeatures().wideLines) deviceFeatures2.features.wideLines = VK_TRUE;
         // Enable shaderInt64 for buffer addresses if needed, but usually implied or separate
         deviceFeatures2.features.shaderInt64 = VK_TRUE;
+        // fp64 in shaders is optional (1/32 - 1/64 rate on consumer GPUs)
+        m_ShaderFloat64 = m_PhysicalDevice.getFeatures().shaderFloat64 == VK_TRUE;
+        if (m_ShaderFloat64) deviceFeatures2.features.shaderFloat64 = VK_TRUE;
 
         vk::PhysicalDeviceSynchronization2Features synchronization2Features{};
         synchronization2Features.synchronization2 = VK_TRUE;
