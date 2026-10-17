@@ -10,8 +10,6 @@ namespace GPP
 {
     namespace
     {
-        // Process-wide, so equal revisions mean equal extensions even across restores (Scene::SyncInto copies the
-        // source's revision, which would otherwise let a later edit reuse a number a published snapshot already holds)
         std::uint64_t NextExtensionRevision()
         {
             static std::atomic<std::uint64_t> counter{0};

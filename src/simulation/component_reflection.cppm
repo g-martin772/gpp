@@ -267,7 +267,6 @@ namespace GPP
             }
         }
 
-        // `{value: 10, unit: Msun}` (value may be a sequence) and `"10 Msun"` become the plain SI node; anything else is returned as is.
         inline YAML::Node ResolveTagged(const YAML::Node& node, const FieldMeta& meta)
         {
             if (!node || meta.Dim == Units::Dimension::None) return node;
