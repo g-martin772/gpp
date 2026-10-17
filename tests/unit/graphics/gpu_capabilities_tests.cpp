@@ -73,6 +73,7 @@ TEST_CASE("Capabilities answer by key and can be switched off", "[graphics][capa
 
     caps.Disable(GpuCapability::kAccelerationStructure);
     CHECK_FALSE(caps.Has(GpuCapability::kRayQuery));
+    CHECK_FALSE(caps.Has(GpuCapability::kRayTracingPipeline));
     caps.Disable(GpuCapability::kShaderFloat64);
     CHECK_FALSE(caps.Has(GpuCapability::kShaderFloat64));
 }

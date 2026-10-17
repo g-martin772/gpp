@@ -6,7 +6,6 @@ export namespace GPP
 {
     enum class GpuType { Other, Integrated, Discrete, Virtual, Cpu };
 
-    // Keys accepted by GpuCapabilities::Has() and by a render setting's `Requires`
     namespace GpuCapability
     {
         inline constexpr std::string_view kRayQuery = "rayQuery";
@@ -16,10 +15,9 @@ export namespace GPP
         inline constexpr std::string_view kAtomicFloat = "atomicFloat";
         inline constexpr std::string_view kDescriptorIndexing = "descriptorIndexing";
         inline constexpr std::string_view kHdrMetadata = "hdrMetadata";
-        // Never available: lets a setting list an option that needs hardware that does not exist
         inline constexpr std::string_view kNever = "unavailable";
 
-        inline constexpr std::array<std::string_view, 7> kAll{
+        inline constexpr std::array kAll{
             kRayQuery, kAccelerationStructure, kRayTracingPipeline, kShaderFloat64,
             kAtomicFloat, kDescriptorIndexing, kHdrMetadata};
     }
@@ -40,8 +38,6 @@ export namespace GPP
         bool AtomicFloat{false};
         bool DescriptorIndexing{false};
         bool HdrMetadata{false};
-
-        // Why this device was chosen over the others
         std::string Reason;
 
         [[nodiscard]] bool Has(std::string_view key) const noexcept
@@ -57,11 +53,10 @@ export namespace GPP
             return false;
         }
 
-        // Switches a capability off (also the test and GPP_GPU_DISABLE hook). Unknown keys are ignored.
         void Disable(std::string_view key) noexcept
         {
             if (key == GpuCapability::kRayQuery) RayQuery = false;
-            else if (key == GpuCapability::kAccelerationStructure) { AccelerationStructure = false; RayQuery = false; }
+            else if (key == GpuCapability::kAccelerationStructure) { AccelerationStructure = false; RayQuery = false; RayTracingPipeline = false; }
             else if (key == GpuCapability::kRayTracingPipeline) RayTracingPipeline = false;
             else if (key == GpuCapability::kShaderFloat64) ShaderFloat64 = false;
             else if (key == GpuCapability::kAtomicFloat) AtomicFloat = false;
@@ -96,7 +91,6 @@ export namespace GPP
         return "other";
     }
 
-    // Higher is better. Discrete beats integrated whatever the optional features; features and memory break ties.
     [[nodiscard]] inline int ScoreGpu(const GpuCapabilities& caps) noexcept
     {
         int score = 0;
@@ -123,8 +117,6 @@ export namespace GPP
         bool Suitable{true};
     };
 
-    // Index of the best suitable candidate (first wins ties), nullopt when none is suitable. `preferred` is a
-    // case-insensitive substring of a device name that overrides the scoring when it matches a suitable device.
     [[nodiscard]] inline std::optional<std::size_t> ChooseGpu(const std::vector<GpuCandidate>& candidates,
                                                               std::string_view preferred = {})
     {
