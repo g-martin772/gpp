@@ -15,24 +15,18 @@ namespace GPP
         std::string Label;
         std::string Group;
         std::string Tooltip;
-        // Documentation anchor, e.g. "wiki/geodesics-kerr-schild#step-control"
         std::string Doc;
         double Min = 0.0;
         double Max = 0.0;
         SettingScale Scale = SettingScale::Linear;
-        // 0 = free .. 5 = dominates the frame
-        int Cost = 0;
-        // Capability key the whole setting needs (empty = none)
+        int Cost = 0; // 0-5
         std::string Requires;
-        // Enum option names, also the YAML spelling
         std::vector<std::string> Options;
-        // Display text per option when it should differ from Options
         std::vector<std::string> OptionLabels;
-        // Per-option capability keys and costs, empty or the size of Options
         std::vector<std::string> OptionRequires;
         std::vector<int> OptionCosts;
         std::string Format;
-        // Shown only while a condition on another setting holds: "key" (non-zero), "key=N", "key>=N", "key!=N"
+        // "key", "key=N", "key>=N", "key!=N", clauses joined by '&'
         std::string VisibleWhen;
 
         [[nodiscard]] const std::string& OptionLabel(std::size_t index) const
@@ -59,7 +53,6 @@ namespace GPP
             return Meta.Cost;
         }
 
-        // Capability the selected option needs, empty when none
         [[nodiscard]] std::string RequiresFor(const T& value) const
         {
             const auto index = SelectedOption(value);
@@ -95,7 +88,6 @@ namespace GPP
         }
     }
 
-    // One declaration per setting: `Setting("transport.step_size", &RenderSettings::StepSize, {...})`
     export template <typename T, typename M>
     SettingDesc<T> Setting(std::string key, M T::* member, SettingMeta meta = {})
     {
@@ -134,7 +126,7 @@ namespace GPP
         }
 
         [[nodiscard]] const std::vector<SettingDesc<T>>& All() const noexcept { return m_Settings; }
-        // In declaration order
+
         [[nodiscard]] const std::vector<std::string>& Groups() const noexcept { return m_Groups; }
 
         [[nodiscard]] const SettingDesc<T>* Find(std::string_view key) const
@@ -153,7 +145,6 @@ namespace GPP
             return out;
         }
 
-        // Pulls numeric settings into [Min, Max] (when Max > Min) and enum indices into the option list
         void Clamp(T& value) const
         {
             for (const auto& setting : m_Settings)
@@ -181,11 +172,21 @@ namespace GPP
             }
         }
 
-        // False when the setting's VisibleWhen condition does not hold for `value`
         [[nodiscard]] bool IsVisible(const T& value, const SettingDesc<T>& setting) const
         {
-            std::string_view condition = setting.Meta.VisibleWhen;
-            if (condition.empty()) return true;
+            std::string_view conditions = setting.Meta.VisibleWhen;
+            while (!conditions.empty())
+            {
+                const auto split = conditions.find('&');
+                if (!ClauseHolds(value, conditions.substr(0, split))) return false;
+                conditions = split == std::string_view::npos ? std::string_view{} : conditions.substr(split + 1);
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool ClauseHolds(const T& value, const std::string_view condition) const
+        {
+            if (SettingDetail::Trim(condition).empty()) return true;
             const auto operatorAt = condition.find_first_of("=!>");
             const auto key = SettingDetail::Trim(condition.substr(0, operatorAt));
             const auto* other = Find(key);
@@ -221,7 +222,6 @@ namespace GPP
             return setting.Get(a) == setting.Get(b);
         }
 
-        // Keys whose value differs between a and b
         [[nodiscard]] std::vector<std::string> Diff(const T& a, const T& b) const
         {
             std::vector<std::string> keys;
@@ -232,7 +232,6 @@ namespace GPP
             return keys;
         }
 
-        // Flat `{key: value}` map. With a baseline only the keys that differ from it are written.
         [[nodiscard]] YAML::Node Encode(const T& value, const T* baseline = nullptr) const
         {
             YAML::Node node(YAML::NodeType::Map);
@@ -244,7 +243,6 @@ namespace GPP
             return node;
         }
 
-        // Missing keys keep their current value. Returns the keys of the node that name no setting.
         std::vector<std::string> Decode(T& value, const YAML::Node& node) const
         {
             std::vector<std::string> unknown;
@@ -290,7 +288,6 @@ namespace GPP
             }, field);
         }
 
-        // `--set key=value` and `render.set`: bool (true/false/on/off/1/0), numbers, enum option label or index
         [[nodiscard]] std::expected<void, std::string> SetFromText(T& value, std::string_view key, std::string_view text) const
         {
             const auto* setting = Find(key);

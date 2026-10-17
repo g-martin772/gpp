@@ -155,6 +155,7 @@ TEST_CASE("VisibleWhen supports truthiness and comparisons", "[settings]")
     registry.Add(Setting("b.not", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "a.level!=1"}));
     registry.Add(Setting("b.always", &Demo::Tolerance, {.Group = "B"}));
     registry.Add(Setting("b.missing", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "nope"}));
+    registry.Add(Setting("b.both", &Demo::Tolerance, {.Group = "B", .VisibleWhen = "a.enabled & a.steps>=100"}));
 
     Demo value;
     const auto visible = [&](const char* key) { return registry.IsVisible(value, *registry.Find(key)); };
@@ -164,6 +165,13 @@ TEST_CASE("VisibleWhen supports truthiness and comparisons", "[settings]")
     CHECK(visible("b.not"));
     CHECK(visible("b.always"));
     CHECK(visible("b.missing"));
+    CHECK(visible("b.both"));
+
+    value.Steps = 99;
+    CHECK_FALSE(visible("b.both"));
+    value.Steps = 100;
+    value.Enabled = false;
+    CHECK_FALSE(visible("b.both"));
 
     value.Enabled = false;
     value.Level = Quality::Final;
