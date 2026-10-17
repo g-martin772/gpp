@@ -122,6 +122,21 @@ TEST_CASE("Per-option cost and capability follow the selected option", "[setting
     CHECK(registry.Find("a.steps")->CostFor(value) == 3);
 }
 
+TEST_CASE("CostWhen zeroes the cost while its condition fails", "[settings]")
+{
+    auto registry = MakeRegistry();
+    registry.Add(Setting("c.gated", &Demo::Tolerance, {.Group = "C", .Cost = 3, .CostWhen = "a.enabled"}));
+    const auto* gated = registry.Find("c.gated");
+    REQUIRE(gated);
+    Demo value;
+    value.Enabled = false;
+    CHECK(gated->CostFor(value) == 3);
+    CHECK(registry.CostFor(value, *gated) == 0);
+    value.Enabled = true;
+    CHECK(registry.CostFor(value, *gated) == 3);
+    CHECK(registry.CostFor(value, *registry.Find("a.steps")) == 3);
+}
+
 TEST_CASE("Diff lists the keys that differ", "[settings]")
 {
     const auto registry = MakeRegistry();

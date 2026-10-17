@@ -28,6 +28,8 @@ namespace GPP
         std::string Format;
         // "key", "key=N", "key>=N", "key!=N", clauses joined by '&'
         std::string VisibleWhen;
+        // same syntax as VisibleWhen; the cost counts only while it holds
+        std::string CostWhen;
 
         [[nodiscard]] const std::string& OptionLabel(std::size_t index) const
         {
@@ -174,7 +176,16 @@ namespace GPP
 
         [[nodiscard]] bool IsVisible(const T& value, const SettingDesc<T>& setting) const
         {
-            std::string_view conditions = setting.Meta.VisibleWhen;
+            return ConditionsHold(value, setting.Meta.VisibleWhen);
+        }
+
+        [[nodiscard]] int CostFor(const T& value, const SettingDesc<T>& setting) const
+        {
+            return ConditionsHold(value, setting.Meta.CostWhen) ? setting.CostFor(value) : 0;
+        }
+
+        [[nodiscard]] bool ConditionsHold(const T& value, std::string_view conditions) const
+        {
             while (!conditions.empty())
             {
                 const auto split = conditions.find('&');
