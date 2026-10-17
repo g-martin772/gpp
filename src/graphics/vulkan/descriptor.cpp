@@ -73,6 +73,10 @@ namespace GPP
             sizes.emplace_back(type,
                                static_cast<std::uint32_t>(ratio * static_cast<float>(m_MaxSetsPerPool)));
         }
+        if (m_Device->GetCapabilities().AccelerationStructure)
+        {
+            sizes.emplace_back(vk::DescriptorType::eAccelerationStructureKHR, m_MaxSetsPerPool / 4);
+        }
         vk::DescriptorPoolCreateInfo info{};
         info.maxSets = m_MaxSetsPerPool;
         info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
@@ -203,6 +207,40 @@ namespace GPP
         return *this;
     }
 
+    DescriptorSetWriter& DescriptorSetWriter::WriteCombinedImageSamplers(
+        const vk::DescriptorSet set, const std::uint32_t binding,
+        const std::span<const vk::DescriptorImageInfo> images)
+    {
+        if (images.empty()) return *this;
+        const auto& infos = m_ImageArrays.emplace_back(images.begin(), images.end());
+        vk::WriteDescriptorSet write{};
+        write.dstSet = set;
+        write.dstBinding = binding;
+        write.descriptorCount = static_cast<std::uint32_t>(infos.size());
+        write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        write.pImageInfo = infos.data();
+        m_Writes.push_back(write);
+        return *this;
+    }
+
+    DescriptorSetWriter& DescriptorSetWriter::WriteAccelerationStructure(
+        const vk::DescriptorSet set, const std::uint32_t binding,
+        const vk::AccelerationStructureKHR accelerationStructure)
+    {
+        m_AccelerationStructures.push_back(accelerationStructure);
+        auto& info = m_AccelerationStructureInfos.emplace_back();
+        info.accelerationStructureCount = 1;
+        info.pAccelerationStructures = &m_AccelerationStructures.back();
+        vk::WriteDescriptorSet write{};
+        write.pNext = &info;
+        write.dstSet = set;
+        write.dstBinding = binding;
+        write.descriptorCount = 1;
+        write.descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+        m_Writes.push_back(write);
+        return *this;
+    }
+
     void DescriptorSetWriter::Update()
     {
         if (m_Writes.empty()) return;
@@ -210,5 +248,8 @@ namespace GPP
         m_Writes.clear();
         m_ImageInfos.clear();
         m_BufferInfos.clear();
+        m_ImageArrays.clear();
+        m_AccelerationStructures.clear();
+        m_AccelerationStructureInfos.clear();
     }
 }

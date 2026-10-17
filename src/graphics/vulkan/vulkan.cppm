@@ -8,3 +8,4 @@ export import :Vulkan.Pipeline;
 export import :Vulkan.Descriptor;
 export import :Vulkan.Image;
 export import :Vulkan.Buffer;
+export import :Vulkan.AccelerationStructure;

@@ -179,12 +179,48 @@ namespace GPP
             return gpuImage;
         }
 
+        struct GltfUpload
+        {
+            const std::shared_ptr<VulkanDevice>& Device;
+            VulkanCommandPool& Pool;
+            vk::Queue Queue;
+            const std::shared_ptr<Logger>& Log;
+        };
+
+        void UploadGeometry(const GltfUpload& upload, GltfPrimitive& primitive, const std::vector<GltfVertex>& vertices,
+                            const std::vector<std::uint32_t>& indices)
+        {
+            vk::BufferUsageFlags traceable{};
+            if (upload.Device->GetCapabilities().AccelerationStructure)
+            {
+                traceable = vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer
+                            | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+            }
+            const auto vertexBytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(GltfVertex));
+            const auto indexBytes = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
+            auto vertexSpec = MakeVertexBufferSpecification(vertexBytes);
+            vertexSpec.usage |= traceable;
+            auto indexSpec = MakeIndexBufferSpecification(indexBytes);
+            indexSpec.usage |= traceable;
+            primitive.VertexBuffer.Create(upload.Device, vertexSpec);
+            primitive.IndexBuffer.Create(upload.Device, indexSpec);
+
+            VulkanBuffer staging(upload.Device, MakeStagingBufferSpecification(vertexBytes + indexBytes), upload.Log);
+            staging.Upload(vertices.data(), vertexBytes);
+            staging.Upload(indices.data(), indexBytes, vertexBytes);
+            ImmediateSubmit(upload.Pool, upload.Queue, [&](const vk::CommandBuffer cmd)
+            {
+                CopyBuffer(cmd, staging.GetBuffer(), primitive.VertexBuffer.GetBuffer(), vertexBytes);
+                CopyBuffer(cmd, staging.GetBuffer(), primitive.IndexBuffer.GetBuffer(), indexBytes, vertexBytes);
+            });
+        }
+
         void ProcessPrimitive(const tinygltf::Model& model, const tinygltf::Primitive& primitive,
                               const glm::mat4& worldTransform, const glm::mat3& normalMatrix,
-                              const std::shared_ptr<VulkanDevice>& device,
-                              const std::filesystem::path& resolvedPath, const std::shared_ptr<Logger>& logger,
+                              const GltfUpload& upload, const std::filesystem::path& resolvedPath,
                               GltfSceneData& scene, GltfMesh& outMesh)
         {
+            const auto& logger = upload.Log;
             const auto positionIt = primitive.attributes.find("POSITION");
             if (positionIt == primitive.attributes.end() || primitive.indices < 0)
             {
@@ -241,14 +277,10 @@ namespace GPP
                 indices[i] = ReadIndex(indexView, i);
             }
 
+            if (vertices.empty() || indices.empty()) return;
             GltfPrimitive outPrimitive;
-            const auto vertexBytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(GltfVertex));
-            outPrimitive.VertexBuffer.Create(device, MakeVertexBufferSpecification(vertexBytes, true));
-            outPrimitive.VertexBuffer.Upload(vertices.data(), vertexBytes);
-
-            const auto indexBytes = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
-            outPrimitive.IndexBuffer.Create(device, MakeIndexBufferSpecification(indexBytes, true));
-            outPrimitive.IndexBuffer.Upload(indices.data(), indexBytes);
+            UploadGeometry(upload, outPrimitive, vertices, indices);
+            outPrimitive.VertexCount = static_cast<std::uint32_t>(vertices.size());
             outPrimitive.IndexCount = static_cast<std::uint32_t>(indices.size());
             outPrimitive.MaterialIndex = primitive.material;
 
@@ -268,8 +300,7 @@ namespace GPP
         }
 
         void WalkNode(const tinygltf::Model& model, int nodeIndex, const glm::mat4& parentTransform,
-                     const std::shared_ptr<VulkanDevice>& device, const std::filesystem::path& resolvedPath,
-                     const std::shared_ptr<Logger>& logger, GltfSceneData& scene)
+                     const GltfUpload& upload, const std::filesystem::path& resolvedPath, GltfSceneData& scene)
         {
             if (nodeIndex < 0 || static_cast<std::size_t>(nodeIndex) >= model.nodes.size()) return;
             const auto& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
@@ -284,8 +315,8 @@ namespace GPP
                 const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
                 for (const auto& primitive : mesh.primitives)
                 {
-                    ProcessPrimitive(model, primitive, worldTransform, normalMatrix, device, resolvedPath,
-                                     logger, scene, outMesh);
+                    ProcessPrimitive(model, primitive, worldTransform, normalMatrix, upload, resolvedPath, scene,
+                                     outMesh);
                 }
                 if (!outMesh.Primitives.empty())
                 {
@@ -295,7 +326,7 @@ namespace GPP
 
             for (const auto child : node.children)
             {
-                WalkNode(model, child, worldTransform, device, resolvedPath, logger, scene);
+                WalkNode(model, child, worldTransform, upload, resolvedPath, scene);
             }
         }
     }
@@ -366,13 +397,14 @@ namespace GPP
         }
 
         scene.Meshes.reserve(model.meshes.size());
+        const GltfUpload upload{device, uploadPool, queue, logger};
         if (!model.scenes.empty())
         {
             const auto sceneIndex = static_cast<std::size_t>(model.defaultScene >= 0 ? model.defaultScene : 0);
             const auto& rootNodes = model.scenes.at(sceneIndex).nodes;
             for (const auto rootNode : rootNodes)
             {
-                WalkNode(model, rootNode, glm::mat4(1.0f), device, resolvedPath, logger, scene);
+                WalkNode(model, rootNode, glm::mat4(1.0f), upload, resolvedPath, scene);
             }
         }
         else
@@ -381,7 +413,7 @@ namespace GPP
             // its own root so the mesh data isn't simply dropped.
             for (std::size_t i = 0; i < model.nodes.size(); ++i)
             {
-                WalkNode(model, static_cast<int>(i), glm::mat4(1.0f), device, resolvedPath, logger, scene);
+                WalkNode(model, static_cast<int>(i), glm::mat4(1.0f), upload, resolvedPath, scene);
             }
         }
 

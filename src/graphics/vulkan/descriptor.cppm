@@ -63,12 +63,19 @@ namespace GPP
         DescriptorSetWriter& WriteStorageBuffer(vk::DescriptorSet set, std::uint32_t binding,
                                                 vk::Buffer buffer, vk::DeviceSize offset = 0,
                                                 vk::DeviceSize range = VK_WHOLE_SIZE);
+        DescriptorSetWriter& WriteCombinedImageSamplers(vk::DescriptorSet set, std::uint32_t binding,
+                                                        std::span<const vk::DescriptorImageInfo> images);
+        DescriptorSetWriter& WriteAccelerationStructure(vk::DescriptorSet set, std::uint32_t binding,
+                                                        vk::AccelerationStructureKHR accelerationStructure);
         void Update();
 
     private:
         vk::Device m_Device;
         std::deque<vk::DescriptorImageInfo> m_ImageInfos;
+        std::deque<std::vector<vk::DescriptorImageInfo>> m_ImageArrays;
         std::deque<vk::DescriptorBufferInfo> m_BufferInfos;
+        std::deque<vk::AccelerationStructureKHR> m_AccelerationStructures;
+        std::deque<vk::WriteDescriptorSetAccelerationStructureKHR> m_AccelerationStructureInfos;
         std::vector<vk::WriteDescriptorSet> m_Writes;
     };
 }

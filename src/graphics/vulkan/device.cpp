@@ -55,8 +55,6 @@ namespace GPP
             }
         }
 
-        // Optional features are only reported when their extension is listed, so the feature query never
-        // chains a structure the device does not know.
         GpuCapabilities ProbeCapabilities(const vk::PhysicalDevice device)
         {
             const auto properties = device.getProperties();
@@ -116,7 +114,6 @@ namespace GPP
                                       && vulkan12Features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE
                                       && vulkan12Features.descriptorBindingVariableDescriptorCount == VK_TRUE;
 
-            // Hardware overrides: GPP_GPU_DISABLE=rayQuery,shaderFloat64 behaves like a GPU without them
             if (const char* disabled = std::getenv("GPP_GPU_DISABLE"))
             {
                 std::string_view list(disabled);
@@ -445,10 +442,8 @@ namespace GPP
         }
         m_Logger->Trace("Created Vulkan Memory Allocator: successful");
 
-        // Initialize Dynamic Dispatcher (Local)
-        // m_Dispatcher = vk::detail::DispatchLoaderDynamic(m_Instance->GetInstance(), vkGetInstanceProcAddr, m_Device);
-        // Initialize Default Dispatcher (Global)
-        // VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Device);
+        m_Dispatcher.init(static_cast<VkInstance>(m_VulkanContext->GetInstance()), vkGetInstanceProcAddr,
+                          static_cast<VkDevice>(m_Device), vkGetDeviceProcAddr);
 
         for (auto& queueInfo : deviceQueueInfos)
         {

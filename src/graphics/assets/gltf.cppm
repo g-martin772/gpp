@@ -45,6 +45,7 @@ namespace GPP
     {
         VulkanBuffer VertexBuffer;
         VulkanBuffer IndexBuffer;
+        std::uint32_t VertexCount = 0;
         std::uint32_t IndexCount = 0;
         int MaterialIndex = -1;
     };

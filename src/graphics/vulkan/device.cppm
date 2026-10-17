@@ -68,7 +68,7 @@ namespace GPP
 
         [[nodiscard]] std::mutex& GetQueueMutex(vk::Queue queue) const;
 
-        //const vk::detail::DispatchLoaderDynamic& GetDispatcher() const { return m_Dispatcher; }
+        [[nodiscard]] const vk::detail::DispatchLoaderDynamic& GetDispatcher() const noexcept { return m_Dispatcher; }
 
     private:
         void PickPhysicalDevice();
@@ -77,7 +77,7 @@ namespace GPP
         std::shared_ptr<Logger> m_Logger{nullptr};
         vk::Device m_Device;
         vk::PhysicalDevice m_PhysicalDevice;
-        //vk::detail::DispatchLoaderDynamic m_Dispatcher;
+        vk::detail::DispatchLoaderDynamic m_Dispatcher;
         VulkanQueueIndices m_QueueIndices;
         std::vector<vk::Queue> m_Queues;
         vk::Queue m_BackgroundQueue;
