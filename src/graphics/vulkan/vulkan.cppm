@@ -2,6 +2,7 @@ export module GPP.Graphics:Vulkan;
 export import :Vulkan.Capabilities;
 export import :Vulkan.Context;
 export import :Vulkan.Device;
+export import :Vulkan.GpuProfiler;
 export import :Vulkan.Swapchain;
 export import :Vulkan.Command;
 export import :Vulkan.Pipeline;

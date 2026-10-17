@@ -97,6 +97,10 @@ namespace GPP
                                     RenderGraphSliceRecordFn record);
 
 
+        void BeginScope(std::string name) { m_BuildScope = std::move(name); }
+        void EndScope() { m_BuildScope.clear(); }
+        void SetProfiler(GpuProfiler* profiler) noexcept { m_Profiler = profiler; }
+
         void Compile();
         void Execute(vk::CommandBuffer commandBuffer);
 
@@ -149,6 +153,7 @@ namespace GPP
         {
             PassKind Kind = PassKind::Compute;
             std::string Name;
+            std::string Scope;
             std::vector<RenderGraphImageUse> ImageUses;
             std::vector<RenderGraphHandle> BufferUses;
             std::vector<RenderGraphAttachment> ColorAttachments;
@@ -177,6 +182,8 @@ namespace GPP
         std::unordered_map<std::string, RenderGraphHandle> m_BufferHandlesByName;
         std::vector<BufferResource> m_Buffers;
         std::vector<Pass> m_Passes;
+        std::string m_BuildScope;
+        GpuProfiler* m_Profiler = nullptr;
         RenderGraphHandle m_PrimaryColor = kInvalidRenderGraphHandle;
         RenderGraphHandle m_PrimaryDepth = kInvalidRenderGraphHandle;
     };

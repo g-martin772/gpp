@@ -42,6 +42,7 @@ namespace GPP
     void RenderGraph::Begin(const std::uint32_t frameIndex)
     {
         m_Passes.clear();
+        m_BuildScope.clear();
         m_PrimaryColor = kInvalidRenderGraphHandle;
         m_PrimaryDepth = kInvalidRenderGraphHandle;
         m_ActiveFrameIndex = frameIndex % static_cast<std::uint32_t>(m_DescriptorAllocators.size());
@@ -182,6 +183,7 @@ namespace GPP
             .BufferUses = std::move(bufferUses),
             .Record = std::move(record)
         });
+        m_Passes.back().Scope = m_BuildScope;
     }
 
     void RenderGraph::AddGraphicsPass(std::string name, std::vector<RenderGraphImageUse> imageUses,
@@ -199,6 +201,7 @@ namespace GPP
             .DepthAttachment = depthAttachment,
             .Record = std::move(record)
         });
+        m_Passes.back().Scope = m_BuildScope;
     }
 
     void RenderGraph::AddBudgetedComputePass(std::string name, std::vector<RenderGraphImageUse> imageUses,
@@ -213,6 +216,7 @@ namespace GPP
             .TotalItems = totalItems,
             .RecordSlice = std::move(record)
         });
+        m_Passes.back().Scope = m_BuildScope;
     }
 
     void RenderGraph::Compile()
@@ -339,28 +343,49 @@ namespace GPP
 
     void RenderGraph::Execute(const vk::CommandBuffer commandBuffer)
     {
+        if (m_Profiler) m_Profiler->BeginFrame(commandBuffer, m_ActiveFrameIndex);
+        std::string openScope;
         bool first = true;
         for (auto& pass : m_Passes)
         {
+            const bool scopeChange = pass.Scope != openScope;
+            if (scopeChange && m_Profiler && !openScope.empty())
+            {
+                m_Profiler->EndScope(commandBuffer);
+            }
             if (!first)
             {
                 RecordPassBarrier(commandBuffer);
             }
             first = false;
+            if (scopeChange)
+            {
+                openScope = pass.Scope;
+                if (m_Profiler && !openScope.empty()) m_Profiler->BeginScope(commandBuffer, openScope);
+            }
             RecordPass(commandBuffer, pass);
         }
+        if (m_Profiler) m_Profiler->EndScope(commandBuffer);
     }
 
     vk::CommandBuffer RenderGraph::ExecuteSliced(
         IRenderGraphChunkSink& sink, const std::function<AdaptiveSlicer&(const std::string&)>& slicerFor)
     {
         vk::CommandBuffer commandBuffer = sink.BeginChunk();
+        if (m_Profiler) m_Profiler->BeginFrame(commandBuffer, 0);
+        std::string openScope;
         bool first = true;
         for (auto& pass : m_Passes)
         {
+            const bool scopeChange = pass.Scope != openScope;
+            if (scopeChange && m_Profiler && !openScope.empty())
+            {
+                m_Profiler->EndScope(commandBuffer);
+            }
             if (!commandBuffer)
             {
                 commandBuffer = sink.BeginChunk();
+                if (m_Profiler && !scopeChange) m_Profiler->Resume(commandBuffer);
             }
 
             if (!first)
@@ -368,6 +393,11 @@ namespace GPP
                 RecordPassBarrier(commandBuffer);
             }
             first = false;
+            if (scopeChange)
+            {
+                openScope = pass.Scope;
+                if (m_Profiler && !openScope.empty()) m_Profiler->BeginScope(commandBuffer, openScope);
+            }
 
             if (pass.Kind != PassKind::BudgetedCompute)
             {
@@ -392,9 +422,11 @@ namespace GPP
                 if (!commandBuffer)
                 {
                     commandBuffer = sink.BeginChunk();
+                    if (m_Profiler) m_Profiler->Resume(commandBuffer);
                 }
                 const auto count = slicer.NextSliceSize(pass.TotalItems - done);
                 pass.RecordSlice(commandBuffer, *this, RenderGraphWorkSlice{done, count, pass.TotalItems});
+                if (m_Profiler) m_Profiler->Suspend(commandBuffer);
                 const double elapsedMs = sink.SubmitChunkAndWait();
                 commandBuffer = nullptr;
                 slicer.Report(count, elapsedMs);
@@ -404,7 +436,9 @@ namespace GPP
         if (!commandBuffer)
         {
             commandBuffer = sink.BeginChunk();
+            if (m_Profiler) m_Profiler->Resume(commandBuffer);
         }
+        if (m_Profiler) m_Profiler->EndScope(commandBuffer);
         return commandBuffer;
     }
 

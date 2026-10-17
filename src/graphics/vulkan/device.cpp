@@ -223,6 +223,11 @@ namespace GPP
 
             GpuCandidate candidate;
             candidate.Caps = ProbeCapabilities(device);
+            if (queueIndices.Graphics != static_cast<std::uint32_t>(-1) && properties.limits.timestampComputeAndGraphics)
+            {
+                candidate.Caps.TimestampValidBits = queueFamilyProperties[queueIndices.Graphics].timestampValidBits;
+                candidate.Caps.TimestampPeriodNs = properties.limits.timestampPeriod;
+            }
             candidate.Suitable = (!m_Requirements.Graphics || queueIndices.Graphics != -1)
                                  && (!m_Requirements.Compute || queueIndices.Compute != -1)
                                  && (!m_Requirements.Transfer || queueIndices.Transfer != -1)

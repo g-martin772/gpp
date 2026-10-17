@@ -273,6 +273,7 @@ namespace GPP
                 target->Ready.reset();
                 target->Pool.clear();
                 target->Graph.reset();
+                target->Profiler.reset();
                 target->DepthImage.Destroy();
             }
             m_Logger->Info("Detached render target {}", bufferId);
@@ -289,6 +290,10 @@ namespace GPP
         stats.FrameMs = target->FrameMeter.LastMs();
         stats.AverageFrameMs = target->FrameMeter.AverageMs();
         stats.GpuMs = target->LastGpuMs.load(std::memory_order_relaxed);
+        {
+            std::scoped_lock lock(target->PassMutex);
+            stats.Passes = target->PassTimings;
+        }
         stats.Submissions = target->LastSubmissions.load(std::memory_order_relaxed);
         stats.FramesRendered = target->FrameMeter.Total();
         stats.Extent = BufferTargetResources::UnpackExtent(target->DesiredExtent.load(std::memory_order_relaxed));
@@ -1028,6 +1033,8 @@ namespace GPP
             if (!target.Graph)
             {
                 target.Graph = std::make_unique<RenderGraph>(m_Device, m_Logger, 1);
+                target.Profiler = std::make_unique<GpuProfiler>(m_Device);
+                target.Graph->SetProfiler(target.Profiler->Enabled() ? target.Profiler.get() : nullptr);
             }
             auto& graph = *target.Graph;
             graph.Begin(0);
@@ -1068,6 +1075,11 @@ namespace GPP
             TransitionImageLayout(cmd, image->Color.GetImage(), image->Color.GetSpecification().format,
                                   graph.GetCurrentLayout(colorHandle), vk::ImageLayout::eShaderReadOnlyOptimal);
             sink.SubmitChunkAndWait();
+            if (target.Profiler && target.Profiler->Collect(0))
+            {
+                std::scoped_lock lock(target.PassMutex);
+                target.PassTimings = target.Profiler->Latest();
+            }
             image->Layout = vk::ImageLayout::eShaderReadOnlyOptimal;
             target.DepthLayout = graph.GetCurrentLayout(depthHandle);
         }
@@ -1162,6 +1174,7 @@ namespace GPP
             target->Ready.reset();
             target->Pool.clear();
             target->Graph.reset();
+            target->Profiler.reset();
             target->DepthImage.Destroy();
         }
         DrainTextureGraveyard();

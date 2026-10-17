@@ -89,6 +89,7 @@ namespace GPP
         VulkanImage DepthImage;
         vk::ImageLayout DepthLayout = vk::ImageLayout::eUndefined;
         std::unique_ptr<RenderGraph> Graph;
+        std::unique_ptr<GpuProfiler> Profiler;
         std::unordered_map<std::string, AdaptiveSlicer> Slicers;
         std::uint64_t NextSerial = 1;
 
@@ -105,6 +106,8 @@ namespace GPP
         std::atomic<double> LastGpuMs{0.0};
         std::atomic<std::uint32_t> LastSubmissions{0};
         std::atomic<std::int64_t> InFlightSinceNs{0};
+        mutable std::mutex PassMutex;
+        std::vector<GpuScopeTiming> PassTimings;
     };
 
     export class Renderer : public IHostedService
@@ -191,6 +194,7 @@ namespace GPP
             double AverageFrameMs = 0.0;
             double GpuMs = 0.0;
             double CurrentFrameMs = 0.0;
+            std::vector<GpuScopeTiming> Passes;
             std::uint32_t Submissions = 0;
             std::uint64_t FramesRendered = 0;
             glm::uvec2 Extent{0, 0};

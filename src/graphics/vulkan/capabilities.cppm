@@ -38,6 +38,8 @@ export namespace GPP
         bool AtomicFloat{false};
         bool DescriptorIndexing{false};
         bool HdrMetadata{false};
+        std::uint32_t TimestampValidBits{0};
+        double TimestampPeriodNs{0.0};
         std::string Reason;
 
         [[nodiscard]] bool Has(std::string_view key) const noexcept
@@ -52,6 +54,8 @@ export namespace GPP
             if (key == GpuCapability::kHdrMetadata) return HdrMetadata;
             return false;
         }
+
+        [[nodiscard]] bool GpuTimestamps() const noexcept { return TimestampValidBits > 0 && TimestampPeriodNs > 0.0; }
 
         void Disable(std::string_view key) noexcept
         {
