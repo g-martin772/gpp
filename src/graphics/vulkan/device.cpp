@@ -387,6 +387,9 @@ namespace GPP
             feature.pNext = featureChain;
             featureChain = &feature;
         };
+        vk::PhysicalDeviceShaderDemoteToHelperInvocationFeatures demoteFeatures;
+        demoteFeatures.shaderDemoteToHelperInvocation = VK_TRUE;
+        link(demoteFeatures); // glslang emits `discard` as demote for SPIR-V 1.6
         vk::PhysicalDeviceAccelerationStructureFeaturesKHR asFeatures;
         asFeatures.accelerationStructure = VK_TRUE;
         if (m_Capabilities.AccelerationStructure) link(asFeatures);
@@ -410,6 +413,8 @@ namespace GPP
         const auto supported = m_PhysicalDevice.getFeatures();
         if (supported.fillModeNonSolid) deviceFeatures2.features.fillModeNonSolid = VK_TRUE;
         if (supported.samplerAnisotropy) deviceFeatures2.features.samplerAnisotropy = VK_TRUE;
+        if (supported.shaderSampledImageArrayDynamicIndexing)
+            deviceFeatures2.features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
         if (supported.wideLines) deviceFeatures2.features.wideLines = VK_TRUE;
         // Enable shaderInt64 for buffer addresses if needed, but usually implied or separate
         deviceFeatures2.features.shaderInt64 = VK_TRUE;
