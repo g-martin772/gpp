@@ -155,6 +155,16 @@ namespace GPP
     // Reads factors, flags, texture coordinate sets and KHR_texture_transform; images stay unresolved.
     export GltfMaterial ReadGltfMaterial(const tinygltf::Material& material, GltfTextureIndices& textureIndices);
 
+    export struct GltfExtensionReport
+    {
+        std::vector<std::string> Unsupported;         // used, ignored
+        std::vector<std::string> Approximated;        // used, mapped onto metallic-roughness
+        std::vector<std::string> RequiredUnsupported; // required and not handled: the model may be incomplete
+    };
+
+    export [[nodiscard]] GltfExtensionReport AuditGltfExtensions(const std::vector<std::string>& used,
+                                                                  const std::vector<std::string>& required);
+
     export struct GltfGeometry
     {
         std::vector<glm::vec3> Vertices;

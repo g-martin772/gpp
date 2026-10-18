@@ -421,3 +421,36 @@ TEST_CASE("Texture descriptor array is padded with the fallback image", "[graphi
     CHECK(infos.size() == 8);
     for (const auto& info : infos) CHECK(info.imageLayout == vk::ImageLayout::eShaderReadOnlyOptimal);
 }
+
+TEST_CASE("Extension audit separates supported, approximated and unsupported extensions", "[graphics][gltf][material]")
+{
+    const auto report = AuditGltfExtensions(
+        {"KHR_materials_specular", "KHR_texture_transform", "KHR_materials_transmission", "KHR_materials_pbrSpecularGlossiness",
+         "KHR_materials_clearcoat", "EXT_texture_webp"},
+        {"KHR_mesh_quantization", "KHR_draco_mesh_compression", "KHR_materials_pbrSpecularGlossiness"});
+    CHECK(report.Approximated == std::vector<std::string>{"KHR_materials_transmission", "KHR_materials_pbrSpecularGlossiness"});
+    CHECK(report.Unsupported == std::vector<std::string>{"KHR_materials_clearcoat", "EXT_texture_webp"});
+    CHECK(report.RequiredUnsupported == std::vector<std::string>{"KHR_draco_mesh_compression"});
+    const auto none = AuditGltfExtensions({}, {});
+    CHECK(none.Approximated.empty());
+    CHECK(none.Unsupported.empty());
+    CHECK(none.RequiredUnsupported.empty());
+}
+
+TEST_CASE("Spec-gloss materials map onto metallic-roughness", "[graphics][gltf][material]")
+{
+    tinygltf::Material source;
+    source.extensions["KHR_materials_pbrSpecularGlossiness"] =
+        Obj({{"diffuseFactor", Vec({0.2, 0.4, 0.6, 0.8})},
+             {"diffuseTexture", Obj({{"index", tinygltf::Value(4)}, {"texCoord", tinygltf::Value(1)}})},
+             {"glossinessFactor", tinygltf::Value(0.9)},
+             {"specularFactor", Vec({0.0, 0.02, 0.5})}});
+    GltfTextureIndices indices;
+    const auto material = ReadGltfMaterial(source, indices);
+    CHECK(material.BaseColorFactor == glm::vec4(0.2f, 0.4f, 0.6f, 0.8f));
+    CHECK(material.MetallicFactor == 0.0f);
+    CHECK(material.RoughnessFactor == Approx(0.1f));
+    CHECK(material.SpecularColorFactor == glm::vec3(0.0f, 0.5f, 1.0f));
+    CHECK(indices[static_cast<std::size_t>(GltfTextureRole::BaseColor)] == 4);
+    CHECK(material.Texture(GltfTextureRole::BaseColor).TexCoord == 1);
+}

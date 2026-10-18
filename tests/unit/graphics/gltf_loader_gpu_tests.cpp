@@ -105,6 +105,71 @@ namespace
         return path;
     }
 
+    std::filesystem::path WriteDegradedGltf()
+    {
+        std::vector<std::uint8_t> buffer;
+        const std::int16_t positions[4][3] = {{0, 0, 0}, {100, 0, 0}, {100, 100, 0}, {0, 100, 0}};
+        const std::int8_t normals[4][3] = {{0, 0, 127}, {0, 0, 127}, {0, 0, 127}, {0, 0, 127}};
+        const std::uint16_t uvs[4][2] = {{0, 65535}, {65535, 65535}, {65535, 0}, {0, 0}};
+        for (const auto& v : positions) for (const auto c : v) Append(buffer, c);
+        for (const auto& v : normals) for (const auto c : v) Append(buffer, c);
+        for (const auto& v : uvs) for (const auto c : v) Append(buffer, c);
+
+        std::string json = R"({
+ "asset": {"version": "2.0"},
+ "extensionsUsed": ["KHR_mesh_quantization", "KHR_materials_pbrSpecularGlossiness", "KHR_draco_mesh_compression", "KHR_materials_clearcoat"],
+ "extensionsRequired": ["KHR_mesh_quantization", "KHR_draco_mesh_compression"],
+ "scene": 0, "scenes": [{"nodes": [0]}],
+ "nodes": [{"mesh": 0, "scale": [0.01, 0.01, 0.01]}],
+ "meshes": [{"primitives": [
+   {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "mode": 5, "material": 0},
+   {"attributes": {"POSITION": 3}, "material": 0},
+   {"attributes": {"POSITION": 0}, "mode": 1, "material": 0}]}],
+ "materials": [
+  {"name": "SpecGloss", "doubleSided": true, "extensions": {"KHR_materials_pbrSpecularGlossiness": {
+     "diffuseFactor": [0.5, 0.25, 1.0, 1.0], "diffuseTexture": {"index": 0}, "glossinessFactor": 0.25, "specularFactor": [0.04, 0.02, 0.0]}}},
+  {"name": "Broken", "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+  {"name": "Missing", "pbrMetallicRoughness": {"baseColorTexture": {"index": 2}}}],
+ "textures": [{"source": 0}, {"source": 1}, {"source": 2}],
+ "images": [{"uri": "@GOOD@"}, {"uri": "data:image/png;base64,AAAAAAAA"}, {"uri": "does_not_exist.png"}],
+ "buffers": [{"byteLength": @SIZE@, "uri": "data:application/octet-stream;base64,@DATA@"}],
+ "bufferViews": [
+   {"buffer": 0, "byteOffset": 0, "byteLength": 24},
+   {"buffer": 0, "byteOffset": 24, "byteLength": 12},
+   {"buffer": 0, "byteOffset": 36, "byteLength": 16}],
+ "accessors": [
+   {"bufferView": 0, "componentType": 5122, "count": 4, "type": "VEC3", "min": [0,0,0], "max": [100,100,0]},
+   {"bufferView": 1, "componentType": 5120, "normalized": true, "count": 4, "type": "VEC3"},
+   {"bufferView": 2, "componentType": 5123, "normalized": true, "count": 4, "type": "VEC2"},
+   {"componentType": 5126, "count": 4, "type": "VEC3"}]
+})";
+        const auto replace = [&](const std::string& key, const std::string& value)
+        {
+            json.replace(json.find(key), key.size(), value);
+        };
+        replace("@GOOD@", PpmDataUri(8, 8, 255, 0, 0));
+        replace("@SIZE@", std::to_string(buffer.size()));
+        replace("@DATA@", Base64(buffer));
+        const auto path = std::filesystem::temp_directory_path() / "gpp_degraded_gltf_test.gltf";
+        std::ofstream(path) << json;
+        return path;
+    }
+
+    std::vector<GltfVertex> ReadVertices(const std::shared_ptr<VulkanDevice>& device, const GltfPrimitive& primitive)
+    {
+        auto logger = std::make_shared<Logger>();
+        const auto bytes = static_cast<vk::DeviceSize>(primitive.VertexCount * sizeof(GltfVertex));
+        VulkanBuffer readback(device, MakeReadbackBufferSpecification(bytes), logger);
+        VulkanCommandPool pool(device, logger, device->GetQueueIndices().Graphics);
+        ImmediateSubmit(pool, device->GetGraphicsQueue(), [&](const vk::CommandBuffer cmd)
+        {
+            CopyBuffer(cmd, primitive.VertexBuffer.GetBuffer(), readback.GetBuffer(), bytes);
+        });
+        std::vector<GltfVertex> out(primitive.VertexCount);
+        readback.Read(out.data(), bytes);
+        return out;
+    }
+
     std::vector<GltfVertexExtra> ReadExtras(const std::shared_ptr<VulkanDevice>& device, const GltfPrimitive& primitive)
     {
         auto logger = std::make_shared<Logger>();
@@ -191,6 +256,93 @@ TEST_CASE("Loader uploads role formats, mip chains, tangents and the full materi
     CHECK(library.Materials()[0].Emissive.Matrix[0][0] == Approx(2.0f));
     auto buffer = CreateMaterialBuffer(device, library, logger);
     CHECK(buffer.GetSize() == 2 * sizeof(GltfMaterialGpu));
+}
+
+TEST_CASE("Loader degrades on quantized data, strips, unsupported primitives, broken images and spec-gloss", "[graphics][gltf][gpu]")
+{
+    const auto logger = std::make_shared<Logger>();
+    const auto device = CreateHeadlessDevice(logger);
+    if (!device)
+    {
+        WARN("No headless Vulkan device; skipping loader GPU test");
+        return;
+    }
+
+    const auto path = WriteDegradedGltf();
+    const auto scene = LoadGltfScene(device, std::make_shared<FileSystem>(), path, logger);
+    std::filesystem::remove(path);
+
+    REQUIRE(scene.Meshes.size() == 1);
+    REQUIRE(scene.Meshes[0].Primitives.size() == 1);
+    const auto& strip = scene.Meshes[0].Primitives[0];
+    CHECK(strip.VertexCount == 4);
+    CHECK(strip.IndexCount == 6);
+
+    const auto vertices = ReadVertices(device, strip);
+    CHECK(vertices[1].Position.x == Approx(1.0f));
+    CHECK(vertices[2].Position.y == Approx(1.0f));
+    CHECK(vertices[0].Normal.z == Approx(1.0f));
+    CHECK(vertices[1].TexCoord == glm::vec2(1.0f, 1.0f));
+    CHECK(vertices[3].TexCoord == glm::vec2(0.0f, 0.0f));
+
+    REQUIRE(scene.Materials.size() == 3);
+    const auto& specGloss = scene.Materials[0];
+    CHECK(specGloss.BaseColorFactor == glm::vec4(0.5f, 0.25f, 1.0f, 1.0f));
+    CHECK(specGloss.MetallicFactor == 0.0f);
+    CHECK(specGloss.RoughnessFactor == Approx(0.75f));
+    CHECK(specGloss.SpecularColorFactor.x == Approx(1.0f));
+    CHECK(specGloss.SpecularColorFactor.y == Approx(0.5f));
+    CHECK(specGloss.SpecularColorFactor.z == Approx(0.0f));
+    CHECK(specGloss.Texture(GltfTextureRole::BaseColor));
+    CHECK_FALSE(scene.Materials[1].Texture(GltfTextureRole::BaseColor));
+    CHECK_FALSE(scene.Materials[2].Texture(GltfTextureRole::BaseColor));
+}
+
+TEST_CASE("Every sample model loads with its materials and textures", "[graphics][gltf][gpu][models]")
+{
+    const auto logger = std::make_shared<Logger>();
+    const auto device = CreateHeadlessDevice(logger);
+    if (!device)
+    {
+        WARN("No headless Vulkan device; skipping model test");
+        return;
+    }
+    const auto root = std::filesystem::path(GPP_SOURCE_DIR) / ".." / "MoleHole" / "assets" / "models";
+    if (!std::filesystem::exists(root))
+    {
+        WARN("No sample models next to gpp; skipping");
+        return;
+    }
+    std::size_t loaded = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(root))
+    {
+        const auto path = entry.path() / "scene.gltf";
+        if (!std::filesystem::exists(path)) continue;
+        INFO(path.string());
+        tinygltf::Model model;
+        std::string err, warn;
+        tinygltf::TinyGLTF parser;
+        parser.SetImageLoader([](tinygltf::Image*, int, std::string*, std::string*, int, int, const unsigned char*, int, void*)
+                              { return true; }, nullptr);
+        REQUIRE(parser.LoadASCIIFromFile(&model, &err, &warn, path.string()));
+        const auto scene = LoadGltfScene(device, std::make_shared<FileSystem>(), path, logger);
+        CHECK(scene.Materials.size() == model.materials.size());
+        CHECK_FALSE(scene.Meshes.empty());
+        CHECK_FALSE(scene.Geometry.Indices.empty());
+        std::size_t sourceTextures = 0;
+        for (const auto& material : model.materials)
+        {
+            const auto& pbr = material.pbrMetallicRoughness;
+            const auto specGloss = material.extensions.find("KHR_materials_pbrSpecularGlossiness");
+            const bool diffuse = specGloss != material.extensions.end() && specGloss->second.Has("diffuseTexture");
+            if (pbr.baseColorTexture.index >= 0 || diffuse) ++sourceTextures;
+        }
+        std::size_t textured = 0;
+        for (const auto& material : scene.Materials) textured += material.Texture(GltfTextureRole::BaseColor) ? 1 : 0;
+        CHECK(textured == sourceTextures);
+        ++loaded;
+    }
+    if (loaded == 0) WARN("No sample models found");
 }
 
 TEST_CASE("Report the sample ship's materials", "[.sample][gltf][gpu]")

@@ -16,13 +16,19 @@ namespace GPP
 {
     namespace
     {
+        constexpr int kComponentTypeByte = 5120;
         constexpr int kComponentTypeUnsignedByte = 5121;
+        constexpr int kComponentTypeShort = 5122;
         constexpr int kComponentTypeUnsignedShort = 5123;
         constexpr int kComponentTypeUnsignedInt = 5125;
         constexpr int kComponentTypeFloat = 5126;
+        constexpr int kTypeScalar = 64 + 1;
         constexpr int kTypeVec2 = 2;
         constexpr int kTypeVec3 = 3;
         constexpr int kTypeVec4 = 4;
+        constexpr int kModeTriangles = 4;
+        constexpr int kModeTriangleStrip = 5;
+        constexpr int kModeTriangleFan = 6;
 
         struct AccessorView
         {
@@ -31,36 +37,119 @@ namespace GPP
             std::size_t Count = 0;
             int ComponentType = 0;
             int Type = 0;
+            bool Normalized = false;
         };
+
+        std::size_t ComponentSize(const int componentType)
+        {
+            switch (componentType)
+            {
+            case kComponentTypeByte:
+            case kComponentTypeUnsignedByte: return 1;
+            case kComponentTypeShort:
+            case kComponentTypeUnsignedShort: return 2;
+            case kComponentTypeUnsignedInt:
+            case kComponentTypeFloat: return 4;
+            default: return 0;
+            }
+        }
+
+        int ComponentCount(const int type)
+        {
+            switch (type)
+            {
+            case kTypeScalar: return 1;
+            case kTypeVec2: return 2;
+            case kTypeVec3: return 3;
+            case kTypeVec4: return 4;
+            case 32 + 2: return 4;
+            case 32 + 3: return 9;
+            case 32 + 4: return 16;
+            default: return 0;
+            }
+        }
 
         AccessorView GetAccessorView(const tinygltf::Model& model, const int accessorIndex)
         {
             const auto& accessor = model.accessors.at(static_cast<std::size_t>(accessorIndex));
+            if (accessor.sparse.isSparse) throw std::runtime_error("sparse accessors are not supported");
+            if (accessor.bufferView < 0)
+            {
+                throw std::runtime_error("accessor without a buffer view (compressed or zero-filled data)");
+            }
             const auto& view = model.bufferViews.at(static_cast<std::size_t>(accessor.bufferView));
             const auto& buffer = model.buffers.at(static_cast<std::size_t>(view.buffer));
-            const auto stride = static_cast<std::size_t>(accessor.ByteStride(view));
+            const auto componentSize = ComponentSize(accessor.componentType);
+            const int components = ComponentCount(accessor.type);
+            const auto stride = static_cast<std::size_t>(std::max(accessor.ByteStride(view), 0));
+            if (componentSize == 0 || components <= 0 || stride == 0)
+            {
+                throw std::runtime_error("accessor with an unsupported component type or stride");
+            }
+            const auto elementSize = componentSize * static_cast<std::size_t>(components);
+            const auto first = static_cast<std::size_t>(view.byteOffset) + static_cast<std::size_t>(accessor.byteOffset);
+            if (accessor.count > 0 && first + stride * (accessor.count - 1) + elementSize > buffer.data.size())
+            {
+                throw std::runtime_error("accessor reads past the end of its buffer");
+            }
             return AccessorView{
-                buffer.data.data() + view.byteOffset + accessor.byteOffset,
-                stride, accessor.count, accessor.componentType, accessor.type
+                buffer.data.data() + first, stride, accessor.count, accessor.componentType, accessor.type,
+                accessor.normalized
             };
+        }
+
+        float ReadComponent(const AccessorView& view, const std::size_t index, const std::size_t component)
+        {
+            const auto* ptr = view.Data + view.Stride * index + component * ComponentSize(view.ComponentType);
+            const auto scale = [&](const float raw, const float max)
+            {
+                return view.Normalized ? std::max(raw / max, -1.0f) : raw;
+            };
+            switch (view.ComponentType)
+            {
+            case kComponentTypeByte: return scale(static_cast<float>(*reinterpret_cast<const std::int8_t*>(ptr)), 127.0f);
+            case kComponentTypeUnsignedByte: return scale(static_cast<float>(*ptr), 255.0f);
+            case kComponentTypeShort:
+            {
+                std::int16_t value;
+                std::memcpy(&value, ptr, sizeof(value));
+                return scale(static_cast<float>(value), 32767.0f);
+            }
+            case kComponentTypeUnsignedShort:
+            {
+                std::uint16_t value;
+                std::memcpy(&value, ptr, sizeof(value));
+                return scale(static_cast<float>(value), 65535.0f);
+            }
+            case kComponentTypeUnsignedInt:
+            {
+                std::uint32_t value;
+                std::memcpy(&value, ptr, sizeof(value));
+                return static_cast<float>(value);
+            }
+            default:
+            {
+                float value;
+                std::memcpy(&value, ptr, sizeof(value));
+                return value;
+            }
+            }
         }
 
         glm::vec3 ReadVec3(const AccessorView& view, const std::size_t index)
         {
-            const auto* floats = reinterpret_cast<const float*>(view.Data + view.Stride * index);
-            return {floats[0], floats[1], floats[2]};
+            return {ReadComponent(view, index, 0), ReadComponent(view, index, 1), ReadComponent(view, index, 2)};
         }
 
         glm::vec4 ReadVec4(const AccessorView& view, const std::size_t index)
         {
-            const auto* floats = reinterpret_cast<const float*>(view.Data + view.Stride * index);
-            return {floats[0], floats[1], floats[2], floats[3]};
+            return {ReadComponent(view, index, 0), ReadComponent(view, index, 1), ReadComponent(view, index, 2),
+                    ReadComponent(view, index, 3)};
         }
 
         glm::vec2 ReadVec2(const AccessorView& view, const std::size_t index)
         {
-            const auto* floats = reinterpret_cast<const float*>(view.Data + view.Stride * index);
-            return {floats[0], floats[1]};
+            return {ReadComponent(view, index, 0), ReadComponent(view, index, 1)};
         }
 
         std::uint32_t ReadIndex(const AccessorView& view, const std::size_t index)
@@ -71,17 +160,46 @@ namespace GPP
             case kComponentTypeUnsignedByte:
                 return *ptr;
             case kComponentTypeUnsignedShort:
-                return *reinterpret_cast<const std::uint16_t*>(ptr);
+            {
+                std::uint16_t value;
+                std::memcpy(&value, ptr, sizeof(value));
+                return value;
+            }
             case kComponentTypeUnsignedInt:
-                return *reinterpret_cast<const std::uint32_t*>(ptr);
+            {
+                std::uint32_t value;
+                std::memcpy(&value, ptr, sizeof(value));
+                return value;
+            }
             default:
                 return 0;
             }
         }
 
-        bool IsFloatVec(const AccessorView& view, const int expectedType)
+        bool IsVec(const AccessorView& view, const int expectedType)
         {
-            return view.ComponentType == kComponentTypeFloat && view.Type == expectedType;
+            return view.Type == expectedType && view.ComponentType != kComponentTypeUnsignedInt;
+        }
+
+        std::vector<std::uint32_t> ToTriangleList(std::vector<std::uint32_t> indices, const int mode)
+        {
+            if (mode == kModeTriangles) return indices;
+            std::vector<std::uint32_t> out;
+            if (indices.size() < 3) return out;
+            out.reserve((indices.size() - 2) * 3);
+            for (std::size_t i = 2; i < indices.size(); ++i)
+            {
+                if (mode == kModeTriangleStrip)
+                {
+                    const bool odd = (i & 1) != 0;
+                    out.insert(out.end(), {indices[i - 2], odd ? indices[i] : indices[i - 1], odd ? indices[i - 1] : indices[i]});
+                }
+                else
+                {
+                    out.insert(out.end(), {indices[0], indices[i - 1], indices[i]});
+                }
+            }
+            return out;
         }
 
         glm::mat4 LocalNodeTransform(const tinygltf::Node& node)
@@ -122,7 +240,7 @@ namespace GPP
                    glm::scale(glm::mat4(1.0f), scale);
         }
 
-        bool DecodeEmbeddedImage(tinygltf::Image* image, const int, std::string* err, std::string*,
+        bool DecodeEmbeddedImage(tinygltf::Image* image, const int index, std::string*, std::string* warn,
                                  int, int, const unsigned char* bytes, const int size, void*)
         {
             int width = 0, height = 0, channels = 0;
@@ -130,12 +248,15 @@ namespace GPP
                                                            STBI_rgb_alpha);
             if (!decoded)
             {
-                if (err)
+                if (warn)
                 {
-                    *err += std::string("Failed to decode embedded glTF image: ") +
-                        (stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
+                    *warn += std::format("image {} ('{}') could not be decoded ({}), the material is untextured. ", index,
+                                         image->uri, stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
                 }
-                return false;
+                image->width = 0;
+                image->height = 0;
+                image->image.clear();
+                return true;
             }
             image->width = width;
             image->height = height;
@@ -145,6 +266,41 @@ namespace GPP
             image->image.assign(decoded, decoded + (static_cast<std::size_t>(width) * height * 4));
             stbi_image_free(decoded);
             return true;
+        }
+
+        void HalveImage(tinygltf::Image& image)
+        {
+            const int width = std::max(image.width / 2, 1);
+            const int height = std::max(image.height / 2, 1);
+            std::vector<unsigned char> out(static_cast<std::size_t>(width) * height * 4);
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        int sum = 0;
+                        for (int dy = 0; dy < 2; ++dy)
+                        {
+                            for (int dx = 0; dx < 2; ++dx)
+                            {
+                                const int sx = std::min(x * 2 + dx, image.width - 1);
+                                const int sy = std::min(y * 2 + dy, image.height - 1);
+                                sum += image.image[(static_cast<std::size_t>(sy) * image.width + sx) * 4 + c];
+                            }
+                        }
+                        out[(static_cast<std::size_t>(y) * width + x) * 4 + c] = static_cast<unsigned char>((sum + 2) / 4);
+                    }
+                }
+            }
+            image.width = width;
+            image.height = height;
+            image.image = std::move(out);
+        }
+
+        std::uint64_t MippedBytes(const tinygltf::Image& image)
+        {
+            return image.image.empty() ? 0 : static_cast<std::uint64_t>(image.image.size()) * 4 / 3;
         }
 
         vk::SamplerAddressMode ToAddressMode(const int wrap)
@@ -212,6 +368,66 @@ namespace GPP
             return gpuImage;
         }
 
+        // Halves images the device cannot hold (dimension limit) and the largest ones while the scene's textures would
+        // take more than a quarter of the largest device-local heap. Returns the resulting mipped byte total.
+        std::uint64_t ConstrainTextures(tinygltf::Model& model, const std::shared_ptr<VulkanDevice>& device,
+                                        const std::shared_ptr<Logger>& logger, const std::string& name)
+        {
+            const auto physical = device->GetPhysicalDevice();
+            const auto maxDimension = static_cast<int>(physical.getProperties().limits.maxImageDimension2D);
+            std::uint64_t heap = 0;
+            const auto memory = physical.getMemoryProperties();
+            for (std::uint32_t i = 0; i < memory.memoryHeapCount; ++i)
+            {
+                if (memory.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) heap = std::max<std::uint64_t>(heap, memory.memoryHeaps[i].size);
+            }
+            const std::uint64_t budget = std::max<std::uint64_t>(heap / 4, 256ull << 20);
+
+            std::set<int> used;
+            for (const auto& texture : model.textures)
+            {
+                if (texture.source >= 0 && static_cast<std::size_t>(texture.source) < model.images.size()) used.insert(texture.source);
+            }
+            std::map<int, std::pair<int, int>> original;
+            const auto halve = [&](const int index)
+            {
+                auto& image = model.images[static_cast<std::size_t>(index)];
+                original.try_emplace(index, std::pair{image.width, image.height});
+                HalveImage(image);
+            };
+            std::uint64_t total = 0;
+            for (const int index : used)
+            {
+                auto& image = model.images[static_cast<std::size_t>(index)];
+                while (!image.image.empty() && (image.width > maxDimension || image.height > maxDimension)) halve(index);
+                total += MippedBytes(image);
+            }
+            while (total > budget)
+            {
+                int largest = -1;
+                std::uint64_t largestBytes = 0;
+                for (const int index : used)
+                {
+                    const auto bytes = MippedBytes(model.images[static_cast<std::size_t>(index)]);
+                    if (bytes > largestBytes) { largestBytes = bytes; largest = index; }
+                }
+                if (largest < 0 || model.images[static_cast<std::size_t>(largest)].width <= 1) break;
+                total -= largestBytes;
+                halve(largest);
+                total += MippedBytes(model.images[static_cast<std::size_t>(largest)]);
+            }
+            if (logger)
+            {
+                for (const auto& [index, size] : original)
+                {
+                    const auto& image = model.images[static_cast<std::size_t>(index)];
+                    logger->Warn("glTF '{}': texture {} reduced from {}x{} to {}x{} (device limit {}, texture budget {} MiB).", name,
+                                 index, size.first, size.second, image.width, image.height, maxDimension, budget >> 20);
+                }
+            }
+            return total;
+        }
+
         struct TextureKey
         {
             int Source = -1;
@@ -241,7 +457,7 @@ namespace GPP
             const auto indexBytes = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
             const auto extraBytes = static_cast<vk::DeviceSize>(extras.size() * sizeof(GltfVertexExtra));
             auto vertexSpec = MakeVertexBufferSpecification(vertexBytes);
-            vertexSpec.usage |= traceable;
+            vertexSpec.usage |= traceable | vk::BufferUsageFlagBits::eTransferSrc;
             auto indexSpec = MakeIndexBufferSpecification(indexBytes);
             indexSpec.usage |= traceable;
             auto extraSpec = MakeVertexBufferSpecification(extraBytes);
@@ -272,22 +488,27 @@ namespace GPP
         {
             const auto& logger = upload.Log;
             const auto positionIt = primitive.attributes.find("POSITION");
-            if (positionIt == primitive.attributes.end() || primitive.indices < 0)
+            if (positionIt == primitive.attributes.end())
+            {
+                if (logger) logger->Warn("glTF '{}': skipping primitive with no POSITION.", resolvedPath.string());
+                return;
+            }
+            if (primitive.mode != kModeTriangles && primitive.mode != kModeTriangleStrip && primitive.mode != kModeTriangleFan)
             {
                 if (logger)
                 {
-                    logger->Warn("glTF '{}': skipping primitive with no POSITION or indices.",
-                                resolvedPath.string());
+                    logger->Warn("glTF '{}': skipping primitive with unsupported mode {} (only triangles are drawn).",
+                                 resolvedPath.string(), primitive.mode);
                 }
                 return;
             }
 
             const auto positionView = GetAccessorView(model, positionIt->second);
-            if (!IsFloatVec(positionView, kTypeVec3))
+            if (!IsVec(positionView, kTypeVec3))
             {
                 if (logger)
                 {
-                    logger->Warn("glTF '{}': skipping primitive with a non-float POSITION accessor.",
+                    logger->Warn("glTF '{}': skipping primitive with an unsupported POSITION accessor.",
                                 resolvedPath.string());
                 }
                 return;
@@ -296,7 +517,7 @@ namespace GPP
             std::optional<AccessorView> normalView;
             if (const auto it = primitive.attributes.find("NORMAL"); it != primitive.attributes.end())
             {
-                if (auto view = GetAccessorView(model, it->second); IsFloatVec(view, kTypeVec3))
+                if (auto view = GetAccessorView(model, it->second); IsVec(view, kTypeVec3))
                 {
                     normalView = view;
                 }
@@ -305,7 +526,7 @@ namespace GPP
             {
                 if (const auto it = primitive.attributes.find(name); it != primitive.attributes.end())
                 {
-                    if (auto view = GetAccessorView(model, it->second); IsFloatVec(view, type)) return view;
+                    if (auto view = GetAccessorView(model, it->second); IsVec(view, type)) return view;
                 }
                 return std::nullopt;
             };
@@ -336,11 +557,32 @@ namespace GPP
                 }
             }
 
-            const auto indexView = GetAccessorView(model, primitive.indices);
-            std::vector<std::uint32_t> indices(indexView.Count);
-            for (std::size_t i = 0; i < indexView.Count; ++i)
+            std::vector<std::uint32_t> indices;
+            if (primitive.indices >= 0)
             {
-                indices[i] = ReadIndex(indexView, i);
+                const auto indexView = GetAccessorView(model, primitive.indices);
+                if (indexView.Type != kTypeScalar || indexView.ComponentType == kComponentTypeFloat)
+                {
+                    if (logger) logger->Warn("glTF '{}': skipping primitive with unsupported indices.", resolvedPath.string());
+                    return;
+                }
+                indices.resize(indexView.Count);
+                for (std::size_t i = 0; i < indexView.Count; ++i)
+                {
+                    indices[i] = ReadIndex(indexView, i);
+                }
+            }
+            else
+            {
+                indices.resize(positionView.Count);
+                std::iota(indices.begin(), indices.end(), 0u);
+            }
+            indices = ToTriangleList(std::move(indices), primitive.mode);
+            indices.resize(indices.size() / 3 * 3);
+            if (std::ranges::any_of(indices, [&](const std::uint32_t index) { return index >= vertices.size(); }))
+            {
+                if (logger) logger->Warn("glTF '{}': skipping primitive with out-of-range indices.", resolvedPath.string());
+                return;
             }
 
             if (vertices.empty() || indices.empty()) return;
@@ -409,8 +651,20 @@ namespace GPP
                 const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
                 for (const auto& primitive : mesh.primitives)
                 {
-                    ProcessPrimitive(model, primitive, worldTransform, normalMatrix, upload, resolvedPath, scene,
-                                     outMesh);
+                    try
+                    {
+                        ProcessPrimitive(model, primitive, worldTransform, normalMatrix, upload, resolvedPath, scene,
+                                         outMesh);
+                    }
+                    catch (const std::out_of_range& error)
+                    {
+                        if (upload.Log) upload.Log->Warn("glTF '{}': skipping primitive with an invalid accessor ({}).",
+                                                         resolvedPath.string(), error.what());
+                    }
+                    catch (const std::runtime_error& error)
+                    {
+                        if (upload.Log) upload.Log->Warn("glTF '{}': skipping primitive: {}.", resolvedPath.string(), error.what());
+                    }
                 }
                 if (!outMesh.Primitives.empty())
                 {
@@ -476,6 +730,28 @@ namespace GPP
         }
     }
 
+    GltfExtensionReport AuditGltfExtensions(const std::vector<std::string>& used, const std::vector<std::string>& required)
+    {
+        constexpr std::array supported{"KHR_materials_emissive_strength", "KHR_materials_ior", "KHR_materials_specular",
+                                       "KHR_texture_transform", "KHR_mesh_quantization"};
+        constexpr std::array approximated{"KHR_materials_pbrSpecularGlossiness", "KHR_materials_transmission"};
+        const auto has = [](const auto& list, const std::string& name)
+        {
+            return std::ranges::any_of(list, [&](const char* entry) { return name == entry; });
+        };
+        GltfExtensionReport report;
+        for (const auto& name : used)
+        {
+            if (has(supported, name)) continue;
+            (has(approximated, name) ? report.Approximated : report.Unsupported).push_back(name);
+        }
+        for (const auto& name : required)
+        {
+            if (!has(supported, name) && !has(approximated, name)) report.RequiredUnsupported.push_back(name);
+        }
+        return report;
+    }
+
     GltfMaterial ReadGltfMaterial(const tinygltf::Material& material, GltfTextureIndices& textureIndices)
     {
         GltfMaterial out;
@@ -516,6 +792,28 @@ namespace GPP
              material.emissiveTexture.texCoord, material.emissiveTexture.extensions);
 
         const auto& extensions = material.extensions;
+        if (const auto it = extensions.find("KHR_materials_pbrSpecularGlossiness"); it != extensions.end())
+        {
+            // Factors and the diffuse texture only: dielectric, roughness = 1 - glossiness, specular scales F0
+            const auto& specGloss = it->second;
+            std::array<float, 4> diffuse{};
+            if (specGloss.Has("diffuseFactor") && ReadNumbers(specGloss.Get("diffuseFactor"), diffuse))
+            {
+                out.BaseColorFactor = {diffuse[0], diffuse[1], diffuse[2], diffuse[3]};
+            }
+            out.MetallicFactor = 0.0f;
+            out.RoughnessFactor = 1.0f - std::clamp(static_cast<float>(NumberOr(specGloss.Get("glossinessFactor"), 1.0)), 0.0f, 1.0f);
+            std::array<float, 3> specular{1.0f, 1.0f, 1.0f};
+            if (specGloss.Has("specularFactor")) ReadNumbers(specGloss.Get("specularFactor"), specular);
+            constexpr float kDielectricF0 = 0.04f;
+            out.SpecularFactor = 1.0f;
+            out.SpecularColorFactor = {std::min(specular[0] / kDielectricF0, 1.0f), std::min(specular[1] / kDielectricF0, 1.0f),
+                                       std::min(specular[2] / kDielectricF0, 1.0f)};
+            if (!out.Texture(GltfTextureRole::BaseColor).Image && textureIndices[static_cast<std::size_t>(GltfTextureRole::BaseColor)] < 0)
+            {
+                BindFromValue(out, textureIndices, GltfTextureRole::BaseColor, specGloss.Get("diffuseTexture"));
+            }
+        }
         if (const auto it = extensions.find("KHR_materials_emissive_strength"); it != extensions.end())
         {
             out.EmissiveStrength = static_cast<float>(NumberOr(it->second.Get("emissiveStrength"), 1.0));
@@ -561,6 +859,7 @@ namespace GPP
             throw std::invalid_argument("LoadGltfScene requires a device and file system.");
         }
 
+        const auto started = std::chrono::steady_clock::now();
         const auto resolvedPath = fileSystem->ResolvePath(path);
 
         tinygltf::TinyGLTF loader;
@@ -582,6 +881,31 @@ namespace GPP
             throw std::runtime_error(
                 std::format("Failed to load glTF '{}': {}", resolvedPath.string(), err));
         }
+
+        const auto audit = AuditGltfExtensions(model.extensionsUsed, model.extensionsRequired);
+        if (logger)
+        {
+            const auto join = [](const std::vector<std::string>& names)
+            {
+                std::string text;
+                for (const auto& entry : names) text += (text.empty() ? "" : ", ") + entry;
+                return text;
+            };
+            if (!audit.Approximated.empty())
+            {
+                logger->Warn("glTF '{}': extensions approximated: {}.", resolvedPath.string(), join(audit.Approximated));
+            }
+            if (!audit.Unsupported.empty())
+            {
+                logger->Warn("glTF '{}': extensions not supported and ignored: {}.", resolvedPath.string(), join(audit.Unsupported));
+            }
+            if (!audit.RequiredUnsupported.empty())
+            {
+                logger->Warn("glTF '{}': requires unsupported extensions ({}), the model may be incomplete.",
+                             resolvedPath.string(), join(audit.RequiredUnsupported));
+            }
+        }
+        const auto textureBytes = ConstrainTextures(model, device, logger, resolvedPath.string());
 
         GltfSceneData scene;
         VulkanCommandPool uploadPool(device, logger, device->GetQueueIndices().Graphics);
@@ -643,8 +967,10 @@ namespace GPP
 
         if (logger)
         {
-            logger->Info("Loaded glTF '{}': {} mesh(es), {} material(s)",
-                        resolvedPath.string(), scene.Meshes.size(), scene.Materials.size());
+            logger->Info("Loaded glTF '{}': {} mesh(es), {} material(s), {} triangle(s), {} texture(s) {} MiB, {} ms",
+                         resolvedPath.string(), scene.Meshes.size(), scene.Materials.size(),
+                         scene.Geometry.Indices.size() / 3, scene.Textures.size(), textureBytes >> 20,
+                         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
         }
 
         return scene;
