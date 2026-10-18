@@ -79,7 +79,7 @@ namespace GPP
 
     Task<void> VulkanContext::Init()
     {
-        co_await m_WindowManager->AwaitReady();
+        if (m_WindowManager) co_await m_WindowManager->AwaitReady();
         CreateInstance();
         SetupDebugMessenger();
         m_PhysicalDevices = m_Instance.enumeratePhysicalDevices();
@@ -205,7 +205,7 @@ namespace GPP
 
     std::vector<const char*> VulkanContext::GetRequiredExtensions() const
     {
-        if (m_WindowManager->IsHeadless())
+        if (!m_WindowManager || m_WindowManager->IsHeadless())
         {
             if (s_EnableValidationLayers)
             {

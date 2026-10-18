@@ -174,6 +174,77 @@ namespace GPP
                                 destination, vk::ImageLayout::eTransferDstOptimal, 1, &region, filter);
     }
 
+    std::uint32_t MipLevelCount(const vk::Extent3D extent) noexcept
+    {
+        const auto largest = std::max({extent.width, extent.height, extent.depth, 1u});
+        return static_cast<std::uint32_t>(std::bit_width(largest));
+    }
+
+    bool SupportsLinearBlit(const vk::PhysicalDevice physicalDevice, const vk::Format format)
+    {
+        const auto required = vk::FormatFeatureFlagBits::eBlitSrc | vk::FormatFeatureFlagBits::eBlitDst |
+                              vk::FormatFeatureFlagBits::eSampledImageFilterLinear;
+        return (physicalDevice.getFormatProperties(format).optimalTilingFeatures & required) == required;
+    }
+
+    void GenerateMipmaps(const vk::CommandBuffer commandBuffer, const vk::Image image, const vk::Extent3D extent,
+                         const std::uint32_t mipLevels, const vk::ImageLayout finalLayout)
+    {
+        const auto barrier = [&](const std::uint32_t baseLevel, const std::uint32_t levelCount,
+                                 const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout,
+                                 const vk::PipelineStageFlags2 srcStage, const vk::AccessFlags2 srcAccess,
+                                 const vk::PipelineStageFlags2 dstStage, const vk::AccessFlags2 dstAccess)
+        {
+            vk::ImageMemoryBarrier2 b{};
+            b.srcStageMask = srcStage;
+            b.srcAccessMask = srcAccess;
+            b.dstStageMask = dstStage;
+            b.dstAccessMask = dstAccess;
+            b.oldLayout = oldLayout;
+            b.newLayout = newLayout;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image = image;
+            b.subresourceRange = {vk::ImageAspectFlagBits::eColor, baseLevel, levelCount, 0, 1};
+            vk::DependencyInfo dependency{};
+            dependency.imageMemoryBarrierCount = 1;
+            dependency.pImageMemoryBarriers = &b;
+            commandBuffer.pipelineBarrier2(dependency);
+        };
+        constexpr auto transfer = vk::PipelineStageFlagBits2::eTransfer;
+        const auto sampled = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader |
+                             vk::PipelineStageFlagBits2::eRayTracingShaderKHR;
+
+        if (mipLevels > 1)
+        {
+            barrier(1, mipLevels - 1, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone, transfer,
+                    vk::AccessFlagBits2::eTransferWrite);
+        }
+        auto width = static_cast<std::int32_t>(extent.width);
+        auto height = static_cast<std::int32_t>(extent.height);
+        for (std::uint32_t level = 1; level < mipLevels; ++level)
+        {
+            barrier(level - 1, 1, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+                    transfer, vk::AccessFlagBits2::eTransferWrite, transfer, vk::AccessFlagBits2::eTransferRead);
+            const auto nextWidth = std::max(width / 2, 1);
+            const auto nextHeight = std::max(height / 2, 1);
+            vk::ImageBlit blit{};
+            blit.srcSubresource = {vk::ImageAspectFlagBits::eColor, level - 1, 0, 1};
+            blit.srcOffsets[1] = vk::Offset3D{width, height, 1};
+            blit.dstSubresource = {vk::ImageAspectFlagBits::eColor, level, 0, 1};
+            blit.dstOffsets[1] = vk::Offset3D{nextWidth, nextHeight, 1};
+            commandBuffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image,
+                                    vk::ImageLayout::eTransferDstOptimal, 1, &blit, vk::Filter::eLinear);
+            barrier(level - 1, 1, vk::ImageLayout::eTransferSrcOptimal, finalLayout, transfer,
+                    vk::AccessFlagBits2::eTransferRead, sampled, vk::AccessFlagBits2::eShaderSampledRead);
+            width = nextWidth;
+            height = nextHeight;
+        }
+        barrier(mipLevels - 1, 1, vk::ImageLayout::eTransferDstOptimal, finalLayout, transfer,
+                vk::AccessFlagBits2::eTransferWrite, sampled, vk::AccessFlagBits2::eShaderSampledRead);
+    }
+
     VulkanSampler::VulkanSampler(const std::shared_ptr<VulkanDevice>& device, const vk::Filter filter,
                                  const vk::SamplerAddressMode addressMode, const bool anisotropy)
         : m_Device(device)

@@ -1,0 +1,32 @@
+#version 450
+
+layout(local_size_x = 1) in;
+
+#include "pbr/material.glsl"
+
+layout(std430, binding = 0) readonly buffer Materials { GltfMaterial materials[]; };
+layout(std430, binding = 1) writeonly buffer Results { vec4 results[]; };
+
+vec4 slotHead(GltfTextureSlot s)
+{
+    return vec4(float(s.index), float(s.texCoord), s.offset);
+}
+
+void main()
+{
+    GltfMaterial m = materials[1];
+    results[0] = m.baseColorFactor;
+    results[1] = vec4(m.emissiveRadiance, m.normalScale);
+    results[2] = vec4(m.metallic, m.roughness, m.occlusionStrength, m.alphaCutoff);
+    results[3] = vec4(m.ior, m.specularFactor, float(pbrAlphaMode(m)), pbrDoubleSided(m) ? 1.0 : 0.0);
+    results[4] = vec4(m.specularColorFactor, 0.0);
+    results[5] = slotHead(m.baseColor);
+    results[6] = slotHead(m.metallicRoughness);
+    results[7] = slotHead(m.normal);
+    results[8] = slotHead(m.occlusion);
+    results[9] = slotHead(m.emissive);
+    results[10] = slotHead(m.specular);
+    results[11] = slotHead(m.specularColor);
+    results[12] = vec4(m.normal.uvMatrix[0], m.normal.uvMatrix[1]);
+    results[13] = vec4(pbrSlotUv(m.normal, vec2(1.0, 0.0), vec2(0.0)), pbrSlotUv(m.emissive, vec2(0.0), vec2(0.25, 0.75)));
+}

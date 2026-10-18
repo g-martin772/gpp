@@ -59,6 +59,14 @@ namespace GPP
                           vk::Extent3D sourceExtent, vk::Extent3D destinationExtent,
                           vk::Filter filter = vk::Filter::eLinear);
 
+    export [[nodiscard]] std::uint32_t MipLevelCount(vk::Extent3D extent) noexcept;
+    export [[nodiscard]] bool SupportsLinearBlit(vk::PhysicalDevice physicalDevice, vk::Format format);
+    // Level 0 must hold the data in TransferDstOptimal and all levels must be allocated with TransferSrc and
+    // TransferDst usage. Blits down the chain; every level ends in finalLayout.
+    export void GenerateMipmaps(vk::CommandBuffer commandBuffer, vk::Image image, vk::Extent3D extent,
+                                std::uint32_t mipLevels,
+                                vk::ImageLayout finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
     export class VulkanSampler
     {
     public:

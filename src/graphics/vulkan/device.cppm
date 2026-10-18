@@ -92,6 +92,9 @@ namespace GPP
         GpuCapabilities m_Capabilities;
     };
 
+    // Instance and device without a window system; nullptr when no usable Vulkan device exists.
+    export std::shared_ptr<VulkanDevice> CreateHeadlessDevice(const std::shared_ptr<Logger>& logger);
+
     class VulkanFence {
     public:
         VulkanFence(vk::Device device, bool isSignaled = true);

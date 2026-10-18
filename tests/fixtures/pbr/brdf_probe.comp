@@ -1,0 +1,75 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct ProbeCase
+{
+    vec4 baseMetallic;
+    vec4 roughIorSpecular;
+    vec4 specularColor;
+    vec4 normal;
+    vec4 view;
+    vec4 light;
+    vec4 random;
+};
+
+layout(std430, binding = 0) readonly buffer Cases { ProbeCase cases[]; };
+layout(std430, binding = 1) readonly buffer Dfg { vec4 dfgTexels[]; };
+layout(std430, binding = 2) writeonly buffer Results { vec4 results[]; };
+
+layout(push_constant) uniform Params
+{
+    int caseCount;
+};
+
+#ifdef USE_TABLE
+vec4 dfgFetch(float nov, float roughness)
+{
+    float x = clamp(nov, 0.0, 1.0) * float(DFG_WIDTH - 1);
+    float y = clamp(roughness, 0.0, 1.0) * float(DFG_HEIGHT - 1);
+    int x0 = min(int(x), DFG_WIDTH - 2);
+    int y0 = min(int(y), DFG_HEIGHT - 2);
+    float fx = x - float(x0);
+    float fy = y - float(y0);
+    vec4 a = dfgTexels[y0 * DFG_WIDTH + x0];
+    vec4 b = dfgTexels[y0 * DFG_WIDTH + x0 + 1];
+    vec4 c = dfgTexels[(y0 + 1) * DFG_WIDTH + x0];
+    vec4 d = dfgTexels[(y0 + 1) * DFG_WIDTH + x0 + 1];
+    return mix(mix(a, b, fx), mix(c, d, fx), fy);
+}
+#define PBR_DFG_LOOKUP(nov, roughness) dfgFetch(nov, roughness)
+#endif
+
+#include "pbr/brdf.glsl"
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= uint(caseCount)) return;
+    ProbeCase c = cases[id];
+
+    PbrSurface s;
+    s.baseColor = c.baseMetallic.xyz;
+    s.metallic = c.baseMetallic.w;
+    s.roughness = c.roughIorSpecular.x;
+    s.ior = c.roughIorSpecular.y;
+    s.specularFactor = c.roughIorSpecular.z;
+    s.specularColor = c.specularColor.xyz;
+
+    vec3 N = normalize(c.normal.xyz);
+    vec3 V = normalize(c.view.xyz);
+    vec3 L = normalize(c.light.xyz);
+    PbrLobes lobes = pbrLobes(s, N, V);
+
+    vec3 sampledL;
+    float samplePdf;
+    vec3 weight;
+    bool valid = sampleBsdf(lobes, N, V, c.random.xyz, sampledL, samplePdf, weight);
+
+    uint base = id * 5u;
+    results[base + 0u] = vec4(evalBsdf(lobes, N, V, L), pdfBsdf(lobes, N, V, L));
+    results[base + 1u] = vec4(sampledL, samplePdf);
+    results[base + 2u] = vec4(weight, valid ? 1.0 : 0.0);
+    results[base + 3u] = vec4(lobes.eView, lobes.eAverage, lobes.specularProbability, lobes.alpha + 0.0 * dfgTexels[0].w);
+    results[base + 4u] = vec4(lobes.albedoView, lobes.nov);
+}

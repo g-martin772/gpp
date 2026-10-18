@@ -640,4 +640,23 @@ namespace GPP
         if (m_Semaphore && m_Device)
             m_Device.destroySemaphore(m_Semaphore);
     }
+
+    std::shared_ptr<VulkanDevice> CreateHeadlessDevice(const std::shared_ptr<Logger>& logger)
+    {
+        try
+        {
+            auto context = std::make_shared<VulkanContext>(logger, nullptr);
+            context->Init().get();
+            auto device = std::make_shared<VulkanDevice>(
+                DeviceRequirements{.Graphics = true, .Compute = false, .Transfer = true, .Sparse = false,
+                                   .Present = false, .Surface = {}},
+                context, logger);
+            return device->GetDevice() ? device : nullptr;
+        }
+        catch (const std::exception& error)
+        {
+            if (logger) logger->Warn("Headless Vulkan device unavailable: {}", error.what());
+            return nullptr;
+        }
+    }
 }
