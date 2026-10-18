@@ -10,6 +10,7 @@ import GPP.Core;
 import :Ecs;
 import :Reflection;
 import :ComponentRegistry;
+import :LightComponents;
 
 export namespace GPP
 {
@@ -208,6 +209,9 @@ namespace GPP
                            .LegacyScale = Units::Legacy::kLengthM}),
                     Field("Primary", &CameraComponent::Primary),
                 }});
+
+            RegisterLightComponents();
+            RegisterParticleComponents();
 
             ComponentRegistrationOptions transientOptions;
             transientOptions.SyncToRenderState = false;
