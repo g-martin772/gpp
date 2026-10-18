@@ -274,11 +274,8 @@ namespace GPP
             {
                 double plain = 0.0;
                 const auto text = node.as<std::string>();
-                if (std::from_chars(text.data(), text.data() + text.size(), plain).ec == std::errc{}
-                    && !text.empty() && std::isdigit(static_cast<unsigned char>(text.back())))
-                {
-                    return node;
-                }
+                const auto plainResult = std::from_chars(text.data(), text.data() + text.size(), plain);
+                if (plainResult.ec == std::errc{} && plainResult.ptr == text.data() + text.size()) return node;
                 const auto parsed = Units::ParseQuantity(text, meta.Dim);
                 return parsed ? YAML::Node(parsed->ValueSi) : node;
             }
