@@ -62,6 +62,28 @@ namespace GPP
     // Installs scene.exists/get/set(entity, component, field[, value]) natives; entities are guid userdata.
     void RegisterSceneBindings(LuauVm& vm, const std::shared_ptr<SceneBindings>& context)
     {
+        vm.Register("time", "sim_time", [context](LuauNativeCall& call)
+        {
+            call.PushNumber(context->Read ? context->Read->Clock().Time : 0.0);
+            return 1;
+        });
+        vm.Register("time", "elapsed", [context](LuauNativeCall& call)
+        {
+            call.PushNumber(context->Read ? context->Read->Clock().Elapsed : 0.0);
+            return 1;
+        });
+        vm.Register("time", "scale", [context](LuauNativeCall& call)
+        {
+            call.PushNumber(context->Read ? context->Read->Metadata().TimeScale : 1.0);
+            return 1;
+        });
+        vm.Register("time", "set_scale", [context](LuauNativeCall& call)
+        {
+            const double scale = call.Number(1);
+            if (!std::isfinite(scale) || scale <= 0.0) throw std::runtime_error("time.set_scale: scale must be a positive number");
+            if (context->Write) context->Write([scale](Scene& scene) { scene.SetTimeScale(scale); });
+            return 0;
+        });
         vm.Register("scene", "exists", [context](LuauNativeCall& call)
         {
             const entt::entity entity = context->Read ? context->Read->FindByGuid(call.Entity(1)) : entt::entity{entt::null};

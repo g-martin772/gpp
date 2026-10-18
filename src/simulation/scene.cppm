@@ -8,6 +8,7 @@ import GPP.Core;
 import :Ecs;
 import :ComponentRegistry;
 import :Components;
+import :Clock;
 
 namespace GPP
 {
@@ -49,6 +50,10 @@ namespace GPP
         void SetName(std::string name) { m_Metadata.Name = std::move(name); }
         void SetSeed(std::uint64_t seed) noexcept { m_Metadata.Seed = seed; }
         void SetTimeScale(double scale) noexcept { m_Metadata.TimeScale = scale; }
+        [[nodiscard]] const SimClock& Clock() const noexcept { return m_Clock; }
+        void SetClock(const SimClock& clock) noexcept { m_Clock = clock; }
+        void SetSimTime(double seconds) noexcept { m_Clock.SetTime(seconds); }
+        void AdvanceClock(double dt) noexcept { m_Clock.Advance(dt, m_Metadata.TimeScale); }
 
         entt::entity CreateEntity(std::string name = {}, std::string typeTag = {});
         entt::entity CreateEntityWithGuid(std::uint64_t guid, std::string name = {}, std::string typeTag = {});
@@ -88,6 +93,7 @@ namespace GPP
         entt::registry m_Registry;
         GuidIndex m_GuidIndex;
         SceneMetadata m_Metadata;
+        SimClock m_Clock;
         std::map<std::string, YAML::Node> m_Extensions;
         std::uint64_t m_ExtensionRevision{0};
         ChangeSet m_Dirty{.All = true};

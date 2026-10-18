@@ -46,6 +46,7 @@ TEST_CASE("Luau definitions declare every registered scene native", "[scripting]
         CHECK(Declares(definitions, "scene", name));
     }
 
+    for (const auto& name : RegisteredNames(bindings, "time")) CHECK(Declares(definitions, "time", name));
     for (const auto& name : RegisteredNames(bindings, "units")) CHECK(Declares(definitions, "units", name));
     CHECK(Declares(definitions, "gpp", "ease"));
     CHECK(Declares(definitions, "gpp", "random"));

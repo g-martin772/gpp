@@ -72,7 +72,7 @@ namespace GPP
     }
 
     Scene::Scene(const Scene& other)
-        : m_Metadata(other.m_Metadata)
+        : m_Metadata(other.m_Metadata), m_Clock(other.m_Clock)
     {
         CopyAllFrom(other);
         CopyExtensionsFrom(other);
@@ -85,6 +85,7 @@ namespace GPP
             m_Registry.clear();
             m_GuidIndex = GuidIndex{};
             m_Metadata = other.m_Metadata;
+            m_Clock = other.m_Clock;
             CopyAllFrom(other);
             CopyExtensionsFrom(other);
             MarkAllDirty();
@@ -180,6 +181,9 @@ namespace GPP
     {
         Scene clone(m_Metadata.Name, GenerateGuid());
         clone.m_Metadata.Seed = m_Metadata.Seed;
+        clone.m_Metadata.TimeScale = m_Metadata.TimeScale;
+        clone.m_Metadata.LoadedSchemaVersion = m_Metadata.LoadedSchemaVersion;
+        clone.m_Clock = m_Clock;
         clone.m_Registry.clear();
         clone.m_GuidIndex = GuidIndex{};
         clone.CopyAllFrom(*this);
@@ -189,6 +193,7 @@ namespace GPP
 
     void Scene::SyncInto(const Scene& source, Scene& target)
     {
+        target.m_Clock = source.m_Clock;
         if (target.m_ExtensionRevision != source.m_ExtensionRevision) target.CopyExtensionsFrom(source);
         std::vector<entt::entity> stale;
         for (const auto& [guid, entity] : target.m_GuidIndex.GuidToEntity)
@@ -213,6 +218,7 @@ namespace GPP
 
     void Scene::SyncChanges(const Scene& source, Scene& target, const ChangeSet& changes)
     {
+        target.m_Clock = source.m_Clock;
         if (changes.All)
         {
             SyncInto(source, target);

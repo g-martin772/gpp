@@ -177,6 +177,9 @@ namespace GPP
         // Same, but returns once the ticks ran and the resulting snapshot is published.
         void StepAndWait(std::uint64_t ticks);
 
+        // Sets Scene::Clock().Time on the sim thread and returns once a snapshot carrying it is published.
+        void SetSimTime(double seconds);
+
         [[nodiscard]] std::shared_ptr<SimulationRandom> Random() const noexcept { return m_Random; }
 
         // Sim-thread only (call from inside an enqueued edit) or while the thread is not running.
@@ -211,8 +214,8 @@ namespace GPP
         void Wake();
         bool DrainEdits();
         void ApplyCommands(PendingEdit& edit);
-        void RunTick(float deltaTime);
-        void StepOne(float deltaTime);
+        void RunTick(float deltaTime, double clockDt);
+        void StepOne(float deltaTime, double clockDt);
         void ExecuteSteps(std::uint64_t ticks);
         void PublishNow();
         [[nodiscard]] float StepDeltaTime() const;

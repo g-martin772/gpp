@@ -6,6 +6,7 @@ export import :Settings;
 export import :ComponentRegistry;
 export import :Components;
 export import :LightComponents;
+export import :Clock;
 export import :Scene;
 export import :Lights;
 export import :Commands;

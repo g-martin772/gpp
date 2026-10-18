@@ -41,6 +41,13 @@ declare scene: {
     look_at: (from: vector, target: vector) -> vector,
 }
 
+declare time: {
+    sim_time: () -> number,
+    elapsed: () -> number,
+    scale: () -> number,
+    set_scale: (scale: number) -> (),
+}
+
 declare gpp: {
     ease: (name: string, t: number) -> number,
     random: ((() -> number) & ((max: number) -> number) & ((min: number, max: number) -> number)),
@@ -64,3 +71,4 @@ declare task: {
     signal: (name: string, ...any) -> (),
     cancel: (id: number) -> (),
 }
+

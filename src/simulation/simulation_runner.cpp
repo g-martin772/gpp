@@ -41,7 +41,9 @@ namespace GPP
         const double requested = options.FixedTimestep.count() > 0.0f
                                      ? 1.0 / static_cast<double>(options.FixedTimestep.count())
                                      : 60.0;
-        m_TickRate.store(std::clamp(requested, kMinTickRate, kMaxTickRate), std::memory_order_relaxed);
+        const double rounded = std::round(requested);
+        const double snapped = std::abs(requested - rounded) < 1e-6 * rounded ? rounded : requested;
+        m_TickRate.store(std::clamp(snapped, kMinTickRate, kMaxTickRate), std::memory_order_relaxed);
         m_Random = std::make_shared<SimulationRandom>(m_SimScene.Metadata().Seed);
 
         auto initial = std::make_shared<SceneSnapshot::Data>(m_SimScene.Clone(), ++m_Generation);
@@ -304,10 +306,10 @@ namespace GPP
         return std::chrono::duration<float>(PeriodFor(m_TickRate.load(std::memory_order_relaxed))).count();
     }
 
-    void SimulationRunner::StepOne(const float deltaTime)
+    void SimulationRunner::StepOne(const float deltaTime, const double clockDt)
     {
         DrainEdits();
-        RunTick(deltaTime);
+        RunTick(deltaTime, clockDt);
     }
 
     void SimulationRunner::PublishNow()
@@ -332,7 +334,8 @@ namespace GPP
     {
         EnsureInitialized();
         const float deltaTime = StepDeltaTime();
-        for (std::uint64_t i = 0; i < ticks; ++i) StepOne(deltaTime);
+        const double clockDt = 1.0 / m_TickRate.load(std::memory_order_relaxed);
+        for (std::uint64_t i = 0; i < ticks; ++i) StepOne(deltaTime, clockDt);
         DrainEdits();
         PublishNow();
     }
@@ -492,7 +495,24 @@ namespace GPP
         }
     }
 
-    void SimulationRunner::RunTick(const float deltaTime)
+    void SimulationRunner::SetSimTime(const double seconds)
+    {
+        RunOnSimThread([this, seconds] { m_SimScene.SetSimTime(seconds); });
+        if (!m_Running.load(std::memory_order_acquire))
+        {
+            std::scoped_lock lock(m_InlineMutex);
+            PublishNow();
+            return;
+        }
+        const auto deadline = Clock::now() + std::chrono::seconds(2);
+        while (Clock::now() < deadline)
+        {
+            if (AcquireSnapshot()->Clock().Time == seconds) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+
+    void SimulationRunner::RunTick(const float deltaTime, const double clockDt)
     {
         const auto start = Clock::now();
         m_TickStartNs.store(ToNs(start), std::memory_order_release);
@@ -512,9 +532,14 @@ namespace GPP
             Logger::LogError("Simulation tick for scene '{}' failed with an unknown exception",
                              m_SimScene.Metadata().Name);
         }
+        m_SimScene.AdvanceClock(clockDt);
         if (std::ranges::any_of(m_Modules, [](const auto& module) { return !module->ReportsChanges(); }))
         {
             m_SimScene.MarkAllDirty();
+        }
+        {
+            std::scoped_lock lock(m_MetadataMutex);
+            if (m_Metadata.TimeScale != m_SimScene.Metadata().TimeScale) m_Metadata = m_SimScene.Metadata();
         }
         m_Tick.fetch_add(1, std::memory_order_acq_rel);
         const auto end = Clock::now();
@@ -629,8 +654,10 @@ namespace GPP
                     const float deltaTime = fixedRate
                                                 ? std::chrono::duration<float>(period).count()
                                                 : std::chrono::duration<float>(tickNow - lastTick).count();
+                    const double clockDt = fixedRate ? 1.0 / m_TickRate.load(std::memory_order_relaxed)
+                                                     : std::chrono::duration<double>(tickNow - lastTick).count();
                     lastTick = tickNow;
-                    StepOne(deltaTime);
+                    StepOne(deltaTime, clockDt);
                     dirty = true;
                     ++ticks;
                     tickNow = Clock::now();
