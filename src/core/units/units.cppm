@@ -63,6 +63,7 @@ export namespace GPP::Units
     GPP_UNITS_DEFINE(BoltzmannConstant, GPP_WIDE_LITERAL(1.380649e-23))       // J/K
     GPP_UNITS_DEFINE(ElementaryCharge, GPP_WIDE_LITERAL(1.602176634e-19))     // C
     GPP_UNITS_DEFINE(AvogadroConstant, GPP_WIDE_LITERAL(6.02214076e23))       // 1/mol
+    GPP_UNITS_DEFINE(LuminousEfficacy540THz, GPP_WIDE_LITERAL(683.0))         // K_cd, lm/W
 
     // ---- CODATA 2022 ----
     GPP_UNITS_DEFINE(GravitationalConstant, GPP_WIDE_LITERAL(6.67430e-11))    // m^3 kg^-1 s^-2
@@ -97,6 +98,7 @@ export namespace GPP::Units
     GPP_UNITS_DEFINE(JupiterEquatorialRadius, GPP_WIDE_LITERAL(7.1492e7))     // m
     GPP_UNITS_DEFINE(SolarLuminosity, GPP_WIDE_LITERAL(3.828e26))             // W
     GPP_UNITS_DEFINE(SolarEffectiveTemperature, GPP_WIDE_LITERAL(5772.0))     // K
+    GPP_UNITS_DEFINE(SolarConstant, kSolarLuminosityW / (4 * Pi() * kAstronomicalUnitW * kAstronomicalUnitW)) // W/m^2 at 1 AU
 
     // ---- Masses ----
     GPP_UNITS_DEFINE(SolarMass, kSolarMassParameterW / kGravitationalConstantW)
@@ -204,7 +206,8 @@ export namespace GPP::Units
 
     enum class Dimension : std::uint8_t
     {
-        None, Length, Mass, Time, Velocity, AngularRate, Temperature
+        None, Length, Mass, Time, Velocity, AngularRate, Temperature,
+        Power, Irradiance, RadiantIntensity, Radiance
     };
 
     [[nodiscard]] constexpr std::string_view DimensionName(const Dimension dimension)
@@ -218,6 +221,10 @@ export namespace GPP::Units
         case Dimension::Velocity: return "velocity";
         case Dimension::AngularRate: return "angular rate";
         case Dimension::Temperature: return "temperature";
+        case Dimension::Power: return "power";
+        case Dimension::Irradiance: return "irradiance";
+        case Dimension::RadiantIntensity: return "radiant intensity";
+        case Dimension::Radiance: return "radiance";
         }
         return "dimensionless";
     }
@@ -300,6 +307,31 @@ export namespace GPP::Units
                 {"rpm", "revolution per minute", W, 2.0 * kpi / 60.0, kNoAuto, {}, false},
 
                 {"K", "kelvin", Dimension::Temperature, 1.0, 0.0, {"kelvin"}, false},
+
+                {"mW", "milliwatt", Dimension::Power, 1e-3, 0.0, {}, false},
+                {"W", "watt", Dimension::Power, 1.0, 1.0, {"watt", "watts"}, true},
+                {"kW", "kilowatt", Dimension::Power, 1e3, 1e3, {}, false},
+                {"MW", "megawatt", Dimension::Power, 1e6, 1e6, {}, false},
+                {"Lsun", "solar luminosity", Dimension::Power, static_cast<double>(kSolarLuminosity), kNoAuto,
+                 {"Lsol", "L_sun", "L\xE2\x98\x89"}, false},
+
+                {"mW/m\xC2\xB2", "milliwatt per square metre", Dimension::Irradiance, 1e-3, 0.0, {"mW/m^2", "mW/m2"}, false},
+                {"W/m\xC2\xB2", "watt per square metre", Dimension::Irradiance, 1.0, 1.0, {"W/m^2", "W/m2"}, false},
+                {"kW/m\xC2\xB2", "kilowatt per square metre", Dimension::Irradiance, 1e3, 1e3, {"kW/m^2", "kW/m2"}, false},
+                {"lx", "lux (555 nm)", Dimension::Irradiance, 1.0 / kLuminousEfficacy540THz, kNoAuto, {"lux"}, false},
+
+                {"mW/sr", "milliwatt per steradian", Dimension::RadiantIntensity, 1e-3, 0.0, {}, false},
+                {"W/sr", "watt per steradian", Dimension::RadiantIntensity, 1.0, 1.0, {}, false},
+                {"kW/sr", "kilowatt per steradian", Dimension::RadiantIntensity, 1e3, 1e3, {}, false},
+                {"cd", "candela (555 nm)", Dimension::RadiantIntensity, 1.0 / kLuminousEfficacy540THz, kNoAuto, {"candela"}, false},
+
+                {"mW/m\xC2\xB2/sr", "milliwatt per square metre steradian", Dimension::Radiance, 1e-3, 0.0,
+                 {"mW/m^2/sr"}, false},
+                {"W/m\xC2\xB2/sr", "watt per square metre steradian", Dimension::Radiance, 1.0, 1.0,
+                 {"W/m^2/sr", "W/m2/sr"}, false},
+                {"kW/m\xC2\xB2/sr", "kilowatt per square metre steradian", Dimension::Radiance, 1e3, 1e3,
+                 {"kW/m^2/sr", "kW/m2/sr"}, false},
+                {"nit", "nit (555 nm)", Dimension::Radiance, 1.0 / kLuminousEfficacy540THz, kNoAuto, {"cd/m^2", "cd/m\xC2\xB2"}, false},
             };
         }();
         return units;
@@ -503,7 +535,8 @@ export namespace GPP::Units
     [[nodiscard]] inline std::optional<AnyUnit> FindUnitAny(const std::string_view text)
     {
         constexpr std::array dimensions{Dimension::Length, Dimension::Mass, Dimension::Time, Dimension::Velocity,
-                                        Dimension::AngularRate, Dimension::Temperature};
+                                        Dimension::AngularRate, Dimension::Temperature, Dimension::Power,
+                                        Dimension::Irradiance, Dimension::RadiantIntensity, Dimension::Radiance};
         for (const bool exact : {true, false})
         {
             for (const auto dimension : dimensions)
