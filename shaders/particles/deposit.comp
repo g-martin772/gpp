@@ -1,0 +1,65 @@
+#version 450
+#ifdef PF_ATOMIC_FLOAT
+#extension GL_EXT_shader_atomic_float : require
+#endif
+#include "particle_common.glsl"
+
+layout(local_size_x = 64) in;
+
+#ifdef PF_ATOMIC_FLOAT
+layout(std430, set = 0, binding = 11) buffer GridOut { float gridOut[]; };
+#else
+layout(std430, set = 0, binding = 11) buffer GridOut { uint gridOut[]; };
+#endif
+
+layout(std430, set = 0, binding = 12) readonly buffer GridSpec
+{
+    vec4 gridOrigin;   // xyz node (0,0,0), w cell size
+    uvec4 gridDims;    // xyz nodes
+    vec4 gridInverse;  // x 1 / mass unit, y 1 / momentum unit, z 1 / mass-temperature unit
+};
+
+void gridAdd(uint channel, uint node, float value, float inverseUnit)
+{
+    uint index = channel * (gridDims.x * gridDims.y * gridDims.z) + node;
+#ifdef PF_ATOMIC_FLOAT
+    atomicAdd(gridOut[index], value);
+#else
+    int fixed_ = int(roundEven(value * inverseUnit));
+    atomicAdd(gridOut[index], uint(fixed_));
+#endif
+}
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= st[ST_USED]) return;
+    if ((curMeta[i].y & 1u) == 0u) return;
+    vec4 pm = curPos[i];
+    vec4 vt = curVel[i];
+    vec3 grid = (pm.xyz - gridOrigin.xyz) / gridOrigin.w;
+    vec3 base = floor(grid);
+    vec3 fraction = grid - base;
+    ivec3 node = ivec3(base);
+    if (grid.x < 0.0 || grid.y < 0.0 || grid.z < 0.0 || node.x + 1 >= int(gridDims.x) || node.y + 1 >= int(gridDims.y)
+        || node.z + 1 >= int(gridDims.z))
+    {
+        pfFixedAdd(ACC_OUTSIDE, pm.w, MP.invScale);
+        return;
+    }
+    for (int corner = 0; corner < 8; ++corner)
+    {
+        int dx = corner & 1;
+        int dy = (corner >> 1) & 1;
+        int dz = (corner >> 2) & 1;
+        float share = (dx != 0 ? fraction.x : 1.0 - fraction.x) * (dy != 0 ? fraction.y : 1.0 - fraction.y)
+                      * (dz != 0 ? fraction.z : 1.0 - fraction.z);
+        uint index = (uint(node.z + dz) * gridDims.y + uint(node.y + dy)) * gridDims.x + uint(node.x + dx);
+        float mass = pm.w * share;
+        gridAdd(0u, index, mass, gridInverse.x);
+        gridAdd(1u, index, mass * vt.x, gridInverse.y);
+        gridAdd(2u, index, mass * vt.y, gridInverse.y);
+        gridAdd(3u, index, mass * vt.z, gridInverse.y);
+        gridAdd(4u, index, mass * vt.w, gridInverse.z);
+    }
+}

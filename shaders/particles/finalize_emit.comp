@@ -1,0 +1,17 @@
+#version 450
+#include "particle_common.glsl"
+
+layout(local_size_x = 1) in;
+
+void main()
+{
+    uint used = st[ST_USED];
+    uint room = MP.capacity > used ? MP.capacity - used : 0u;
+    uint written = min(MP.newTotal, room);
+    st[ST_DROPPED] += MP.newTotal - written;
+    used += written;
+    st[ST_USED] = used;
+    st[ST_PENDING] = used;
+    st[ST_SERIAL] += 1u;
+    args[0] = uvec4((used + 255u) / 256u, 1u, 1u, 0u);
+}

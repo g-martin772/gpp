@@ -1,0 +1,17 @@
+#version 450
+#include "particle_common.glsl"
+#include "force_model.glsl"
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= st[ST_USED]) return;
+    if ((curMeta[i].y & 1u) == 0u) return;
+    Particle p = pfLoad(i);
+#ifdef PF_HAS_POST_MACRO
+    pfPostMacro(p, MP.baseStep, MP.force);
+#endif
+    pfStore(i, p, true);
+}

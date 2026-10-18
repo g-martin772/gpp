@@ -1,0 +1,27 @@
+#version 450
+#include "particle_common.glsl"
+
+layout(local_size_x = 256) in;
+
+shared uint shBin[256];
+
+void main()
+{
+    uint tid = gl_LocalInvocationID.x;
+    uint i = gl_GlobalInvocationID.x;
+    uint pending = st[ST_PENDING];
+    uint bin = uint(PF_BINS);
+    if (i < pending) bin = (curMeta[i].y >> 8u) & 255u;
+    shBin[tid] = bin;
+    barrier();
+
+    if (i < pending && bin != uint(PF_DEAD))
+    {
+        uint rank = 0u;
+        for (uint j = 0u; j < tid; ++j) rank += shBin[j] == bin ? 1u : 0u;
+        uint target = st[ST_BINSTART + bin] + hist[gl_WorkGroupID.x * uint(PF_BINS) + bin] + rank;
+        altPos[target] = curPos[i];
+        altVel[target] = curVel[i];
+        altMeta[target] = curMeta[i];
+    }
+}

@@ -1,0 +1,119 @@
+#version 450
+#include "particle_common.glsl"
+
+layout(local_size_x = 64) in;
+
+const float kTwoPi = 6.28318530717958647692;
+
+void frameOf(vec3 direction, out vec3 first, out vec3 second)
+{
+    vec3 helper = abs(direction.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    first = normalize(cross(helper, direction));
+    second = cross(direction, first);
+}
+
+void main()
+{
+    uint n = gl_GlobalInvocationID.x;
+    if (n >= MP.newTotal) return;
+    uint slotIndex = st[ST_USED] + n;
+    if (slotIndex >= MP.capacity) return;
+
+    uint e = 0u;
+    for (uint k = 0u; k < MP.emitterCount; ++k)
+    {
+        if (n >= MP.emitters[k].batch.z) e = k;
+    }
+    EmitterParams emitter = MP.emitters[e];
+    uint index = n - emitter.batch.z;
+    uint serial = emitter.batch.x + index;
+    uvec2 key = uvec2(emitter.ids.x, emitter.ids.y);
+    uint species = emitter.ids.z;
+
+    float u[12];
+    for (uint round = 0u; round < 3u; ++round)
+    {
+        uvec4 bits = pfPhilox(uvec4(serial, round, species, 0u), key);
+        u[round * 4u + 0u] = pfUnit(bits.x);
+        u[round * 4u + 1u] = pfUnit(bits.y);
+        u[round * 4u + 2u] = pfUnit(bits.z);
+        u[round * 4u + 3u] = pfUnit(bits.w);
+    }
+
+    uint shape = uint(emitter.positionShape.w);
+    uint mode = uint(emitter.params1.w);
+    vec3 axis = emitter.axisRadius.xyz;
+    float radius = emitter.axisRadius.w;
+    float inner = emitter.params0.x;
+    float thickness = emitter.params0.y;
+    float halfAngle = emitter.params0.z;
+    float speed = emitter.params0.w;
+
+    vec3 offset = vec3(0.0);
+    vec3 direction = axis;
+    vec3 first = vec3(1.0, 0.0, 0.0);
+    vec3 second = vec3(0.0, 1.0, 0.0);
+    if (shape == 1u || shape == 2u)
+    {
+        float z = 2.0 * u[0] - 1.0;
+        float phi = kTwoPi * u[1];
+        float s = sqrt(max(0.0, 1.0 - z * z));
+        float low = shape == 2u ? inner : 0.0;
+        float volume = low * low * low + (radius * radius * radius - low * low * low) * u[2];
+        offset = vec3(s * cos(phi), s * sin(phi), z) * pow(volume, 1.0 / 3.0);
+    }
+    else if (shape == 3u || shape == 4u)
+    {
+        frameOf(axis, first, second);
+        float phi = kTwoPi * u[0];
+        float ringRadius = shape == 3u ? sqrt(inner * inner + (radius * radius - inner * inner) * u[1])
+                                       : radius + (u[1] - 0.5) * thickness;
+        offset = ringRadius * (cos(phi) * first + sin(phi) * second) + (u[2] - 0.5) * thickness * axis;
+    }
+    else if (shape == 5u)
+    {
+        frameOf(axis, first, second);
+        float cosine = cos(halfAngle) + (1.0 - cos(halfAngle)) * u[0];
+        float sine = sqrt(max(0.0, 1.0 - cosine * cosine));
+        float phi = kTwoPi * u[1];
+        direction = cosine * axis + sine * (cos(phi) * first + sin(phi) * second);
+    }
+    else if (shape == 6u)
+    {
+        vec3 toTarget = emitter.target.xyz - emitter.positionShape.xyz;
+        float len = length(toTarget);
+        direction = len > 0.0 ? toTarget / len : axis;
+        frameOf(direction, first, second);
+        float phi = kTwoPi * u[1];
+        offset = radius * sqrt(u[0]) * (cos(phi) * first + sin(phi) * second);
+    }
+
+    vec3 pushDirection = direction;
+    if (mode == 1u)
+    {
+        float len = length(offset);
+        if (len > 0.0) pushDirection = offset / len;
+    }
+    else if (mode == 2u)
+    {
+        vec3 around = cross(axis, offset);
+        float len = length(around);
+        if (len > 0.0) pushDirection = around / len;
+    }
+
+    vec2 n01 = pfNormal(u[4], u[5]);
+    vec2 n2 = pfNormal(u[6], u[7]);
+    vec3 velocity = emitter.bulk.xyz + speed * pushDirection + emitter.params1.x * vec3(n01.x, n01.y, n2.x);
+    float lag = 0.0;
+    if (index >= emitter.batch.w)
+    {
+        uint continuous = max(emitter.batch.y - emitter.batch.w, 1u);
+        float phase = (float(index - emitter.batch.w) + 0.5) / float(continuous);
+        lag = (1.0 - phase) * MP.baseStep;
+    }
+    vec3 position = emitter.positionShape.xyz + offset + velocity * lag;
+
+    curPos[slotIndex] = vec4(position, emitter.params1.z);
+    curVel[slotIndex] = vec4(velocity, emitter.params1.y);
+    curMeta[slotIndex] = uvec4(species, 1u, floatBitsToUint(lag), serial);
+}

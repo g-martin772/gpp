@@ -1,0 +1,62 @@
+#version 450
+#include "particle_common.glsl"
+
+layout(local_size_x = 256) in;
+
+shared float shValue[256];
+
+// Channel layout: 0 count, 1 mass, 2 mass * T, 3-5 mass * v, then the same six per region
+float channelValue(uint channel, vec4 pm, vec4 vt)
+{
+    float weight = pm.w;
+    uint local = channel;
+    if (channel >= 6u)
+    {
+        uint region = (channel - 6u) / 6u;
+        local = (channel - 6u) % 6u;
+        vec3 offset = pm.xyz - MP.regions[region].centerRadius.xyz;
+        float radius = MP.regions[region].centerRadius.w;
+        if (!(dot(offset, offset) < radius * radius)) return 0.0;
+    }
+    switch (local)
+    {
+    case 0u: return 1.0;
+    case 1u: return weight;
+    case 2u: return weight * vt.w;
+    case 3u: return weight * vt.x;
+    case 4u: return weight * vt.y;
+    default: return weight * vt.z;
+    }
+}
+
+void main()
+{
+    uint tid = gl_LocalInvocationID.x;
+    uint i = gl_GlobalInvocationID.x;
+    bool valid = i < st[ST_USED];
+    vec4 pm = vec4(0.0);
+    vec4 vt = vec4(0.0);
+    if (valid)
+    {
+        valid = (curMeta[i].y & 1u) != 0u;
+        pm = curPos[i];
+        vt = curVel[i];
+    }
+    uint channels = 6u + 6u * MP.regionCount;
+    for (uint channel = 0u; channel < channels; ++channel)
+    {
+        shValue[tid] = valid ? channelValue(channel, pm, vt) : 0.0;
+        barrier();
+        for (uint stride = 128u; stride > 0u; stride >>= 1u)
+        {
+            if (tid < stride) shValue[tid] += shValue[tid + stride];
+            barrier();
+        }
+        if (tid == 0u)
+        {
+            bool isCount = channel % 6u == 0u;
+            pfFixedAdd(ACC_STATS + 2u * channel, shValue[0], isCount ? 1.0 : MP.invScale);
+        }
+        barrier();
+    }
+}

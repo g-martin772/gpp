@@ -1,0 +1,58 @@
+#version 450
+#include "particle_common.glsl"
+
+layout(local_size_x = 256) in;
+
+shared uint shScan[256];
+shared uint shTotal[PF_BINS];
+
+void main()
+{
+    uint tid = gl_LocalInvocationID.x;
+    uint blocks = (st[ST_PENDING] + 255u) / 256u;
+    uint chunk = (blocks + 255u) / 256u;
+    uint first = min(tid * chunk, blocks);
+    uint last = min(first + chunk, blocks);
+
+    for (uint bin = 0u; bin < uint(PF_BINS); ++bin)
+    {
+        uint local = 0u;
+        for (uint b = first; b < last; ++b) local += hist[b * uint(PF_BINS) + bin];
+        shScan[tid] = local;
+        barrier();
+        for (uint offset = 1u; offset < 256u; offset <<= 1u)
+        {
+            uint value = tid >= offset ? shScan[tid - offset] : 0u;
+            barrier();
+            shScan[tid] += value;
+            barrier();
+        }
+        uint inclusive = shScan[tid];
+        uint running = inclusive - local;
+        for (uint b = first; b < last; ++b)
+        {
+            uint value = hist[b * uint(PF_BINS) + bin];
+            hist[b * uint(PF_BINS) + bin] = running;
+            running += value;
+        }
+        if (tid == 255u) shTotal[bin] = inclusive;
+        barrier();
+    }
+
+    if (tid == 0u)
+    {
+        uint start = 0u;
+        for (uint bin = 0u; bin < uint(PF_BINS); ++bin)
+        {
+            st[ST_BINSTART + bin] = start;
+            st[ST_BINCOUNT + bin] = shTotal[bin];
+            if (bin < uint(PF_DEAD))
+            {
+                args[2u + bin] = uvec4((shTotal[bin] + 63u) / 64u, 1u, 1u, 0u);
+                start += shTotal[bin];
+            }
+        }
+        st[ST_USED] = start;
+        args[1] = uvec4((start + 63u) / 64u, 1u, 1u, 0u);
+    }
+}

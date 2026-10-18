@@ -11,6 +11,7 @@ import :Ecs;
 import :Reflection;
 import :ComponentRegistry;
 import :LightComponents;
+import :Particles.Components;
 
 export namespace GPP
 {

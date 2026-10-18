@@ -1,0 +1,149 @@
+#version 450
+#include "particle_common.glsl"
+#include "force_model.glsl"
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+    uint bin = pc.arg0;
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= st[ST_BINCOUNT + bin]) return;
+    uint index = st[ST_BINSTART + bin] + gid;
+
+    float baseStep = MP.baseStep;
+    uint substeps = 1u << bin;
+    float dt = baseStep / float(substeps);
+    float halfDt = 0.5 * dt;
+    float invScale = MP.invScale;
+    float scale = 1.0 / invScale;
+    ForceParams force = MP.force;
+
+    Particle p = pfLoad(index);
+    bool alive = true;
+    float elapsed = 0.0;
+    vec3 positionComp = vec3(0.0);
+    vec3 velocityComp = vec3(0.0);
+
+    for (uint s = 0u; s < substeps && alive; ++s)
+    {
+        bool handled = false;
+#ifdef PF_HAS_STEP_HOOK
+        p.pos += positionComp;
+        p.vel += velocityComp;
+        positionComp = vec3(0.0);
+        velocityComp = vec3(0.0);
+        handled = pfStep(p, dt, force);
+#endif
+        if (!handled)
+        {
+            pfCompensatedAdd(p.vel, velocityComp, pfAcceleration(p.pos, p.vel, force) * halfDt);
+            for (uint c = 0u; c < MP.colliderCount; ++c)
+            {
+                if (MP.colliders[c].info.x != 2u) continue;
+                float dragMass = pfFixedToFloat(ACC_DRAG + 2u * c, scale);
+                vec3 normal, surface;
+                if (!(dragMass > 0.0) || !pfInside(MP.colliders[c], p.pos, elapsed, normal, surface)) continue;
+                vec3 delta = MP.colliders[c].dragForce.xyz / dragMass * halfDt;
+                pfCompensatedAdd(p.vel, velocityComp, delta);
+                uint base = ACC_COLLIDER + 24u * MP.colliders[c].info.y + 8u;
+                for (uint q = 0u; q < 3u; ++q) pfFixedAdd(base + 2u * q, p.weight * delta[q], invScale);
+            }
+            pfCompensatedAdd(p.pos, positionComp, (p.vel + velocityComp) * dt);
+            elapsed += dt;
+            pfCompensatedAdd(p.vel, velocityComp, pfAcceleration(p.pos, p.vel, force) * halfDt);
+            for (uint c = 0u; c < MP.colliderCount; ++c)
+            {
+                if (MP.colliders[c].info.x != 2u) continue;
+                float dragMass = pfFixedToFloat(ACC_DRAG + 2u * c, scale);
+                vec3 normal, surface;
+                if (!(dragMass > 0.0) || !pfInside(MP.colliders[c], p.pos, elapsed, normal, surface)) continue;
+                vec3 delta = MP.colliders[c].dragForce.xyz / dragMass * halfDt;
+                pfCompensatedAdd(p.vel, velocityComp, delta);
+                uint base = ACC_COLLIDER + 24u * MP.colliders[c].info.y + 8u;
+                for (uint q = 0u; q < 3u; ++q) pfFixedAdd(base + 2u * q, p.weight * delta[q], invScale);
+            }
+        }
+        else
+        {
+            elapsed += dt;
+        }
+        p.age += dt;
+
+        vec3 probe = p.pos + positionComp;
+        for (uint c = 0u; c < MP.colliderCount && alive; ++c)
+        {
+            uint response = MP.colliders[c].info.x;
+            if (response != 1u && response != 3u) continue;
+            vec3 normal, surface;
+            if (!pfInside(MP.colliders[c], probe, elapsed, normal, surface)) continue;
+            p.pos += positionComp;
+            p.vel += velocityComp;
+            positionComp = vec3(0.0);
+            velocityComp = vec3(0.0);
+            uint slot = MP.colliders[c].info.y;
+            uint base = ACC_COLLIDER + 24u * slot;
+            if (response == 3u)
+            {
+                atomicAdd(acc[base + 16u], 1u);
+                pfFixedAdd(base, p.weight, invScale);
+                for (uint q = 0u; q < 3u; ++q) pfFixedAdd(base + 2u + 2u * q, p.weight * p.vel[q], invScale);
+                alive = false;
+                continue;
+            }
+            vec3 bodyVelocity = MP.colliders[c].velocityRestitution.xyz;
+            vec3 relative = p.vel - bodyVelocity;
+            float approach = dot(relative, normal);
+            if (approach < 0.0)
+            {
+                relative -= (1.0 + MP.colliders[c].velocityRestitution.w) * approach * normal;
+                vec3 next = bodyVelocity + relative;
+                vec3 delta = next - p.vel;
+                for (uint q = 0u; q < 3u; ++q) pfFixedAdd(base + 8u + 2u * q, p.weight * delta[q], invScale);
+                p.vel = next;
+            }
+            p.pos = surface;
+            probe = surface;
+        }
+
+        for (uint k = 0u; k < MP.sinkCount && alive; ++k)
+        {
+            vec3 centre = MP.sinks[k].centerRadius.xyz;
+            vec3 offset = probe - centre;
+            float radius = MP.sinks[k].centerRadius.w;
+            if (!(dot(offset, offset) < radius * radius)) continue;
+            p.pos += positionComp;
+            p.vel += velocityComp;
+            positionComp = vec3(0.0);
+            velocityComp = vec3(0.0);
+            alive = false;
+            uint slot = MP.sinks[k].info.z;
+            uint base = ACC_SINK + 24u * slot;
+            if (MP.sinks[k].info.x == 1u)
+            {
+                atomicAdd(acc[base + 17u], 1u);
+                continue;
+            }
+            atomicAdd(acc[base + 16u], 1u);
+            if (MP.sinks[k].info.y == 0u) continue;
+            float q[8];
+#ifdef PF_HAS_ABSORB_HOOK
+            pfAbsorbQuantities(p, centre, force, q);
+#else
+            vec3 angular = cross(p.pos - centre, p.vel);
+            q[0] = 1.0;
+            q[1] = p.vel.x;
+            q[2] = p.vel.y;
+            q[3] = p.vel.z;
+            q[4] = angular.x;
+            q[5] = angular.y;
+            q[6] = angular.z;
+            q[7] = 0.5 * dot(p.vel, p.vel) + pfPotential(p.pos, force);
+#endif
+            for (uint i = 0u; i < 8u; ++i) pfFixedAdd(base + 2u * i, p.weight * q[i], invScale);
+        }
+    }
+    p.pos += positionComp;
+    p.vel += velocityComp;
+    pfStore(index, p, alive);
+}

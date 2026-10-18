@@ -21,3 +21,4 @@ export import :Assets.Tangents;
 export import :Assets.Gltf;
 export import :Assets.Material;
 export import :Pbr;
+export import :Particles.Gpu;

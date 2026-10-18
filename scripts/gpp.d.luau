@@ -72,3 +72,14 @@ declare task: {
     cancel: (id: number) -> (),
 }
 
+declare particles: {
+    emitter: (spec: { [string]: any }) -> Entity,
+    burst: (emitter: Entity, count: number) -> boolean,
+    set_rate: (emitter: Entity, rate: number) -> boolean,
+    set_origin: ((emitter: Entity, position: vector | { x: number, y: number, z: number }) -> boolean) & ((emitter: Entity, x: number, y: number, z: number) -> boolean),
+    pause: (emitter: Entity) -> boolean,
+    resume: (emitter: Entity) -> boolean,
+    destroy: (emitter: Entity) -> boolean,
+    count: () -> number,
+    region_stats: ((center: vector | { x: number, y: number, z: number }, radius: number) -> { count: number, mass: number, mean_temperature: number, mean_velocity: vector }?) & ((x: number, y: number, z: number, radius: number) -> { count: number, mass: number, mean_temperature: number, mean_velocity: vector }?),
+}
