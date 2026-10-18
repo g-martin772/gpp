@@ -931,3 +931,33 @@ TEST_CASE("Scripted bursts are applied once and acknowledged", "[particles][hub]
     CHECK(Snapshot(*system).Size() == 30);
     CHECK(hub->Snapshot().Bursts.empty());
 }
+
+TEST_CASE("Advance takes seconds and converts to simulation time units", "[particles][units]")
+{
+    auto config = Config(0.0, 0);
+    config.Settings.Units = {1000.0, 0.5};
+    auto system = MakeSystem(config);
+    ParticleSceneState state;
+    state.Frame.Units = {1000.0, 0.5};
+    state.Emitters = {BurstEmitter(1, 1, {0.0, 0.0, 0.0}, {100.0, 0.0, 0.0})};
+    system->Consume(state);
+    system->Advance(10.0);
+    system->Advance(10.0);
+    const auto particles = Snapshot(*system);
+    REQUIRE(particles.Size() == 1);
+    CHECK(particles.PosMass[0].x == Approx(2.0f).margin(1e-4));
+    CHECK(system->Board()->Latest()->Stats.SimTime == Approx(20.0));
+}
+
+TEST_CASE("Prime releases bursts without advancing time", "[particles][system]")
+{
+    auto system = MakeSystem(Config(0.1, 0));
+    system->Consume(State({BurstEmitter(1, 25, {1.0, 2.0, 3.0}, {0.0, 0.0, 0.0})}));
+    system->Prime();
+    const auto particles = Snapshot(*system);
+    REQUIRE(particles.Size() == 25);
+    CHECK(particles.PosMass[0].x == Approx(1.0f));
+    CHECK(system->SimTime() == 0.0);
+    system->Advance(0.1);
+    CHECK(Snapshot(*system).Size() == 25);
+}

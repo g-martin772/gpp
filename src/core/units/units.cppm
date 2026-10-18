@@ -207,7 +207,7 @@ export namespace GPP::Units
     enum class Dimension : std::uint8_t
     {
         None, Length, Mass, Time, Velocity, AngularRate, Temperature,
-        Power, Irradiance, RadiantIntensity, Radiance
+        Power, Irradiance, RadiantIntensity, Radiance, MassRate
     };
 
     [[nodiscard]] constexpr std::string_view DimensionName(const Dimension dimension)
@@ -225,6 +225,7 @@ export namespace GPP::Units
         case Dimension::Irradiance: return "irradiance";
         case Dimension::RadiantIntensity: return "radiant intensity";
         case Dimension::Radiance: return "radiance";
+        case Dimension::MassRate: return "mass rate";
         }
         return "dimensionless";
     }
@@ -332,6 +333,11 @@ export namespace GPP::Units
                 {"kW/m\xC2\xB2/sr", "kilowatt per square metre steradian", Dimension::Radiance, 1e3, 1e3,
                  {"kW/m^2/sr", "kW/m2/sr"}, false},
                 {"nit", "nit (555 nm)", Dimension::Radiance, 1.0 / kLuminousEfficacy540THz, kNoAuto, {"cd/m^2", "cd/m\xC2\xB2"}, false},
+
+                {"g/s", "gram per second", Dimension::MassRate, 1e-3, kNoAuto, {}, false},
+                {"kg/s", "kilogram per second", Dimension::MassRate, 1.0, 0.0, {}, false},
+                {"Msun/yr", "solar mass per year", Dimension::MassRate, sun / year, 1e-12 * sun / year,
+                 {"Msol/yr", "Ms/yr"}, false},
             };
         }();
         return units;
@@ -536,7 +542,8 @@ export namespace GPP::Units
     {
         constexpr std::array dimensions{Dimension::Length, Dimension::Mass, Dimension::Time, Dimension::Velocity,
                                         Dimension::AngularRate, Dimension::Temperature, Dimension::Power,
-                                        Dimension::Irradiance, Dimension::RadiantIntensity, Dimension::Radiance};
+                                        Dimension::Irradiance, Dimension::RadiantIntensity, Dimension::Radiance,
+                                        Dimension::MassRate};
         for (const bool exact : {true, false})
         {
             for (const auto dimension : dimensions)

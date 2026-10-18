@@ -78,6 +78,7 @@ struct Particle
     float age;
     uint species;
     uint owner;
+    uint serial;
 };
 
 layout(std430, set = 0, binding = 0) buffer CurPos { vec4 curPos[]; };
@@ -231,6 +232,7 @@ Particle pfLoad(uint index)
     p.age = uintBitsToFloat(meta.z);
     p.species = meta.x & 0xFFFFu;
     p.owner = meta.x >> 16;
+    p.serial = meta.w;
     return p;
 }
 

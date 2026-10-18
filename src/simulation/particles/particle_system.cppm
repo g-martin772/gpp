@@ -54,6 +54,10 @@ export namespace GPP
         // Resets all particles when the epoch changed, otherwise updates emitters, sinks and colliders in place
         void Consume(const ParticleSceneState& state);
         ParticleAdvanceReport Advance(double seconds);
+        // One zero-length macro step: releases bursts and ring initialisers so paused scenes show their initial particles
+        ParticleAdvanceReport Prime();
+        // Drops time that was requested but not simulated (after a limited Advance)
+        void DiscardBacklog() noexcept { m_Pending = 0.0; }
         void Reset();
         // Republishes the board; call after a GPU backend collected a completed frame
         void Refresh() { Publish(); }
@@ -83,6 +87,7 @@ export namespace GPP
         };
 
         void Publish();
+        void RunMacroStep(double base, bool collectStats, ParticleAdvanceReport& report);
         [[nodiscard]] std::uint32_t SlotFor(std::vector<std::uint64_t>& table, std::uint64_t id, std::uint32_t limit);
 
         std::unique_ptr<IParticleBackend> m_Backend;

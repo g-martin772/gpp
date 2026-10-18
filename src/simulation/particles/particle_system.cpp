@@ -137,16 +137,38 @@ namespace GPP
             steps = static_cast<std::uint32_t>(std::min<double>(wanted, m_Config.MaxMacroSteps));
             report.Limited = wanted > m_Config.MaxMacroSteps;
         }
+
+        for (std::uint32_t s = 0; s < steps; ++s) RunMacroStep(base, s + 1 == steps, report);
+
+        if (m_Config.BaseStep > 0.0)
+        {
+            m_Pending -= report.Simulated;
+            report.Backlog = std::max(m_Pending, 0.0);
+            if (report.Backlog < 1e-9 * base) m_Pending = 0.0;
+        }
+        Publish();
+        return report;
+    }
+
+    ParticleAdvanceReport ParticleSystem::Prime()
+    {
+        ParticleAdvanceReport report;
+        RunMacroStep(0.0, true, report);
+        Publish();
+        return report;
+    }
+
+    void ParticleSystem::RunMacroStep(const double base, const bool collectStats, ParticleAdvanceReport& report)
+    {
         const ParticleFrame& frame = m_State.Frame;
         const auto& units = frame.Units;
-
-        for (std::uint32_t s = 0; s < steps; ++s)
+        const double timeUnit = units.Time > 0.0 ? units.Time : 1.0;
         {
             ParticleMacroStep step;
-            step.BaseStep = static_cast<float>(base);
-            step.SimTime = m_SimTime;
+            step.BaseStep = static_cast<float>(base / timeUnit);
+            step.SimTime = m_SimTime / timeUnit;
             step.Force = m_Force;
-            step.CollectStats = s + 1 == steps;
+            step.CollectStats = collectStats;
 
             std::uint32_t newParticles = 0;
             std::uint64_t highestBurst = m_LastBurst;
@@ -250,15 +272,6 @@ namespace GPP
             ++report.MacroSteps;
             report.Simulated += base;
         }
-
-        if (m_Config.BaseStep > 0.0)
-        {
-            m_Pending -= report.Simulated;
-            report.Backlog = std::max(m_Pending, 0.0);
-            if (report.Backlog < 1e-9 * base) m_Pending = 0.0;
-        }
-        Publish();
-        return report;
     }
 
     std::uint64_t ParticleSystem::EmittedBy(const std::uint64_t emitterId) const
@@ -271,6 +284,7 @@ namespace GPP
     {
         ParticleBoardData data;
         data.Stats = m_Backend->Stats();
+        if (m_State.Frame.Units.Time > 0.0) data.Stats.SimTime *= m_State.Frame.Units.Time;
         data.Units = m_State.Frame.Units;
         data.Epoch = m_Epoch;
         data.Emitted = m_EmittedCount;

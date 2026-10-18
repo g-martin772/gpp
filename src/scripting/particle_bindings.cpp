@@ -143,7 +143,7 @@ end
         else if (const auto* i = std::get_if<int>(&value)) number = *i;
         else return false;
 
-        if (key == "rate") { p.Rate = number; p.RateMode = ParticleRateMode::ParticleRate; }
+        if (key == "rate") p.Rate = number;
         else if (key == "mass_rate") { p.MassRate = number; p.RateMode = ParticleRateMode::MassRate; }
         else if (key == "rate_or_mass_rate")
         {

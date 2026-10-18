@@ -127,7 +127,8 @@ namespace GPP
                     glm::vec3 velocity(m_Particles.VelTemp[i]);
                     float age = ParticleArrays::Age(m_Particles.Meta[i]);
                     ParticleView view{position, velocity, m_Particles.PosMass[i].w, m_Particles.VelTemp[i].w, age,
-                                      ParticleArrays::Species(m_Particles.Meta[i]), ParticleArrays::Owner(m_Particles.Meta[i])};
+                                      ParticleArrays::Species(m_Particles.Meta[i]), ParticleArrays::Owner(m_Particles.Meta[i]),
+                                      m_Particles.Meta[i].w};
                     m_Hooks.PostMacroStep(view, step.BaseStep, step.Force);
                     m_Particles.PosMass[i] = glm::vec4(position, m_Particles.PosMass[i].w);
                     m_Particles.VelTemp[i] = glm::vec4(velocity, m_Particles.VelTemp[i].w);
@@ -216,6 +217,7 @@ namespace GPP
             float age = ParticleArrays::Age(m_Particles.Meta[i]);
             const std::uint32_t species = ParticleArrays::Species(m_Particles.Meta[i]);
             const std::uint32_t owner = ParticleArrays::Owner(m_Particles.Meta[i]);
+            const std::uint32_t serial = m_Particles.Meta[i].w;
             bool alive = true;
             float elapsed = 0.0f;
             glm::vec3 positionComp(0.0f);
@@ -250,7 +252,7 @@ namespace GPP
                 if (m_Hooks.Step)
                 {
                     fold();
-                    ParticleView view{position, velocity, weight, temperature, age, species, owner};
+                    ParticleView view{position, velocity, weight, temperature, age, species, owner, serial};
                     handled = m_Hooks.Step(view, dt, force);
                 }
                 if (!handled)
@@ -321,7 +323,7 @@ namespace GPP
                     ++tally.Sinks.Count[slot];
                     if (sink.Info.y == 0) continue;
                     std::array<float, kParticleAccumulators> quantities{};
-                    ParticleView final{position, velocity, weight, temperature, age, species, owner};
+                    ParticleView final{position, velocity, weight, temperature, age, species, owner, serial};
                     if (m_Hooks.AbsorbQuantities)
                     {
                         m_Hooks.AbsorbQuantities(final, centre, force, quantities);

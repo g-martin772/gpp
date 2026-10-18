@@ -77,6 +77,7 @@ export namespace GPP
         float& Age;
         std::uint32_t Species;
         std::uint32_t Owner;
+        std::uint32_t Serial; // emission index within the species: a stable per-particle id for hooks that need noise
     };
 
     // CPU counterparts of the shader hooks in shaders/particles/hooks.glsl. Everything optional.
