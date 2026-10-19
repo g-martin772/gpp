@@ -46,6 +46,8 @@ export namespace GPP
         ParticleSystem(std::unique_ptr<IParticleBackend> backend, ParticleSystemConfig config,
                        std::shared_ptr<ParticleStatsBoard> board = std::make_shared<ParticleStatsBoard>());
 
+        // Takes effect for the next Advance; change it only right after a reset, as the result depends on the macro step
+        void SetBaseStep(const double seconds) noexcept { m_Config.BaseStep = seconds; }
         void SetForce(const ParticleForceParams& force) { m_Force = force; }
         void SetHooks(ParticleHooks hooks);
         void SetAmbient(ParticleAmbient ambient) { m_Ambient = std::move(ambient); }
