@@ -30,6 +30,9 @@ namespace GPP {
         bool m_Stopping{false};
     };
 
+    // Runs body(0..count-1) on the calling thread plus up to maxWorkers-1 pool helpers
+    export void ParallelFor(std::size_t count, std::size_t maxWorkers, const std::function<void(std::size_t)>& body);
+
     export struct ResumeOnAwaiter {
         ThreadPool* pool{nullptr};
         bool await_ready() const noexcept;

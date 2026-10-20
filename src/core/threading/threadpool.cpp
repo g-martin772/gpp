@@ -92,4 +92,45 @@ namespace GPP {
     ResumeOnAwaiter ResumeOn(ThreadPool& pool) {
         return ResumeOnAwaiter{.pool = &pool};
     }
+
+    void ParallelFor(const std::size_t count, const std::size_t maxWorkers, const std::function<void(std::size_t)>& body) {
+        if (count == 0) return;
+        struct Shared {
+            std::atomic<std::size_t> Next{0};
+            std::mutex Mutex;
+            std::condition_variable Done;
+            std::size_t Finished = 0;
+            std::exception_ptr Error;
+        };
+        auto shared = std::make_shared<Shared>();
+
+        const auto work = [shared, count, &body] {
+            while (true) {
+                const auto index = shared->Next.fetch_add(1);
+                if (index >= count) return;
+                std::exception_ptr error;
+                try {
+                    body(index);
+                } catch (...) {
+                    error = std::current_exception();
+                }
+                std::scoped_lock lock(shared->Mutex);
+                if (error && !shared->Error) shared->Error = error;
+                if (++shared->Finished == count) shared->Done.notify_all();
+            }
+        };
+
+        const auto helpers = std::min({std::max<std::size_t>(maxWorkers, 1), count, ThreadPool::Instance().WorkerCount() + 1}) - 1;
+        for (std::size_t i = 0; i < helpers; ++i) {
+            try {
+                ThreadPool::Instance().Submit(work);
+            } catch (const std::exception&) {
+                break;
+            }
+        }
+        work();
+        std::unique_lock lock(shared->Mutex);
+        shared->Done.wait(lock, [&] { return shared->Finished == count; });
+        if (shared->Error) std::rethrow_exception(shared->Error);
+    }
 }
