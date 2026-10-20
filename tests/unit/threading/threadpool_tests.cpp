@@ -103,3 +103,25 @@ TEST_CASE("ThreadPool async", "[threadpool][async]") {
     Logger::LogInfo("ThreadPool Worker Count: {}", ThreadPool::Instance().WorkerCount());
 
 }
+TEST_CASE("ParallelFor visits every index once and rethrows the first failure", "[threading][parallel]") {
+    std::vector<std::atomic<int>> hits(64);
+    GPP::ParallelFor(hits.size(), 8, [&](const std::size_t i) { hits[i].fetch_add(1); });
+    for (const auto& hit : hits) CHECK(hit.load() == 1);
+
+    GPP::ParallelFor(0, 4, [](std::size_t) { FAIL("no work expected"); });
+
+    std::atomic<int> ran{0};
+    CHECK_THROWS_AS(GPP::ParallelFor(16, 4, [&](const std::size_t i) {
+        ran.fetch_add(1);
+        if (i == 3) throw std::runtime_error("boom");
+    }), std::runtime_error);
+    CHECK(ran.load() == 16);
+}
+
+TEST_CASE("ParallelFor can nest inside pool tasks without deadlocking", "[threading][parallel]") {
+    std::atomic<int> total{0};
+    GPP::ParallelFor(32, 32, [&](std::size_t) {
+        GPP::ParallelFor(8, 8, [&](std::size_t) { total.fetch_add(1); });
+    });
+    CHECK(total.load() == 256);
+}

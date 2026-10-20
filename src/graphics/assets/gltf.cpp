@@ -16,6 +16,7 @@ namespace GPP
 {
     namespace
     {
+        constexpr std::size_t kDecodeWorkers = 8;
         constexpr int kComponentTypeByte = 5120;
         constexpr int kComponentTypeUnsignedByte = 5121;
         constexpr int kComponentTypeShort = 5122;
@@ -240,32 +241,42 @@ namespace GPP
                    glm::scale(glm::mat4(1.0f), scale);
         }
 
-        bool DecodeEmbeddedImage(tinygltf::Image* image, const int index, std::string*, std::string* warn,
-                                 int, int, const unsigned char* bytes, const int size, void*)
+        struct EncodedImages
+        {
+            std::vector<std::vector<unsigned char>> Bytes;
+        };
+
+        bool CaptureEncodedImage(tinygltf::Image*, const int index, std::string*, std::string*, int, int,
+                                 const unsigned char* bytes, const int size, void* user)
+        {
+            auto& store = *static_cast<EncodedImages*>(user);
+            if (index < 0 || size <= 0) return true;
+            if (store.Bytes.size() <= static_cast<std::size_t>(index)) store.Bytes.resize(static_cast<std::size_t>(index) + 1);
+            store.Bytes[static_cast<std::size_t>(index)].assign(bytes, bytes + size);
+            return true;
+        }
+
+        void DecodeImage(tinygltf::Image& image, const int index, const std::vector<unsigned char>& bytes, std::string& warn)
         {
             int width = 0, height = 0, channels = 0;
-            unsigned char* decoded = stbi_load_from_memory(bytes, size, &width, &height, &channels,
-                                                           STBI_rgb_alpha);
+            unsigned char* decoded = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height,
+                                                           &channels, STBI_rgb_alpha);
             if (!decoded)
             {
-                if (warn)
-                {
-                    *warn += std::format("image {} ('{}') could not be decoded ({}), the material is untextured. ", index,
-                                         image->uri, stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
-                }
-                image->width = 0;
-                image->height = 0;
-                image->image.clear();
-                return true;
+                warn += std::format("image {} ('{}') could not be decoded ({}), the material is untextured. ", index,
+                                    image.uri, stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
+                image.width = 0;
+                image.height = 0;
+                image.image.clear();
+                return;
             }
-            image->width = width;
-            image->height = height;
-            image->component = 4;
-            image->bits = 8;
-            image->pixel_type = kComponentTypeUnsignedByte;
-            image->image.assign(decoded, decoded + (static_cast<std::size_t>(width) * height * 4));
+            image.width = width;
+            image.height = height;
+            image.component = 4;
+            image.bits = 8;
+            image.pixel_type = kComponentTypeUnsignedByte;
+            image.image.assign(decoded, decoded + (static_cast<std::size_t>(width) * height * 4));
             stbi_image_free(decoded);
-            return true;
         }
 
         void HalveImage(tinygltf::Image& image)
@@ -313,35 +324,38 @@ namespace GPP
             }
         }
 
-        std::shared_ptr<VulkanImage> UploadTexture(const std::shared_ptr<VulkanDevice>& device,
-                                                   VulkanCommandPool& uploadPool, vk::Queue queue,
-                                                   const tinygltf::Image& image, const vk::Format format,
-                                                   const tinygltf::Sampler* sampler, std::string debugName,
-                                                   const std::shared_ptr<Logger>& logger)
+        struct PreparedTexture
         {
-            if (image.image.empty() || image.width <= 0 || image.height <= 0)
-            {
-                return nullptr;
-            }
-            const auto extent = vk::Extent3D{
-                static_cast<std::uint32_t>(image.width), static_cast<std::uint32_t>(image.height), 1
-            };
+            std::shared_ptr<VulkanImage> Image;
+            std::unique_ptr<VulkanBuffer> Staging;
+            vk::Extent3D Extent{};
+            vk::Format Format{};
+            std::uint32_t MipLevels = 1;
+        };
+
+        PreparedTexture PrepareTexture(const std::shared_ptr<VulkanDevice>& device, const tinygltf::Image& image,
+                                       const vk::Format format, const tinygltf::Sampler* sampler, std::string debugName,
+                                       const std::shared_ptr<Logger>& logger)
+        {
+            PreparedTexture prepared;
+            if (image.image.empty() || image.width <= 0 || image.height <= 0) return prepared;
+            prepared.Extent = vk::Extent3D{static_cast<std::uint32_t>(image.width), static_cast<std::uint32_t>(image.height), 1};
+            prepared.Format = format;
             const auto byteSize = static_cast<vk::DeviceSize>(image.image.size());
-            const std::uint32_t mipLevels =
-                SupportsLinearBlit(device->GetPhysicalDevice(), format) ? MipLevelCount(extent) : 1u;
+            prepared.MipLevels = SupportsLinearBlit(device->GetPhysicalDevice(), format) ? MipLevelCount(prepared.Extent) : 1u;
 
-            VulkanBuffer staging(device, MakeStagingBufferSpecification(byteSize), logger);
-            staging.Upload(image.image.data(), byteSize);
+            prepared.Staging = std::make_unique<VulkanBuffer>(device, MakeStagingBufferSpecification(byteSize), logger);
+            prepared.Staging->Upload(image.image.data(), byteSize);
 
-            auto gpuImage = std::make_shared<VulkanImage>(
+            prepared.Image = std::make_shared<VulkanImage>(
                 device,
                 VulkanImageSpecification{
-                    .extent = extent,
+                    .extent = prepared.Extent,
                     .format = format,
                     .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
                              vk::ImageUsageFlagBits::eTransferSrc,
                     .aspectMask = vk::ImageAspectFlagBits::eColor,
-                    .mipLevels = mipLevels,
+                    .mipLevels = prepared.MipLevels,
                     .createSampler = true,
                     .samplerFilter = sampler && sampler->magFilter == 9728 ? vk::Filter::eNearest
                                                                           : vk::Filter::eLinear,
@@ -349,23 +363,24 @@ namespace GPP
                     .debugName = std::move(debugName)
                 },
                 logger);
+            return prepared;
+        }
 
-            ImmediateSubmit(uploadPool, queue, [&](const vk::CommandBuffer cmd)
+        void RecordTextureUpload(const vk::CommandBuffer cmd, const PreparedTexture& texture)
+        {
+            const auto image = texture.Image->GetImage();
+            TransitionImageLayout(cmd, image, texture.Format, vk::ImageLayout::eUndefined,
+                                  vk::ImageLayout::eTransferDstOptimal, texture.MipLevels);
+            CopyBufferToImage(cmd, texture.Staging->GetBuffer(), image, texture.Extent);
+            if (texture.MipLevels > 1)
             {
-                TransitionImageLayout(cmd, gpuImage->GetImage(), format, vk::ImageLayout::eUndefined,
-                                      vk::ImageLayout::eTransferDstOptimal, mipLevels);
-                CopyBufferToImage(cmd, staging.GetBuffer(), gpuImage->GetImage(), extent);
-                if (mipLevels > 1)
-                {
-                    GenerateMipmaps(cmd, gpuImage->GetImage(), extent, mipLevels);
-                }
-                else
-                {
-                    TransitionImageLayout(cmd, gpuImage->GetImage(), format, vk::ImageLayout::eTransferDstOptimal,
-                                          vk::ImageLayout::eShaderReadOnlyOptimal);
-                }
-            });
-            return gpuImage;
+                GenerateMipmaps(cmd, image, texture.Extent, texture.MipLevels);
+            }
+            else
+            {
+                TransitionImageLayout(cmd, image, texture.Format, vk::ImageLayout::eTransferDstOptimal,
+                                      vk::ImageLayout::eShaderReadOnlyOptimal);
+            }
         }
 
         // Halves images the device cannot hold (dimension limit) and the largest ones while the scene's textures would
@@ -444,54 +459,140 @@ namespace GPP
             const std::shared_ptr<Logger>& Log;
         };
 
-        void UploadGeometry(const GltfUpload& upload, GltfPrimitive& primitive, const std::vector<GltfVertex>& vertices,
-                            const std::vector<std::uint32_t>& indices, const std::vector<GltfVertexExtra>& extras)
+        class GeometryBatch
         {
-            vk::BufferUsageFlags traceable{};
-            if (upload.Device->GetCapabilities().AccelerationStructure)
-            {
-                traceable = vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer
-                            | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
-            }
-            const auto vertexBytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(GltfVertex));
-            const auto indexBytes = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
-            const auto extraBytes = static_cast<vk::DeviceSize>(extras.size() * sizeof(GltfVertexExtra));
-            auto vertexSpec = MakeVertexBufferSpecification(vertexBytes);
-            vertexSpec.usage |= traceable | vk::BufferUsageFlagBits::eTransferSrc;
-            auto indexSpec = MakeIndexBufferSpecification(indexBytes);
-            indexSpec.usage |= traceable;
-            auto extraSpec = MakeVertexBufferSpecification(extraBytes);
-            extraSpec.usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer |
-                               vk::BufferUsageFlagBits::eTransferSrc;
-            primitive.VertexBuffer.Create(upload.Device, vertexSpec);
-            primitive.IndexBuffer.Create(upload.Device, indexSpec);
-            primitive.ExtraBuffer.Create(upload.Device, extraSpec);
+        public:
+            explicit GeometryBatch(const GltfUpload& upload) : m_Upload(upload) {}
 
-            VulkanBuffer staging(upload.Device, MakeStagingBufferSpecification(vertexBytes + indexBytes + extraBytes),
-                                 upload.Log);
-            staging.Upload(vertices.data(), vertexBytes);
-            staging.Upload(indices.data(), indexBytes, vertexBytes);
-            staging.Upload(extras.data(), extraBytes, vertexBytes + indexBytes);
-            ImmediateSubmit(upload.Pool, upload.Queue, [&](const vk::CommandBuffer cmd)
+            void Add(GltfPrimitive& primitive, const std::vector<GltfVertex>& vertices,
+                     const std::vector<std::uint32_t>& indices, const std::vector<GltfVertexExtra>& extras)
             {
-                CopyBuffer(cmd, staging.GetBuffer(), primitive.VertexBuffer.GetBuffer(), vertexBytes);
-                CopyBuffer(cmd, staging.GetBuffer(), primitive.IndexBuffer.GetBuffer(), indexBytes, vertexBytes);
-                CopyBuffer(cmd, staging.GetBuffer(), primitive.ExtraBuffer.GetBuffer(), extraBytes,
-                           vertexBytes + indexBytes);
-            });
+                vk::BufferUsageFlags traceable{};
+                if (m_Upload.Device->GetCapabilities().AccelerationStructure)
+                {
+                    traceable = vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer
+                                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+                }
+                Item item;
+                item.VertexBytes = static_cast<vk::DeviceSize>(vertices.size() * sizeof(GltfVertex));
+                item.IndexBytes = static_cast<vk::DeviceSize>(indices.size() * sizeof(std::uint32_t));
+                item.ExtraBytes = static_cast<vk::DeviceSize>(extras.size() * sizeof(GltfVertexExtra));
+                auto vertexSpec = MakeVertexBufferSpecification(item.VertexBytes);
+                vertexSpec.usage |= traceable | vk::BufferUsageFlagBits::eTransferSrc;
+                auto indexSpec = MakeIndexBufferSpecification(item.IndexBytes);
+                indexSpec.usage |= traceable;
+                auto extraSpec = MakeVertexBufferSpecification(item.ExtraBytes);
+                extraSpec.usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer |
+                                   vk::BufferUsageFlagBits::eTransferSrc;
+                primitive.VertexBuffer.Create(m_Upload.Device, vertexSpec);
+                primitive.IndexBuffer.Create(m_Upload.Device, indexSpec);
+                primitive.ExtraBuffer.Create(m_Upload.Device, extraSpec);
+                item.Vertex = primitive.VertexBuffer.GetBuffer();
+                item.Index = primitive.IndexBuffer.GetBuffer();
+                item.Extra = primitive.ExtraBuffer.GetBuffer();
+
+                const auto total = item.VertexBytes + item.IndexBytes + item.ExtraBytes;
+                item.Staging = std::make_unique<VulkanBuffer>(m_Upload.Device, MakeStagingBufferSpecification(total),
+                                                              m_Upload.Log);
+                item.Staging->Upload(vertices.data(), item.VertexBytes);
+                item.Staging->Upload(indices.data(), item.IndexBytes, item.VertexBytes);
+                item.Staging->Upload(extras.data(), item.ExtraBytes, item.VertexBytes + item.IndexBytes);
+                m_Bytes += total;
+                m_Items.push_back(std::move(item));
+                if (m_Bytes >= kFlushBytes) Flush();
+            }
+
+            void Flush()
+            {
+                if (m_Items.empty()) return;
+                ImmediateSubmit(m_Upload.Pool, m_Upload.Queue, [&](const vk::CommandBuffer cmd)
+                {
+                    for (const auto& item : m_Items)
+                    {
+                        const auto staging = item.Staging->GetBuffer();
+                        CopyBuffer(cmd, staging, item.Vertex, item.VertexBytes);
+                        CopyBuffer(cmd, staging, item.Index, item.IndexBytes, item.VertexBytes);
+                        CopyBuffer(cmd, staging, item.Extra, item.ExtraBytes, item.VertexBytes + item.IndexBytes);
+                    }
+                });
+                m_Items.clear();
+                m_Bytes = 0;
+            }
+
+        private:
+            struct Item
+            {
+                std::unique_ptr<VulkanBuffer> Staging;
+                vk::Buffer Vertex, Index, Extra;
+                vk::DeviceSize VertexBytes = 0, IndexBytes = 0, ExtraBytes = 0;
+            };
+
+            static constexpr vk::DeviceSize kFlushBytes = 128ull << 20;
+            const GltfUpload& m_Upload;
+            std::vector<Item> m_Items;
+            vk::DeviceSize m_Bytes = 0;
+        };
+
+        struct PrimitiveJob
+        {
+            const tinygltf::Primitive* Primitive = nullptr;
+            glm::mat4 World{1.0f};
+            glm::mat3 Normal{1.0f};
+            std::size_t Mesh = 0;
+        };
+
+        struct MeshJob
+        {
+            std::string Name;
+        };
+
+        struct PreparedPrimitive
+        {
+            std::vector<GltfVertex> Vertices;
+            std::vector<std::uint32_t> Indices;
+            std::vector<GltfVertexExtra> Extras;
+            int Material = -1;
+            bool HasTangents = false;
+            bool HasTexCoord1 = false;
+        };
+
+        void CollectNode(const tinygltf::Model& model, const int nodeIndex, const glm::mat4& parentTransform,
+                         std::vector<MeshJob>& meshes, std::vector<PrimitiveJob>& primitives)
+        {
+            if (nodeIndex < 0 || static_cast<std::size_t>(nodeIndex) >= model.nodes.size()) return;
+            const auto& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
+            const glm::mat4 worldTransform = parentTransform * LocalNodeTransform(node);
+
+            if (node.mesh >= 0 && static_cast<std::size_t>(node.mesh) < model.meshes.size())
+            {
+                const auto& mesh = model.meshes[static_cast<std::size_t>(node.mesh)];
+                const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
+                meshes.push_back(MeshJob{mesh.name});
+                for (const auto& primitive : mesh.primitives)
+                {
+                    primitives.push_back(PrimitiveJob{&primitive, worldTransform, normalMatrix, meshes.size() - 1});
+                }
+            }
+
+            for (const auto child : node.children)
+            {
+                CollectNode(model, child, worldTransform, meshes, primitives);
+            }
         }
 
-        void ProcessPrimitive(const tinygltf::Model& model, const tinygltf::Primitive& primitive,
-                              const glm::mat4& worldTransform, const glm::mat3& normalMatrix,
-                              const GltfUpload& upload, const std::filesystem::path& resolvedPath,
-                              GltfSceneData& scene, GltfMesh& outMesh)
+
+        // CPU half of a primitive: accessors to world-space vertices, indices, tangents. Pure, runs on any thread
+        std::optional<PreparedPrimitive> PreparePrimitive(const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+                                                          const glm::mat4& worldTransform, const glm::mat3& normalMatrix,
+                                                          const std::vector<GltfMaterial>& materials,
+                                                          const std::filesystem::path& resolvedPath,
+                                                          const std::shared_ptr<Logger>& logger)
         {
-            const auto& logger = upload.Log;
             const auto positionIt = primitive.attributes.find("POSITION");
             if (positionIt == primitive.attributes.end())
             {
                 if (logger) logger->Warn("glTF '{}': skipping primitive with no POSITION.", resolvedPath.string());
-                return;
+                return std::nullopt;
             }
             if (primitive.mode != kModeTriangles && primitive.mode != kModeTriangleStrip && primitive.mode != kModeTriangleFan)
             {
@@ -500,7 +601,7 @@ namespace GPP
                     logger->Warn("glTF '{}': skipping primitive with unsupported mode {} (only triangles are drawn).",
                                  resolvedPath.string(), primitive.mode);
                 }
-                return;
+                return std::nullopt;
             }
 
             const auto positionView = GetAccessorView(model, positionIt->second);
@@ -511,7 +612,7 @@ namespace GPP
                     logger->Warn("glTF '{}': skipping primitive with an unsupported POSITION accessor.",
                                 resolvedPath.string());
                 }
-                return;
+                return std::nullopt;
             }
 
             std::optional<AccessorView> normalView;
@@ -564,7 +665,7 @@ namespace GPP
                 if (indexView.Type != kTypeScalar || indexView.ComponentType == kComponentTypeFloat)
                 {
                     if (logger) logger->Warn("glTF '{}': skipping primitive with unsupported indices.", resolvedPath.string());
-                    return;
+                    return std::nullopt;
                 }
                 indices.resize(indexView.Count);
                 for (std::size_t i = 0; i < indexView.Count; ++i)
@@ -582,17 +683,17 @@ namespace GPP
             if (std::ranges::any_of(indices, [&](const std::uint32_t index) { return index >= vertices.size(); }))
             {
                 if (logger) logger->Warn("glTF '{}': skipping primitive with out-of-range indices.", resolvedPath.string());
-                return;
+                return std::nullopt;
             }
 
-            if (vertices.empty() || indices.empty()) return;
+            if (vertices.empty() || indices.empty()) return std::nullopt;
 
             if (!tangentView)
             {
                 int normalSet = 0;
-                if (primitive.material >= 0 && static_cast<std::size_t>(primitive.material) < scene.Materials.size())
+                if (primitive.material >= 0 && static_cast<std::size_t>(primitive.material) < materials.size())
                 {
-                    normalSet = scene.Materials[static_cast<std::size_t>(primitive.material)]
+                    normalSet = materials[static_cast<std::size_t>(primitive.material)]
                                     .Texture(GltfTextureRole::Normal).TexCoord;
                 }
                 std::vector<glm::vec3> positions(vertices.size());
@@ -612,71 +713,16 @@ namespace GPP
                 for (std::size_t i = 0; i < vertices.size(); ++i) extras[i].Tangent = tangents[i];
             }
 
-            GltfPrimitive outPrimitive;
-            UploadGeometry(upload, outPrimitive, vertices, indices, extras);
-            outPrimitive.VertexCount = static_cast<std::uint32_t>(vertices.size());
-            outPrimitive.IndexCount = static_cast<std::uint32_t>(indices.size());
-            outPrimitive.MaterialIndex = primitive.material;
-            outPrimitive.HasAuthoredTangents = tangentView.has_value();
-            outPrimitive.HasTexCoord1 = texCoord1View.has_value();
-
-            const auto baseVertex = static_cast<std::uint32_t>(scene.Geometry.Vertices.size());
-            scene.Geometry.Vertices.reserve(scene.Geometry.Vertices.size() + vertices.size());
-            for (const auto& vertex : vertices)
-            {
-                scene.Geometry.Vertices.push_back(vertex.Position);
-            }
-            scene.Geometry.Indices.reserve(scene.Geometry.Indices.size() + indices.size());
-            for (const auto index : indices)
-            {
-                scene.Geometry.Indices.push_back(baseVertex + index);
-            }
-
-            outMesh.Primitives.push_back(std::move(outPrimitive));
+            PreparedPrimitive prepared;
+            prepared.Vertices = std::move(vertices);
+            prepared.Indices = std::move(indices);
+            prepared.Extras = std::move(extras);
+            prepared.Material = primitive.material;
+            prepared.HasTangents = tangentView.has_value();
+            prepared.HasTexCoord1 = texCoord1View.has_value();
+            return prepared;
         }
 
-        void WalkNode(const tinygltf::Model& model, int nodeIndex, const glm::mat4& parentTransform,
-                     const GltfUpload& upload, const std::filesystem::path& resolvedPath, GltfSceneData& scene)
-        {
-            if (nodeIndex < 0 || static_cast<std::size_t>(nodeIndex) >= model.nodes.size()) return;
-            const auto& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
-            const glm::mat4 worldTransform = parentTransform * LocalNodeTransform(node);
-
-            if (node.mesh >= 0 && static_cast<std::size_t>(node.mesh) < model.meshes.size())
-            {
-                const auto& mesh = model.meshes[static_cast<std::size_t>(node.mesh)];
-                GltfMesh outMesh;
-                outMesh.Name = mesh.name;
-                outMesh.Primitives.reserve(mesh.primitives.size());
-                const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
-                for (const auto& primitive : mesh.primitives)
-                {
-                    try
-                    {
-                        ProcessPrimitive(model, primitive, worldTransform, normalMatrix, upload, resolvedPath, scene,
-                                         outMesh);
-                    }
-                    catch (const std::out_of_range& error)
-                    {
-                        if (upload.Log) upload.Log->Warn("glTF '{}': skipping primitive with an invalid accessor ({}).",
-                                                         resolvedPath.string(), error.what());
-                    }
-                    catch (const std::runtime_error& error)
-                    {
-                        if (upload.Log) upload.Log->Warn("glTF '{}': skipping primitive: {}.", resolvedPath.string(), error.what());
-                    }
-                }
-                if (!outMesh.Primitives.empty())
-                {
-                    scene.Meshes.push_back(std::move(outMesh));
-                }
-            }
-
-            for (const auto child : node.children)
-            {
-                WalkNode(model, child, worldTransform, upload, resolvedPath, scene);
-            }
-        }
     }
 
     namespace
@@ -863,7 +909,8 @@ namespace GPP
         const auto resolvedPath = fileSystem->ResolvePath(path);
 
         tinygltf::TinyGLTF loader;
-        loader.SetImageLoader(DecodeEmbeddedImage, nullptr);
+        EncodedImages encoded;
+        loader.SetImageLoader(CaptureEncodedImage, &encoded);
 
         tinygltf::Model model;
         std::string err, warn;
@@ -905,54 +952,143 @@ namespace GPP
                              resolvedPath.string(), join(audit.RequiredUnsupported));
             }
         }
+        {
+            std::set<int> usedSet;
+            for (const auto& texture : model.textures)
+            {
+                if (texture.source >= 0 && static_cast<std::size_t>(texture.source) < model.images.size()
+                    && static_cast<std::size_t>(texture.source) < encoded.Bytes.size()
+                    && !encoded.Bytes[static_cast<std::size_t>(texture.source)].empty())
+                {
+                    usedSet.insert(texture.source);
+                }
+            }
+            const std::vector<int> used(usedSet.begin(), usedSet.end());
+            std::vector<std::string> decodeWarnings(used.size());
+            ParallelFor(used.size(), kDecodeWorkers, [&](const std::size_t i)
+            {
+                const auto index = static_cast<std::size_t>(used[i]);
+                DecodeImage(model.images[index], used[i], encoded.Bytes[index], decodeWarnings[i]);
+                encoded.Bytes[index] = {};
+            });
+            std::string decodeWarn;
+            for (const auto& entry : decodeWarnings) decodeWarn += entry;
+            if (!decodeWarn.empty() && logger) logger->Warn("glTF '{}': {}", resolvedPath.string(), decodeWarn);
+        }
+        const auto parsed = std::chrono::steady_clock::now();
         const auto textureBytes = ConstrainTextures(model, device, logger, resolvedPath.string());
+        const auto constrained = std::chrono::steady_clock::now();
 
         GltfSceneData scene;
         VulkanCommandPool uploadPool(device, logger, device->GetQueueIndices().Graphics);
         const auto queue = device->GetGraphicsQueue();
 
-        std::map<TextureKey, std::shared_ptr<VulkanImage>> textureCache;
-        const auto resolveTexture = [&](const GltfTextureRole role, const int textureIndex) -> std::shared_ptr<VulkanImage>
+        struct TextureJob
         {
-            if (textureIndex < 0 || static_cast<std::size_t>(textureIndex) >= model.textures.size()) return nullptr;
-            const auto& texture = model.textures[static_cast<std::size_t>(textureIndex)];
-            if (texture.source < 0 || static_cast<std::size_t>(texture.source) >= model.images.size()) return nullptr;
-            const TextureKey key{texture.source, texture.sampler, GltfTextureRoleIsSrgb(role)};
-            if (const auto it = textureCache.find(key); it != textureCache.end()) return it->second;
-            const tinygltf::Sampler* sampler =
-                texture.sampler >= 0 && static_cast<std::size_t>(texture.sampler) < model.samplers.size()
-                    ? &model.samplers[static_cast<std::size_t>(texture.sampler)]
-                    : nullptr;
-            const auto& image = model.images[static_cast<std::size_t>(texture.source)];
-            auto gpu = UploadTexture(device, uploadPool, queue, image, GltfTextureFormat(role), sampler,
-                                     image.name.empty() ? image.uri : image.name, logger);
-            textureCache.emplace(key, gpu);
-            if (gpu) scene.Textures.push_back(gpu);
-            return gpu;
+            int Source = 0;
+            const tinygltf::Sampler* Sampler = nullptr;
+            vk::Format Format{};
+            std::string Name;
         };
-
-        scene.Materials.reserve(model.materials.size());
+        std::vector<std::pair<GltfMaterial, GltfTextureIndices>> materialRecords;
+        std::vector<std::array<int, kGltfTextureRoleCount>> materialJobs;
+        std::map<TextureKey, int> jobOf;
+        std::vector<TextureJob> jobs;
         for (const auto& material : model.materials)
         {
             GltfTextureIndices indices;
             auto out = ReadGltfMaterial(material, indices);
+            std::array<int, kGltfTextureRoleCount> roleJobs;
+            roleJobs.fill(-1);
             for (std::size_t role = 0; role < kGltfTextureRoleCount; ++role)
             {
-                out.Textures[role].Image = resolveTexture(static_cast<GltfTextureRole>(role), indices[role]);
+                const int textureIndex = indices[role];
+                if (textureIndex < 0 || static_cast<std::size_t>(textureIndex) >= model.textures.size()) continue;
+                const auto& texture = model.textures[static_cast<std::size_t>(textureIndex)];
+                if (texture.source < 0 || static_cast<std::size_t>(texture.source) >= model.images.size()) continue;
+                const auto textureRole = static_cast<GltfTextureRole>(role);
+                const TextureKey key{texture.source, texture.sampler, GltfTextureRoleIsSrgb(textureRole)};
+                auto [it, inserted] = jobOf.try_emplace(key, static_cast<int>(jobs.size()));
+                if (inserted)
+                {
+                    const auto& image = model.images[static_cast<std::size_t>(texture.source)];
+                    jobs.push_back(TextureJob{
+                        texture.source,
+                        texture.sampler >= 0 && static_cast<std::size_t>(texture.sampler) < model.samplers.size()
+                            ? &model.samplers[static_cast<std::size_t>(texture.sampler)]
+                            : nullptr,
+                        GltfTextureFormat(textureRole), image.name.empty() ? image.uri : image.name});
+                }
+                roleJobs[role] = it->second;
+            }
+            materialRecords.emplace_back(std::move(out), indices);
+            materialJobs.push_back(roleJobs);
+        }
+
+        constexpr std::uint64_t kStagingChunkBytes = 192ull << 20;
+        std::vector<std::shared_ptr<VulkanImage>> jobImages(jobs.size());
+        for (std::size_t first = 0; first < jobs.size();)
+        {
+            std::size_t last = first;
+            std::uint64_t bytes = 0;
+            while (last < jobs.size())
+            {
+                const auto size = static_cast<std::uint64_t>(model.images[static_cast<std::size_t>(jobs[last].Source)].image.size());
+                if (last > first && bytes + size > kStagingChunkBytes) break;
+                bytes += size;
+                ++last;
+            }
+            std::vector<PreparedTexture> prepared(last - first);
+            ParallelFor(prepared.size(), kDecodeWorkers, [&](const std::size_t i)
+            {
+                const auto& job = jobs[first + i];
+                prepared[i] = PrepareTexture(device, model.images[static_cast<std::size_t>(job.Source)], job.Format, job.Sampler,
+                                             job.Name, logger);
+            });
+            if (std::ranges::any_of(prepared, [](const PreparedTexture& texture) { return texture.Image != nullptr; }))
+            {
+                ImmediateSubmit(uploadPool, queue, [&](const vk::CommandBuffer cmd)
+                {
+                    for (const auto& texture : prepared)
+                    {
+                        if (texture.Image) RecordTextureUpload(cmd, texture);
+                    }
+                });
+            }
+            for (std::size_t i = 0; i < prepared.size(); ++i)
+            {
+                jobImages[first + i] = prepared[i].Image;
+                if (prepared[i].Image) scene.Textures.push_back(prepared[i].Image);
+            }
+            first = last;
+        }
+        for (auto& image : model.images) std::vector<unsigned char>().swap(image.image);
+
+        scene.Materials.reserve(materialRecords.size());
+        for (std::size_t m = 0; m < materialRecords.size(); ++m)
+        {
+            auto& out = materialRecords[m].first;
+            for (std::size_t role = 0; role < kGltfTextureRoleCount; ++role)
+            {
+                const int job = materialJobs[m][role];
+                out.Textures[role].Image = job >= 0 ? jobImages[static_cast<std::size_t>(job)] : nullptr;
             }
             out.BaseColorTexture = out.Texture(GltfTextureRole::BaseColor).Image;
             scene.Materials.push_back(std::move(out));
         }
 
+        const auto texturesDone = std::chrono::steady_clock::now();
         scene.Meshes.reserve(model.meshes.size());
         const GltfUpload upload{device, uploadPool, queue, logger};
+        std::vector<MeshJob> meshJobs;
+        std::vector<PrimitiveJob> primitiveJobs;
         if (!model.scenes.empty())
         {
             const auto sceneIndex = static_cast<std::size_t>(model.defaultScene >= 0 ? model.defaultScene : 0);
             const auto& rootNodes = model.scenes.at(sceneIndex).nodes;
             for (const auto rootNode : rootNodes)
             {
-                WalkNode(model, rootNode, glm::mat4(1.0f), upload, resolvedPath, scene);
+                CollectNode(model, rootNode, glm::mat4(1.0f), meshJobs, primitiveJobs);
             }
         }
         else
@@ -961,12 +1097,71 @@ namespace GPP
             // its own root so the mesh data isn't simply dropped.
             for (std::size_t i = 0; i < model.nodes.size(); ++i)
             {
-                WalkNode(model, static_cast<int>(i), glm::mat4(1.0f), upload, resolvedPath, scene);
+                CollectNode(model, static_cast<int>(i), glm::mat4(1.0f), meshJobs, primitiveJobs);
             }
         }
 
+        std::vector<std::optional<PreparedPrimitive>> prepared(primitiveJobs.size());
+        ParallelFor(primitiveJobs.size(), kDecodeWorkers, [&](const std::size_t i)
+        {
+            const auto& job = primitiveJobs[i];
+            try
+            {
+                prepared[i] = PreparePrimitive(model, *job.Primitive, job.World, job.Normal, scene.Materials, resolvedPath,
+                                               logger);
+            }
+            catch (const std::out_of_range& error)
+            {
+                if (logger) logger->Warn("glTF '{}': skipping primitive with an invalid accessor ({}).", resolvedPath.string(),
+                                         error.what());
+            }
+            catch (const std::runtime_error& error)
+            {
+                if (logger) logger->Warn("glTF '{}': skipping primitive: {}.", resolvedPath.string(), error.what());
+            }
+        });
+
+        GeometryBatch batch(upload);
+        std::size_t nextPrimitive = 0;
+        for (std::size_t meshIndex = 0; meshIndex < meshJobs.size(); ++meshIndex)
+        {
+            GltfMesh outMesh;
+            outMesh.Name = meshJobs[meshIndex].Name;
+            for (; nextPrimitive < primitiveJobs.size() && primitiveJobs[nextPrimitive].Mesh == meshIndex; ++nextPrimitive)
+            {
+                auto& data = prepared[nextPrimitive];
+                if (!data) continue;
+                GltfPrimitive outPrimitive;
+                batch.Add(outPrimitive, data->Vertices, data->Indices, data->Extras);
+                outPrimitive.VertexCount = static_cast<std::uint32_t>(data->Vertices.size());
+                outPrimitive.IndexCount = static_cast<std::uint32_t>(data->Indices.size());
+                outPrimitive.MaterialIndex = data->Material;
+                outPrimitive.HasAuthoredTangents = data->HasTangents;
+                outPrimitive.HasTexCoord1 = data->HasTexCoord1;
+
+                const auto baseVertex = static_cast<std::uint32_t>(scene.Geometry.Vertices.size());
+                scene.Geometry.Vertices.reserve(scene.Geometry.Vertices.size() + data->Vertices.size());
+                for (const auto& vertex : data->Vertices) scene.Geometry.Vertices.push_back(vertex.Position);
+                scene.Geometry.Indices.reserve(scene.Geometry.Indices.size() + data->Indices.size());
+                for (const auto index : data->Indices) scene.Geometry.Indices.push_back(baseVertex + index);
+
+                outMesh.Primitives.push_back(std::move(outPrimitive));
+                data.reset();
+            }
+            if (!outMesh.Primitives.empty()) scene.Meshes.push_back(std::move(outMesh));
+        }
+        batch.Flush();
+
         if (logger)
         {
+            const auto ms = [](const auto a, const auto b)
+            {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(b - a).count();
+            };
+            const auto finished = std::chrono::steady_clock::now();
+            logger->Debug("glTF '{}' timing: parse+decode {} ms, constrain {} ms, textures {} ms, geometry {} ms",
+                          resolvedPath.string(), ms(started, parsed), ms(parsed, constrained), ms(constrained, texturesDone),
+                          ms(texturesDone, finished));
             logger->Info("Loaded glTF '{}': {} mesh(es), {} material(s), {} triangle(s), {} texture(s) {} MiB, {} ms",
                          resolvedPath.string(), scene.Meshes.size(), scene.Materials.size(),
                          scene.Geometry.Indices.size() / 3, scene.Textures.size(), textureBytes >> 20,
