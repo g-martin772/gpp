@@ -64,6 +64,9 @@ namespace GPP
         {
             m_Logger->Error("Hot-reload layer '{}' failed to load: {}",
                             entry.Description.Id, entry.Asset->LastError());
+            m_Logger->Notifications()->Post(NotificationKind::Error, "Layer failed to load",
+                                            std::format("{}: {}", entry.Description.Id, entry.Asset->LastError()), 0.0f,
+                                            "layer:" + entry.Description.Id);
         }
     }
 
@@ -95,6 +98,10 @@ namespace GPP
         {
             m_Logger->Error("Hot-reload layer '{}' keeps the previous version until the library changes again.",
                             entry.Description.Id);
+            m_Logger->Notifications()->Post(NotificationKind::Error, "Layer reload failed",
+                                            std::format("{} keeps its previous version: {}", entry.Description.Id,
+                                                        entry.Asset->LastError()),
+                                            0.0f, "layer:" + entry.Description.Id);
             entry.ReloadInFlight.store(false);
             return;
         }
@@ -113,11 +120,18 @@ namespace GPP
             entry.Proxy->QueueSwap(newLayer, std::move(retired));
             m_Logger->Info("Hot-reload layer '{}' reloaded (generation {}).",
                            entry.Description.Id, entry.Asset->GetInstance().generation);
+            m_Logger->Notifications()->Post(NotificationKind::Success, "Layer reloaded",
+                                            std::format("{} (generation {})", entry.Description.Id,
+                                                        entry.Asset->GetInstance().generation),
+                                            0.0f, "layer:" + entry.Description.Id);
         }
         catch (const std::exception& exception)
         {
             m_Logger->Error("Hot-reload layer '{}' failed to install a staged reload: {}",
                             entry.Description.Id, exception.what());
+            m_Logger->Notifications()->Post(NotificationKind::Error, "Layer reload failed",
+                                            std::format("{}: {}", entry.Description.Id, exception.what()), 0.0f,
+                                            "layer:" + entry.Description.Id);
         }
         entry.ReloadInFlight.store(false);
     }

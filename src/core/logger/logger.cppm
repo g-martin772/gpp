@@ -3,26 +3,24 @@ module;
 #include <spdlog/spdlog.h>
 
 export module GPP.Core:Logger;
+export import :LogBuffer;
+export import :Notifications;
 import :Types;
 import :DI.Service;
 
 namespace GPP
 {
-    export enum class LogLevel {
-        Trace,
-        Debug,
-        Info,
-        Warn,
-        Error,
-        Critical,
-        Off
-    };
-
     export class Logger : public IService {
         spdlog::logger m_logger;
+        std::shared_ptr<LogBuffer> m_Buffer;
+        std::shared_ptr<NotificationCenter> m_Notifications;
         static std::unique_ptr<Logger> s_instance;
+        void AttachBuffer();
     public:
         Logger();
+
+        [[nodiscard]] const std::shared_ptr<LogBuffer>& Buffer() const noexcept { return m_Buffer; }
+        [[nodiscard]] const std::shared_ptr<NotificationCenter>& Notifications() const noexcept { return m_Notifications; }
         static Logger* GetInstance();
         spdlog::logger& GetLogger();
         void SetLogger(spdlog::logger&& logger);

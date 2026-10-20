@@ -16,6 +16,8 @@ export import :HotReload;
 export import :UI;
 export import :UI.Preferences;
 export import :UI.FileDialog;
+export import :UI.LogPanel;
+export import :UI.NotificationOverlay;
 export import :Assets.Image;
 export import :Assets.Tangents;
 export import :Assets.Gltf;

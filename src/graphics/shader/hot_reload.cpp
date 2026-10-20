@@ -331,6 +331,7 @@ namespace GPP
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
             m_Running = false;
+            Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
             throw;
         }
         co_return;
@@ -366,6 +367,7 @@ namespace GPP
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
             m_Logger->Error("Shader reload failed: {}", m_LastError);
+            Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
             return false;
         }
     }
@@ -386,6 +388,15 @@ namespace GPP
                 std::scoped_lock lock(m_Mutex);
                 m_LastError = "Shader reload was cancelled.";
             }
+            else
+            {
+                const bool notify = [&]
+                {
+                    std::scoped_lock lock(m_Mutex);
+                    return std::exchange(m_NotifyOnInstall, false);
+                }();
+                if (notify) Notify(NotificationKind::Success, "Shader recompiled", {});
+            }
         }
         catch (const std::exception& exception)
         {
@@ -394,6 +405,7 @@ namespace GPP
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
             m_Logger->Error("Shader reload failed: {}", m_LastError);
+            Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
         }
         {
             std::scoped_lock lock(m_Mutex);
@@ -412,6 +424,7 @@ namespace GPP
             }
             m_Reloading = true;
             m_CompilationInFlight = true;
+            m_NotifyOnInstall = true;
         }
         ThreadPool::Instance().Submit([this]
         {
@@ -439,7 +452,9 @@ namespace GPP
                 m_Progress.message = m_LastError;
                 m_Reloading = false;
                 m_CompilationInFlight = false;
+                m_NotifyOnInstall = false;
                 m_Logger->Error("Shader reload failed: {}", m_LastError);
+                Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
                 m_ReloadCondition.notify_all();
             }
         });
@@ -470,6 +485,18 @@ namespace GPP
         {
             QueueReload();
         }
+    }
+
+    void ShaderPipeline::Notify(const NotificationKind kind, std::string title, std::string message) const
+    {
+        if (!m_Logger) return;
+        std::string name;
+        for (const auto& path : m_SourcePaths) name += (name.empty() ? "" : " + ") + path.filename().string();
+        constexpr std::size_t kMaxMessage = 480;
+        if (message.size() > kMaxMessage) message = message.substr(0, kMaxMessage) + "...";
+        if (!message.empty()) message = name + "\n" + message;
+        else message = name;
+        m_Logger->Notifications()->Post(kind, std::move(title), std::move(message), 0.0f, "shader:" + name);
     }
 
     void ShaderPipeline::DrainRetired()

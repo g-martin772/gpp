@@ -85,6 +85,7 @@ namespace GPP
         void HandleCompiled(const std::shared_ptr<CompiledPipeline>& compiled);
         void SetProgress(ShaderCompilationProgress progress);
         void DrainRetired();
+        void Notify(NotificationKind kind, std::string title, std::string message) const;
 
         std::shared_ptr<VulkanDevice> m_Device;
         VulkanPipelineSpecification m_PipelineSpecification;
@@ -112,6 +113,7 @@ namespace GPP
         bool m_Running = false;
         bool m_Reloading = false;
         bool m_CompilationInFlight = false;
+        bool m_NotifyOnInstall = false; // set by file-triggered reloads, which report their outcome
     };
 
     export using ShaderProgram = ShaderPipeline;

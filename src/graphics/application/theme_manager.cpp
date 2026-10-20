@@ -70,6 +70,8 @@ namespace GPP
         if (!staged)
         {
             m_Logger->Error("Theme failed to reload: {}", m_Asset->LastError());
+            m_Logger->Notifications()->Post(NotificationKind::Error, "Theme reload failed", m_Asset->LastError(), 0.0f,
+                                            "theme");
             m_ReloadInFlight.store(false);
             return;
         }
@@ -86,11 +88,14 @@ namespace GPP
             auto* theme = static_cast<Theme*>(m_Asset->GetInstance().instance);
             m_Proxy->SwapActive(theme);
             m_Logger->Info("Theme reloaded (generation {}).", m_Asset->GetInstance().generation);
+            m_Logger->Notifications()->Post(NotificationKind::Success, "Theme reloaded",
+                                            std::format("generation {}", m_Asset->GetInstance().generation), 0.0f, "theme");
             m_Dispatcher->Publish(ThemeChangedEvent{});
         }
         catch (const std::exception& exception)
         {
             m_Logger->Error("Theme failed to install a staged reload: {}", exception.what());
+            m_Logger->Notifications()->Post(NotificationKind::Error, "Theme reload failed", exception.what(), 0.0f, "theme");
         }
         m_ReloadInFlight.store(false);
     }
