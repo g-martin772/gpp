@@ -110,12 +110,16 @@ namespace GPP
         {
             const float height = ImGui::GetFrameHeight() * 1.15f;
             const ImVec2 min = ImGui::GetCursorScreenPos();
-            const bool clicked = ImGui::Selectable(label, active, 0, ImVec2(width, height));
+            const bool clicked = ImGui::Selectable((std::string("##nav_") + label).c_str(), active, 0, ImVec2(width, height));
+            auto* drawList = ImGui::GetWindowDrawList();
             if (active)
             {
-                ImGui::GetWindowDrawList()->AddRectFilled(
+                drawList->AddRectFilled(
                     min, ImVec2(min.x + 3.0f, min.y + height), ImGui::ColorConvertFloat4ToU32(accent));
             }
+            const float inset = ImGui::GetFontSize() * 0.8f;
+            drawList->AddText(ImVec2(min.x + inset, min.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
+                              ImGui::GetColorU32(ImGuiCol_Text), label);
             return clicked;
         }
 
