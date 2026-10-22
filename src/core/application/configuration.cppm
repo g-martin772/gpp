@@ -106,7 +106,6 @@ namespace GPP {
         ConfigurationBuilder() = default;
         ConfigurationBuilder& AddCommandLine(int argc, char* argv[]);
         ConfigurationBuilder& AddEnvironmentVariables(std::string prefix = "GPP_");
-        // Providers apply in call order, later ones override earlier ones. An optional file may be missing.
         ConfigurationBuilder& AddJsonFile(std::string filePath, bool optional = false);
         ConfigurationBuilder& AddInMemory(std::unordered_map<std::string, std::string> values);
         std::unique_ptr<IConfiguration> Build(IFileSystem* fs = nullptr);

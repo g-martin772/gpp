@@ -9,7 +9,7 @@ namespace GPP
     {
         WorkingDir,
         BinaryDir,
-        Auto // working dir, then resource dir (if set), then binary dir
+        Auto
     };
 
     export enum class FileEncoding

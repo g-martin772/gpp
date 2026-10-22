@@ -98,7 +98,6 @@ namespace GPP
     {
     public:
         [[nodiscard]] static WmKind Detect(const EnvLookup& env);
-        // Hyprland: Lua when the config file is hyprland.lua, otherwise classic hyprland.conf syntax.
         [[nodiscard]] static std::string Snippet(WmKind wm, std::string_view id, bool hyprlandLua);
         [[nodiscard]] static std::string_view CommentPrefix(WmKind wm, bool hyprlandLua);
         [[nodiscard]] static std::string_view SnippetExtension(WmKind wm, bool hyprlandLua);
@@ -118,8 +117,7 @@ namespace GPP
         std::ostream* Out{nullptr};
     };
 
-    // --install-desktop [--prefix P] [--apply-wm-rules|--no-wm-rules], --uninstall-desktop [--prefix P].
-    // Returns nullopt when no desktop flag is present.
+    // --install-desktop [--prefix P] [--apply-wm-rules|--no-wm-rules], --uninstall-desktop [--prefix P]
     export [[nodiscard]] std::optional<int> HandleDesktopArgs(
         std::span<const std::string> args, const DesktopCliContext& context);
     export [[nodiscard]] std::optional<int> HandleDesktopArgs(

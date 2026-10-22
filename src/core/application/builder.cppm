@@ -55,7 +55,6 @@ namespace GPP
         ConfigurationBuilder Configuration{};
         FileSystem FS{};
 
-        // Programmatic defaults; keys present in the GPP:App config section override them.
         builder& SetAppInfo(AppInfo info)
         {
             *m_AppInfoDefaults = std::move(info);

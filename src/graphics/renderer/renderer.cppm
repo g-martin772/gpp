@@ -34,7 +34,6 @@ namespace GPP
         std::vector<RetiredUiTexture> Retired;
         bool Closed = false;
 
-        // After close nothing is deferred: the device is idle and the ImGui descriptor pool is gone
         void Retire(RetiredUiTexture texture)
         {
             std::scoped_lock lock(Mutex);

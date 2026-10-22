@@ -38,10 +38,8 @@ namespace GPP
 
         using Dependencies = std::tuple<IFileSystem, AppInfo>;
 
-        // Also pushes ResourceDir/CacheDir into the file system so low-level code needs no AppPaths.
         AppPaths(std::shared_ptr<IFileSystem> fileSystem, std::shared_ptr<AppInfo> info);
 
-        // Dev mode keeps today's layout: cwd is the resource root and everything writable lives in relative `.gpp`.
         static AppPaths Resolve(Inputs inputs);
         static Mode DetectMode(const std::filesystem::path& binaryDir, std::string_view appId, const EnvLookup& env);
         static XdgDirs ResolveXdgDirs(const EnvLookup& env);

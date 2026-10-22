@@ -84,12 +84,10 @@ namespace GPP
         std::vector<LauncherButton> ExtraButtons;
     };
 
-    // Whitespace separated terms; every term must occur in `text`, ignoring case.
     export [[nodiscard]] bool LauncherMatches(std::string_view text, std::string_view filter);
 
     export [[nodiscard]] std::vector<std::size_t> FilterLauncherRecents(
         const std::vector<LauncherRecent>& recents, std::string_view filter);
 
-    // Draws into the current window, which the caller makes borderless and window-filling.
     export [[nodiscard]] LauncherAction DrawLauncher(LauncherData& data, const LauncherHooks& hooks = {});
 }

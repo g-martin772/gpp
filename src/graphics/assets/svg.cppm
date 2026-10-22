@@ -11,7 +11,6 @@ namespace GPP
         std::vector<std::uint8_t> Rgba; // non-premultiplied RGBA8, row 0 on top
     };
 
-    // Fits the document into maxWidth x maxHeight keeping its aspect ratio; the background stays transparent.
     export [[nodiscard]] std::expected<RasterImage, std::string> RasterizeSvg(std::string_view svg, int maxWidth,
                                                                               int maxHeight);
     export [[nodiscard]] std::expected<RasterImage, std::string> RasterizeSvgFile(
