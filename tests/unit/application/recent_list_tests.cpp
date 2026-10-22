@@ -139,3 +139,39 @@ TEST_CASE("RecentList reads legacy scalar entries and respects the cap", "[recen
     embedded.FromYaml(YAML::Node());
     CHECK(embedded.Empty());
 }
+
+TEST_CASE("RecentList merge unions by path, newest timestamp wins and exclusions stay out", "[recent]")
+{
+    RecentList mine;
+    mine.Add("/a/shared.yaml", {}, 10);
+    mine.Add("/a/mine.yaml", {}, 30);
+
+    RecentList disk;
+    disk.Add("/a/shared.yaml", "Shared", 20);
+    disk.Add("/a/theirs.yaml", {}, 25);
+    disk.Add("/a/removed.yaml", {}, 40);
+
+    const std::vector<std::string> removed{"/a/removed.yaml"};
+    mine.Merge(disk, removed);
+
+    REQUIRE(mine.Entries().size() == 3);
+    CHECK(mine.Entries()[0].Path == "/a/mine.yaml");
+    CHECK(mine.Entries()[1].Path == "/a/theirs.yaml");
+    CHECK(mine.Entries()[2].Path == "/a/shared.yaml");
+    CHECK(mine.Entries()[2].LastOpened == 20);
+    CHECK(mine.Entries()[2].Name == "Shared");
+}
+
+TEST_CASE("RecentList merge respects the entry cap", "[recent]")
+{
+    RecentList mine(2);
+    mine.Add("/a/1.yaml", {}, 1);
+    RecentList disk(5);
+    disk.Add("/a/2.yaml", {}, 2);
+    disk.Add("/a/3.yaml", {}, 3);
+    mine.Merge(disk);
+
+    REQUIRE(mine.Entries().size() == 2);
+    CHECK(mine.Entries()[0].Path == "/a/3.yaml");
+    CHECK(mine.Entries()[1].Path == "/a/2.yaml");
+}

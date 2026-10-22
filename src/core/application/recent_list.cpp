@@ -2,6 +2,7 @@ module GPP.Core;
 
 import std;
 import :Application.RecentList;
+import :IO.AtomicFile;
 
 namespace GPP
 {
@@ -52,6 +53,25 @@ namespace GPP
             std::error_code ec;
             return !fs::exists(fs::path(e.Path), ec);
         });
+    }
+
+    void RecentList::Merge(const RecentList& other, const std::span<const std::string> excluded)
+    {
+        for (const auto& entry : other.m_Entries)
+        {
+            if (std::ranges::contains(excluded, entry.Path)) continue;
+            if (const auto it = std::ranges::find(m_Entries, entry.Path, &RecentEntry::Path); it != m_Entries.end())
+            {
+                if (entry.LastOpened > it->LastOpened) it->LastOpened = entry.LastOpened;
+                if (it->Name.empty()) it->Name = entry.Name;
+            }
+            else
+            {
+                m_Entries.push_back(entry);
+            }
+        }
+        std::ranges::stable_sort(m_Entries, std::greater<>{}, &RecentEntry::LastOpened);
+        if (m_Entries.size() > m_Max) m_Entries.resize(m_Max);
     }
 
     void RecentList::SetMaxEntries(const std::size_t maxEntries)
@@ -126,10 +146,7 @@ namespace GPP
             root["Recent"] = ToYaml();
             YAML::Emitter out;
             out << root;
-            std::ofstream stream(file, std::ios::binary | std::ios::trunc);
-            if (!stream) return false;
-            stream << out.c_str() << '\n';
-            return static_cast<bool>(stream);
+            return WriteFileAtomic(file, std::string(out.c_str()) + '\n').has_value();
         }
         catch (const std::exception&)
         {

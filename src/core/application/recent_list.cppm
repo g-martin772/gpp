@@ -30,6 +30,9 @@ namespace GPP
         void Clear() { m_Entries.clear(); }
         std::size_t Prune();
 
+        // Adds entries of `other` that are missing here (except `excluded`), newer LastOpened wins, newest first.
+        void Merge(const RecentList& other, std::span<const std::string> excluded = {});
+
         void SetMaxEntries(std::size_t maxEntries);
         [[nodiscard]] std::size_t MaxEntries() const noexcept { return m_Max; }
         [[nodiscard]] const std::vector<RecentEntry>& Entries() const noexcept { return m_Entries; }

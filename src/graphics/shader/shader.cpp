@@ -175,13 +175,13 @@ namespace GPP
                                      const std::shared_ptr<IFileSystem>& fileSystem,
                                      const std::vector<std::filesystem::path>& dependencies)
         {
-            std::ofstream file(path, std::ios::trunc);
-            if (!file) return;
+            std::string manifest;
             for (const auto& dependency : dependencies)
             {
-                file << dependency.lexically_normal().string() << '\n';
-                file << HashBytes(fileSystem->ReadAllText(dependency)) << '\n';
+                manifest += dependency.lexically_normal().string() + '\n';
+                manifest += std::to_string(HashBytes(fileSystem->ReadAllText(dependency))) + '\n';
             }
+            (void)WriteFileAtomic(path, manifest);
         }
 
         bool DependenciesUnchanged(const std::filesystem::path& path,
@@ -403,30 +403,7 @@ namespace GPP
 
         void WriteCache(const std::filesystem::path& path, std::span<const std::uint32_t> words)
         {
-            std::error_code error;
-            std::filesystem::create_directories(path.parent_path(), error);
-            if (error)
-            {
-                return;
-            }
-
-            const auto temporary = path.string() + ".tmp";
-            std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-            if (!file)
-            {
-                return;
-            }
-            file.write(reinterpret_cast<const char*>(words.data()),
-                       static_cast<std::streamsize>(words.size_bytes()));
-            file.close();
-            if (file)
-            {
-                std::filesystem::rename(temporary, path, error);
-                if (error)
-                {
-                    std::filesystem::remove(temporary, error);
-                }
-            }
+            (void)WriteFileAtomic(path, std::string_view(reinterpret_cast<const char*>(words.data()), words.size_bytes()));
         }
     }
 
