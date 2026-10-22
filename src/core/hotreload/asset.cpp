@@ -1,6 +1,7 @@
 module GPP.Core;
 
 import :HotReload.Asset;
+import :HotReload.ShadowDirs;
 import std;
 
 namespace GPP
@@ -126,18 +127,17 @@ namespace GPP
             return resolved;
         }
 
-        std::filesystem::path shadowDir;
+        std::filesystem::path shadowRoot;
         if (m_Description.shadowDirectory.empty())
         {
             const auto cacheRoot = m_FileSystem->CacheDir().empty() ? std::filesystem::path(".gpp") : m_FileSystem->CacheDir();
-            shadowDir = m_FileSystem->ResolvePath(cacheRoot / "hot-reload-cache");
+            shadowRoot = m_FileSystem->ResolvePath(cacheRoot / "hot-reload-cache");
         }
         else
         {
-            shadowDir = m_FileSystem->ResolvePath(m_Description.shadowDirectory);
+            shadowRoot = m_FileSystem->ResolvePath(m_Description.shadowDirectory);
         }
-        std::error_code createError;
-        std::filesystem::create_directories(shadowDir, createError);
+        const auto shadowDir = ProcessShadowDirectory(shadowRoot);
 
         std::uint64_t generationHint;
         {

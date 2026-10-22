@@ -323,7 +323,7 @@ TEST_CASE("HotReloadAsset shadow-copies the library before loading it", "[hotrel
     HotReloadAsset asset("shadow-asset", description, fileSystem, dispatcher, logger);
 
     REQUIRE(asset.Load(provider));
-    CHECK(std::filesystem::exists(shadowDir / "shadow-asset_1.so"));
+    CHECK(std::filesystem::exists(shadowDir / std::to_string(CurrentProcessId()) / "shadow-asset_1.so"));
     // The original build output must remain untouched (never locked/renamed), so a build system can
     // keep writing to it.
     CHECK(std::filesystem::exists(TestPluginPath()));
