@@ -20,10 +20,38 @@ namespace GPP
     class VulkanContext;
     class WindowManager;
 
+    struct RetiredUiTexture
+    {
+        void* Descriptor = nullptr;
+        void* Context = nullptr;
+        std::shared_ptr<VulkanImage> Image;
+    };
+
     struct TextureGraveyard
     {
         std::mutex Mutex;
         std::vector<void*> Items;
+        std::vector<RetiredUiTexture> Retired;
+        bool Closed = false;
+
+        // After close nothing is deferred: the device is idle and the ImGui descriptor pool is gone
+        void Retire(RetiredUiTexture texture)
+        {
+            std::scoped_lock lock(Mutex);
+            if (!Closed) Retired.push_back(std::move(texture));
+        }
+
+        std::vector<RetiredUiTexture> TakeRetired()
+        {
+            std::scoped_lock lock(Mutex);
+            return std::exchange(Retired, {});
+        }
+
+        void Close()
+        {
+            std::scoped_lock lock(Mutex);
+            Closed = true;
+        }
 
         void Push(void* texture)
         {
@@ -58,6 +86,30 @@ namespace GPP
                 Graveyard->Push(ImGuiTexture);
             }
         }
+    };
+
+    // Owns an ImGui-usable texture; destruction is deferred until the GPU is done with it.
+    export class ImGuiTextureHandle
+    {
+    public:
+        ~ImGuiTextureHandle();
+        ImGuiTextureHandle(const ImGuiTextureHandle&) = delete;
+        ImGuiTextureHandle& operator=(const ImGuiTextureHandle&) = delete;
+
+        [[nodiscard]] std::uint64_t Id() const noexcept { return reinterpret_cast<std::uint64_t>(m_Descriptor); }
+        [[nodiscard]] int Width() const noexcept { return m_Width; }
+        [[nodiscard]] int Height() const noexcept { return m_Height; }
+
+    private:
+        friend class Renderer;
+        ImGuiTextureHandle() = default;
+
+        std::shared_ptr<VulkanImage> m_Image;
+        std::shared_ptr<TextureGraveyard> m_Graveyard;
+        void* m_Descriptor = nullptr;
+        void* m_Context = nullptr;
+        int m_Width = 0;
+        int m_Height = 0;
     };
 
     struct BufferTargetResources
@@ -167,6 +219,10 @@ namespace GPP
 
         [[nodiscard]] std::optional<RenderTargetInfo> GetRenderTargetInfo(std::uint32_t bufferId) const;
 
+        // Straight-alpha RGBA8. Call from OnUiRender (render thread, the window's ImGui context current).
+        [[nodiscard]] std::shared_ptr<ImGuiTextureHandle> CreateUiTexture(std::span<const std::uint8_t> rgba,
+                                                                          int width, int height);
+
         void ResizeBufferTarget(std::uint32_t bufferId, glm::uvec2 extent);
 
         void SetBufferTargetVisible(std::uint32_t bufferId, bool visible);
@@ -265,7 +321,7 @@ namespace GPP
         void ApplyDesiredExtent(BufferTargetResources& target);
 
         void TakeFrontImages(std::uint32_t frameSlot);
-        void DrainTextureGraveyard();
+        void DrainTextureGraveyard(bool flushAll = false);
         void ShutdownBufferTargets();
 
         std::shared_ptr<VulkanContext> m_VulkanContext;
@@ -325,6 +381,13 @@ namespace GPP
         mutable std::shared_mutex m_TargetsMutex;
         std::unordered_map<std::uint32_t, std::shared_ptr<BufferTargetResources>> m_BufferTargets;
         std::shared_ptr<TextureGraveyard> m_TextureGraveyard = std::make_shared<TextureGraveyard>();
+        struct PendingUiTexture
+        {
+            RetiredUiTexture Texture;
+            std::uint64_t Stamp = 0;
+        };
+        std::vector<PendingUiTexture> m_PendingUiTextures;
+        std::uint64_t m_DrainCount = 0;
         vk::Format m_TargetColorFormat = vk::Format::eB8G8R8A8Unorm;
         vk::Format m_TargetDepthFormat = vk::Format::eD32Sfloat;
 

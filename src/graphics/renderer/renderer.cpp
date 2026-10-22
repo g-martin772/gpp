@@ -647,7 +647,8 @@ namespace GPP
         }
         resources.SwapChain = std::make_shared<VulkanSwapChain>(
             m_Device, m_Logger, glm::uvec2{10000, 10000}, resources.Surface, 3, m_RenderOptions->VSync);
-        // Wayland reports no surface extent; a window that never resizes gets no event to correct the placeholder
+
+        // Wayland reports no surface extent -> a window that never resizes gets no event to correct the placeholder
         int width = 0;
         int height = 0;
         window->GetSize(&width, &height).get();
@@ -655,6 +656,7 @@ namespace GPP
         {
             resources.SwapChain->Update({static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)});
         }
+
         const auto depthFormat = resources.SwapChain->GetDepthImageFormat();
         resources.DepthImage.Create(
             m_Device,
@@ -1161,8 +1163,32 @@ namespace GPP
         }
     }
 
-    void Renderer::DrainTextureGraveyard()
+    void Renderer::DrainTextureGraveyard(const bool flushAll)
     {
+        for (auto& texture : m_TextureGraveyard->TakeRetired())
+        {
+            m_PendingUiTextures.push_back({std::move(texture), m_DrainCount});
+        }
+        ++m_DrainCount;
+
+        const auto contextAlive = [this](void* context)
+        {
+            return context == m_MainWindowResources.ImGuiContext ||
+                std::ranges::any_of(m_WindowResources, [context](const auto& entry)
+                                    { return entry.second.ImGuiContext == context; });
+        };
+        const auto age = static_cast<std::uint64_t>(m_FrameResources.size()) + 1;
+        std::erase_if(m_PendingUiTextures, [&](PendingUiTexture& pending)
+        {
+            if (!flushAll && m_DrainCount < pending.Stamp + age) return false;
+            if (pending.Texture.Descriptor && contextAlive(pending.Texture.Context))
+            {
+                ImGui::SetCurrentContext(static_cast<ImGuiContext*>(pending.Texture.Context));
+                ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(pending.Texture.Descriptor));
+            }
+            return true;
+        });
+
         const auto items = m_TextureGraveyard->Take();
         if (items.empty() || !m_MainWindowResources.ImGuiContext)
             return;
@@ -1170,6 +1196,76 @@ namespace GPP
         for (void* texture : items)
         {
             ImGui_ImplVulkan_RemoveTexture(static_cast<VkDescriptorSet>(texture));
+        }
+    }
+
+    std::shared_ptr<ImGuiTextureHandle> Renderer::CreateUiTexture(const std::span<const std::uint8_t> rgba,
+                                                                   const int width, const int height)
+    {
+        auto* const context = ImGui::GetCurrentContext();
+        if (!m_Device || !context || width <= 0 || height <= 0 ||
+            rgba.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4)
+        {
+            m_Logger->Warn("CreateUiTexture: invalid arguments or no ImGui context current");
+            return nullptr;
+        }
+
+        const auto extent = vk::Extent3D{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), 1};
+        const auto byteSize = static_cast<vk::DeviceSize>(width) * static_cast<vk::DeviceSize>(height) * 4;
+        constexpr auto format = vk::Format::eR8G8B8A8Unorm;
+
+        try
+        {
+            VulkanBuffer staging(m_Device, MakeStagingBufferSpecification(byteSize), m_Logger);
+            staging.Upload(rgba.data(), byteSize);
+
+            auto image = std::make_shared<VulkanImage>(
+                m_Device,
+                VulkanImageSpecification{
+                    .extent = extent,
+                    .format = format,
+                    .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .createSampler = true,
+                    .samplerFilter = vk::Filter::eLinear,
+                    .samplerAddressMode = vk::SamplerAddressMode::eClampToEdge,
+                    .debugName = "UiTexture"
+                },
+                m_Logger);
+
+            VulkanCommandPool pool(m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
+            ImmediateSubmit(pool, m_Device->GetGraphicsQueue(), [&](const vk::CommandBuffer cmd)
+            {
+                TransitionImageLayout(cmd, image->GetImage(), format, vk::ImageLayout::eUndefined,
+                                      vk::ImageLayout::eTransferDstOptimal);
+                CopyBufferToImage(cmd, staging.GetBuffer(), image->GetImage(), extent);
+                TransitionImageLayout(cmd, image->GetImage(), format, vk::ImageLayout::eTransferDstOptimal,
+                                      vk::ImageLayout::eShaderReadOnlyOptimal);
+            });
+
+            std::shared_ptr<ImGuiTextureHandle> handle(new ImGuiTextureHandle());
+            handle->m_Descriptor = reinterpret_cast<void*>(ImGui_ImplVulkan_AddTexture(
+                image->GetSampler(), image->GetImageView(),
+                static_cast<VkImageLayout>(vk::ImageLayout::eShaderReadOnlyOptimal)));
+            handle->m_Context = context;
+            handle->m_Image = std::move(image);
+            handle->m_Graveyard = m_TextureGraveyard;
+            handle->m_Width = width;
+            handle->m_Height = height;
+            return handle;
+        }
+        catch (const std::exception& error)
+        {
+            m_Logger->Warn("CreateUiTexture failed: {}", error.what());
+            return nullptr;
+        }
+    }
+
+    ImGuiTextureHandle::~ImGuiTextureHandle()
+    {
+        if (m_Graveyard)
+        {
+            m_Graveyard->Retire({m_Descriptor, m_Context, std::move(m_Image)});
         }
     }
 
@@ -1689,6 +1785,8 @@ namespace GPP
             headlessPool.reset();
         }
         ShutdownBufferTargets();
+        DrainTextureGraveyard(true);
+        m_TextureGraveyard->Close();
         ShutdownImGuiForWindow(m_MainWindowResources);
         for (auto& [windowId, resources] : m_WindowResources)
         {
