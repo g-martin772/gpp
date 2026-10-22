@@ -40,6 +40,26 @@ namespace GPP
         }
     }
 
+    std::filesystem::path FileSystem::ResourceDir() const noexcept
+    {
+        return m_ResourceDir;
+    }
+
+    void FileSystem::SetResourceDir(const std::filesystem::path& path)
+    {
+        m_ResourceDir = path;
+    }
+
+    std::filesystem::path FileSystem::CacheDir() const noexcept
+    {
+        return m_CacheDir;
+    }
+
+    void FileSystem::SetCacheDir(const std::filesystem::path& path)
+    {
+        m_CacheDir = path;
+    }
+
     void FileSystem::RegisterAssetDirectory(std::string name, std::filesystem::path path)
     {
         if (name.empty())
@@ -89,6 +109,13 @@ namespace GPP
             if (std::filesystem::exists(workingPath))
             {
                 return workingPath;
+            }
+            if (!m_ResourceDir.empty())
+            {
+                if (auto resourcePath = m_ResourceDir / relativePath; std::filesystem::exists(resourcePath))
+                {
+                    return resourcePath;
+                }
             }
             return m_BinaryDir / relativePath;
         }

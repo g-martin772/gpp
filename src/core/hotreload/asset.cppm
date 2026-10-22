@@ -25,7 +25,7 @@ namespace GPP
     export struct HotReloadAssetDescription
     {
         std::filesystem::path libraryPath;
-        std::filesystem::path shadowDirectory{".gpp/hot-reload-cache"};
+        std::filesystem::path shadowDirectory; // empty = <file system cache dir>/hot-reload-cache
         bool shadowCopy = true;
         int copyRetryCount = 5;
         std::chrono::milliseconds copyRetryDelay{40};

@@ -9,7 +9,7 @@ namespace GPP
     {
         WorkingDir,
         BinaryDir,
-        Auto
+        Auto // working dir, then resource dir (if set), then binary dir
     };
 
     export enum class FileEncoding
@@ -34,6 +34,10 @@ namespace GPP
         [[nodiscard]] virtual std::filesystem::path GetBinaryDirectory() const noexcept = 0;
         [[nodiscard]] virtual std::filesystem::path GetWorkingDirectory() const noexcept = 0;
         virtual void SetWorkingDirectory(const std::filesystem::path& path) = 0;
+        [[nodiscard]] virtual std::filesystem::path ResourceDir() const noexcept = 0;
+        virtual void SetResourceDir(const std::filesystem::path& path) = 0;
+        [[nodiscard]] virtual std::filesystem::path CacheDir() const noexcept = 0;
+        virtual void SetCacheDir(const std::filesystem::path& path) = 0;
         virtual void RegisterAssetDirectory(std::string name,
                                             std::filesystem::path path) = 0;
         [[nodiscard]] virtual std::filesystem::path ResolveAssetPath(
@@ -63,6 +67,10 @@ namespace GPP
         [[nodiscard]] std::filesystem::path GetWorkingDirectory() const noexcept override;
 
         void SetWorkingDirectory(const std::filesystem::path& path) override;
+        [[nodiscard]] std::filesystem::path ResourceDir() const noexcept override;
+        void SetResourceDir(const std::filesystem::path& path) override;
+        [[nodiscard]] std::filesystem::path CacheDir() const noexcept override;
+        void SetCacheDir(const std::filesystem::path& path) override;
         void RegisterAssetDirectory(std::string name,
                                     std::filesystem::path path) override;
         [[nodiscard]] std::filesystem::path ResolveAssetPath(
@@ -84,6 +92,8 @@ namespace GPP
 
         std::filesystem::path m_BinaryDir;
         std::filesystem::path m_WorkingDir;
+        std::filesystem::path m_ResourceDir;
+        std::filesystem::path m_CacheDir;
         std::unordered_map<std::string, std::filesystem::path> m_AssetDirectories;
     };
 }

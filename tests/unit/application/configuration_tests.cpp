@@ -148,3 +148,37 @@ TEST_CASE("Configuration supports command line forms and precedence", "[applicat
     CHECK(options->Fullscreen);
     CHECK(options->Title == "CLI Window");
 }
+
+TEST_CASE("Configuration layers apply in call order with optional files and in-memory values", "[application][configuration][layering]")
+{
+    const auto base = MakeTempJsonPath("gpp_config_base_");
+    const auto user = MakeTempJsonPath("gpp_config_user_");
+    const auto missing = MakeTempJsonPath("gpp_config_missing_");
+    {
+        std::ofstream(base) << R"({"A": {"X": "base", "Y": "base", "List": ["a", "b"]}})";
+        std::ofstream(user) << R"({"A": {"Y": "user", "List": ["c"]}})";
+    }
+
+    ConfigurationBuilder builder;
+    builder.AddJsonFile(base.string())
+        .AddJsonFile(missing.string(), true)
+        .AddJsonFile(user.string(), true)
+        .AddInMemory({{"A:Z", "memory"}, {"A:X", "memory"}});
+    const auto config = builder.Build();
+
+    CHECK(config->GetValue("A:X") == "memory");
+    CHECK(config->GetValue("A:Y") == "user");
+    CHECK(config->GetValue("A:Z") == "memory");
+    CHECK(config->GetValue("A:List:0") == "c");
+
+    std::filesystem::remove(base);
+    std::filesystem::remove(user);
+}
+
+TEST_CASE("Missing required JSON file still throws", "[application][configuration][layering]")
+{
+    ConfigurationBuilder builder;
+    builder.AddJsonFile(MakeTempJsonPath("gpp_config_absent_").string());
+    CHECK_THROWS(builder.Build());
+}
+

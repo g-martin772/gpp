@@ -115,7 +115,7 @@ namespace GPP
     public:
         using Dependencies = std::tuple<VulkanContext, WindowManager, WindowOptions, WindowDefinitions, RenderOptions,
                                          Logger, IFileSystem, InputState, EventDispatcher, ImGuiOptions, ThemeProxy,
-                                         UiPreferences, FontAssetCatalog>;
+                                         UiPreferences, FontAssetCatalog, AppPaths>;
 
         Renderer(const std::shared_ptr<VulkanContext>& vulkanContext,
                  const std::shared_ptr<WindowManager>& windowManager,
@@ -129,7 +129,8 @@ namespace GPP
                  const std::shared_ptr<ImGuiOptions>& imguiOptions,
                  const std::shared_ptr<ThemeProxy>& themeProxy,
                  const std::shared_ptr<UiPreferences>& uiPreferences,
-                 const std::shared_ptr<FontAssetCatalog>& fontAssets);
+                 const std::shared_ptr<FontAssetCatalog>& fontAssets,
+                 const std::shared_ptr<AppPaths>& appPaths);
         ~Renderer() override;
 
         Task<void> StartAsync(std::stop_token stopToken) override;
@@ -273,6 +274,7 @@ namespace GPP
         std::shared_ptr<WindowDefinitions> m_WindowDefinitions;
         std::shared_ptr<RenderOptions> m_RenderOptions;
         std::shared_ptr<IFileSystem> m_FileSystem;
+        std::shared_ptr<AppPaths> m_AppPaths;
         std::shared_ptr<Logger> m_Logger;
         std::shared_ptr<InputState> m_InputState;
         std::shared_ptr<EventDispatcher> m_Dispatcher;

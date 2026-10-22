@@ -6,6 +6,7 @@ module GPP.Core;
 
 import :Application;
 import :IO.File;
+import :IO.AppPaths;
 
 namespace GPP
 {
@@ -34,6 +35,7 @@ namespace GPP
         m_Running(false)
     {
         m_HostedServices = m_ServiceProvider.GetHostedServices();
+        m_ServiceProvider.GetService<AppPaths>();
         s_Instance = this;
         std::signal(SIGINT, HandleSignal);
         std::signal(SIGTERM, HandleSignal);

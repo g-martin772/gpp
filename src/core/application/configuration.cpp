@@ -133,7 +133,10 @@ namespace GPP
         }
 
         std::ifstream file(path);
-        if (!file.is_open()) throw std::runtime_error("Failed to open JSON configuration file: " + m_FilePath);
+        if (!file.is_open()) {
+            if (m_Optional) return;
+            throw std::runtime_error("Failed to open JSON configuration file: " + m_FilePath);
+        }
 
         try {
             nlohmann::json j;
@@ -141,6 +144,13 @@ namespace GPP
             FlattenJson(j, "", data);
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to load JSON configuration from " + m_FilePath + ": " + e.what());
+        }
+    }
+
+    void InMemoryConfigurationProvider::Load(std::unordered_map<std::string, std::string>& data, IFileSystem* fs)
+    {
+        for (const auto& [key, val] : m_Values) {
+            data[key] = val;
         }
     }
 
@@ -182,9 +192,15 @@ namespace GPP
         return *this;
     }
 
-    ConfigurationBuilder& ConfigurationBuilder::AddJsonFile(std::string filePath)
+    ConfigurationBuilder& ConfigurationBuilder::AddJsonFile(std::string filePath, bool optional)
     {
-        m_Providers.push_back(std::make_unique<JsonConfigurationProvider>(std::move(filePath)));
+        m_Providers.push_back(std::make_unique<JsonConfigurationProvider>(std::move(filePath), optional));
+        return *this;
+    }
+
+    ConfigurationBuilder& ConfigurationBuilder::AddInMemory(std::unordered_map<std::string, std::string> values)
+    {
+        m_Providers.push_back(std::make_unique<InMemoryConfigurationProvider>(std::move(values)));
         return *this;
     }
 

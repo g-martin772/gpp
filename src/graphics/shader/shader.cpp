@@ -365,7 +365,8 @@ namespace GPP
                            ? options.cacheDirectory
                            : fileSystem->GetWorkingDirectory() / options.cacheDirectory;
             }
-            return fileSystem->GetWorkingDirectory() / ".gpp" / "shader-cache";
+            const auto cacheRoot = fileSystem->CacheDir().empty() ? std::filesystem::path(".gpp") : fileSystem->CacheDir();
+            return (cacheRoot.is_absolute() ? cacheRoot : fileSystem->GetWorkingDirectory() / cacheRoot) / "shader-cache";
         }
 
         std::vector<std::uint32_t> ReadCache(const std::filesystem::path& path)

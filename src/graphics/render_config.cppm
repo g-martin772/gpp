@@ -76,7 +76,7 @@ namespace GPP
     {
         bool Enabled = false;
         std::chrono::milliseconds PollingInterval{300};
-        std::filesystem::path ShadowDirectory{".gpp/hot-reload-cache"};
+        std::filesystem::path ShadowDirectory; // empty = <cache dir>/hot-reload-cache
         bool ShadowCopy = true;
 
         static LayerHotReloadOptions FromConfig(const IConfigurationSection& config)
@@ -85,8 +85,7 @@ namespace GPP
             options.Enabled = config.GetValue<bool>("Enabled", false);
             options.PollingInterval = std::chrono::milliseconds(
                 std::max(1, config.GetValue<int>("PollingIntervalMilliseconds", 300)));
-            options.ShadowDirectory = config.GetValue<std::string>(
-                "ShadowDirectory", ".gpp/hot-reload-cache");
+            options.ShadowDirectory = config.GetValue<std::string>("ShadowDirectory", "");
             options.ShadowCopy = config.GetValue<bool>("ShadowCopy", true);
             return options;
         }

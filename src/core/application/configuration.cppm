@@ -81,13 +81,24 @@ namespace GPP {
 
     export class JsonConfigurationProvider : public IConfigurationProvider {
     public:
-        explicit JsonConfigurationProvider(std::string filePath)
-            : m_FilePath(std::move(filePath)) {}
+        explicit JsonConfigurationProvider(std::string filePath, bool optional = false)
+            : m_FilePath(std::move(filePath)), m_Optional(optional) {}
 
         void Load(std::unordered_map<std::string, std::string>& data, IFileSystem* fs = nullptr) override;
     private:
         void FlattenJson(const nlohmann::json& j, const std::string& prefix, std::unordered_map<std::string, std::string>& data);
         std::string m_FilePath;
+        bool m_Optional;
+    };
+
+    export class InMemoryConfigurationProvider : public IConfigurationProvider {
+    public:
+        explicit InMemoryConfigurationProvider(std::unordered_map<std::string, std::string> values)
+            : m_Values(std::move(values)) {}
+
+        void Load(std::unordered_map<std::string, std::string>& data, IFileSystem* fs = nullptr) override;
+    private:
+        std::unordered_map<std::string, std::string> m_Values;
     };
 
     export class ConfigurationBuilder {
@@ -95,7 +106,9 @@ namespace GPP {
         ConfigurationBuilder() = default;
         ConfigurationBuilder& AddCommandLine(int argc, char* argv[]);
         ConfigurationBuilder& AddEnvironmentVariables(std::string prefix = "GPP_");
-        ConfigurationBuilder& AddJsonFile(std::string filePath);
+        // Providers apply in call order, later ones override earlier ones. An optional file may be missing.
+        ConfigurationBuilder& AddJsonFile(std::string filePath, bool optional = false);
+        ConfigurationBuilder& AddInMemory(std::unordered_map<std::string, std::string> values);
         std::unique_ptr<IConfiguration> Build(IFileSystem* fs = nullptr);
     private:
         std::vector<std::unique_ptr<IConfigurationProvider>> m_Providers{};

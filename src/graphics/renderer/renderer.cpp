@@ -42,7 +42,8 @@ namespace GPP
                        const std::shared_ptr<ImGuiOptions>& imguiOptions,
                        const std::shared_ptr<ThemeProxy>& themeProxy,
                        const std::shared_ptr<UiPreferences>& uiPreferences,
-                       const std::shared_ptr<FontAssetCatalog>& fontAssets)
+                       const std::shared_ptr<FontAssetCatalog>& fontAssets,
+                       const std::shared_ptr<AppPaths>& appPaths)
         : m_VulkanContext(std::move(vulkanContext)),
           m_WindowManager(std::move(windowManager)),
           m_WindowOptions(std::move(windowOptions)),
@@ -50,6 +51,7 @@ namespace GPP
           m_RenderOptions(std::move(renderOptions)),
           m_Logger(std::move(logger)),
           m_FileSystem(std::move(fileSystem)),
+          m_AppPaths(appPaths),
           m_InputState(std::move(inputState)),
           m_Dispatcher(std::move(dispatcher)),
           m_ImGuiOptions(std::move(imguiOptions)),
@@ -551,7 +553,11 @@ namespace GPP
     {
         m_VulkanContext->Init().get();
 
-        m_FileSystem->RegisterAssetDirectory("shaders", m_FileSystem->GetBinaryDirectory() / ".." / "shaders");
+        m_FileSystem->RegisterAssetDirectory(
+            "shaders",
+            m_AppPaths->IsInstalled()
+                ? m_AppPaths->ResourceDir() / "shaders"
+                : m_FileSystem->GetBinaryDirectory() / ".." / "shaders");
 
         if (!m_WindowManager->IsHeadless())
         {
@@ -686,8 +692,10 @@ namespace GPP
         if (!resources.Window || !resources.SwapChain || resources.ImGuiContext)
             return;
         const auto name = m_WindowManager->GetWindowName(resources.Window->GetID());
-        resources.ImGuiIniPath = std::format(
-            ".gpp/imgui_{}.ini", name.empty() ? std::to_string(resources.Window->GetID()) : name);
+        std::error_code iniDirError;
+        std::filesystem::create_directories(m_AppPaths->ConfigDir(), iniDirError);
+        resources.ImGuiIniPath = (m_AppPaths->ConfigDir() / std::format(
+            "imgui_{}.ini", name.empty() ? std::to_string(resources.Window->GetID()) : name)).string();
         resources.ImGuiContext = InitializeImGui(m_Device, &resources, m_Logger);
 
         ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources.ImGuiContext));
