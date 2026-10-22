@@ -647,6 +647,14 @@ namespace GPP
         }
         resources.SwapChain = std::make_shared<VulkanSwapChain>(
             m_Device, m_Logger, glm::uvec2{10000, 10000}, resources.Surface, 3, m_RenderOptions->VSync);
+        // Wayland reports no surface extent; a window that never resizes gets no event to correct the placeholder
+        int width = 0;
+        int height = 0;
+        window->GetSize(&width, &height).get();
+        if (width > 0 && height > 0)
+        {
+            resources.SwapChain->Update({static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)});
+        }
         const auto depthFormat = resources.SwapChain->GetDepthImageFormat();
         resources.DepthImage.Create(
             m_Device,
