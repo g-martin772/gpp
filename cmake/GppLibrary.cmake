@@ -37,5 +37,6 @@ target_include_directories(gpp PRIVATE ${Stb_INCLUDE_DIR})
 target_link_libraries(gpp PUBLIC yaml-cpp::yaml-cpp gpp_imguizmo gpp_node_editor)
 target_link_libraries(gpp PUBLIC unofficial::omniverse-physx-sdk::sdk EnTT::EnTT)
 target_link_libraries(gpp PRIVATE nfd::nfd unofficial::luau::Luau.VM unofficial::luau::Luau.Compiler)
+target_link_libraries(gpp PRIVATE lunasvg::lunasvg)
 
 include(cmake/GppHotReload.cmake)
