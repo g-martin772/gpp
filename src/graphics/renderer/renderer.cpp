@@ -702,8 +702,9 @@ namespace GPP
         const auto name = m_WindowManager->GetWindowName(resources.Window->GetID());
         std::error_code iniDirError;
         std::filesystem::create_directories(m_AppPaths->ConfigDir(), iniDirError);
-        resources.ImGuiIniPath = (m_AppPaths->ConfigDir() / std::format(
-            "imgui_{}.ini", name.empty() ? std::to_string(resources.Window->GetID()) : name)).string();
+        const auto iniFile = windowOptions.ImGuiIniFile.value_or(std::format(
+            "imgui_{}.ini", name.empty() ? std::to_string(resources.Window->GetID()) : name));
+        resources.ImGuiIniPath = iniFile == "none" ? std::string{} : (m_AppPaths->ConfigDir() / iniFile).string();
         resources.ImGuiContext = InitializeImGui(m_Device, &resources, m_Logger);
 
         ImGui::SetCurrentContext(static_cast<ImGuiContext*>(resources.ImGuiContext));

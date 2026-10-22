@@ -25,6 +25,7 @@ namespace GPP
 
         std::optional<std::vector<std::string>> ImGuiConfigFlags;
         std::optional<bool> ImGuiDockSpace;
+        std::optional<std::string> ImGuiIniFile;
 
         static WindowOptions FromConfig(const IConfigurationSection& config)
         {
@@ -55,6 +56,10 @@ namespace GPP
             if (!configFlags.empty())
             {
                 options.ImGuiConfigFlags = std::move(configFlags);
+            }
+            if (std::string iniFile; imgui->TryGetValue("IniFile", iniFile) && !iniFile.empty())
+            {
+                options.ImGuiIniFile = std::move(iniFile);
             }
             if (std::string dockSpace; imgui->TryGetValue("EnableDockSpace", dockSpace))
             {
