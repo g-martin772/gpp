@@ -131,9 +131,9 @@ namespace GPP
 
             if (branding.IconTexture != 0)
             {
-                const float size = ImGui::GetFontSize() * 3.0f;
+                const float size = ImGui::GetFontSize() * 4.0f;
                 ImGui::Image(ImTextureRef(static_cast<ImTextureID>(branding.IconTexture)), ImVec2(size, size));
-                ImGui::SameLine();
+                ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.4f));
             }
             ImGui::BeginGroup();
             ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.6f);

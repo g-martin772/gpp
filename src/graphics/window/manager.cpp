@@ -11,12 +11,14 @@ namespace GPP
                                  std::shared_ptr<EventDispatcher> dispatcher,
                                  std::shared_ptr<WindowDefinitions> definitions,
                                  std::shared_ptr<WindowOptions> options,
-                                 std::shared_ptr<AppInfo> appInfo)
+                                 std::shared_ptr<AppInfo> appInfo,
+                                 std::shared_ptr<IFileSystem> fileSystem)
         : m_Logger(std::move(logger)),
           m_Dispatcher(std::move(dispatcher)),
           m_Definitions(std::move(definitions)),
           m_Options(std::move(options)),
-          m_AppInfo(std::move(appInfo))
+          m_AppInfo(std::move(appInfo)),
+          m_FileSystem(std::move(fileSystem))
     {
     }
 
@@ -137,6 +139,8 @@ namespace GPP
             SDL_SetWindowPosition(sdlWindow, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
         }
 
+        ApplyWindowIcon(sdlWindow);
+
         auto wrappedWindow = std::shared_ptr<Window>(new Window(sdlWindow));
         auto id = wrappedWindow->GetID();
         {
@@ -147,6 +151,48 @@ namespace GPP
         m_Logger->Debug("Created window with ID {}: {}x{}, Title: '{}'", id, options.Width, options.Height, options.Title);
 
         co_return wrappedWindow;
+    }
+
+    void WindowManager::ApplyWindowIcon(void* sdlWindow)
+    {
+        if (!m_IconLoaded)
+        {
+            m_IconLoaded = true;
+            if (m_AppInfo && m_FileSystem && !m_AppInfo->IconFile.empty())
+            {
+                const auto path = m_FileSystem->ResolvePath(m_AppInfo->IconFile);
+                std::error_code error;
+                if (std::filesystem::is_regular_file(path, error) && path.extension() == ".png")
+                {
+                    int width = 0;
+                    int height = 0;
+                    int channels = 0;
+                    if (stbi_uc* pixels = stbi_load(path.string().c_str(), &width, &height, &channels, 4))
+                    {
+                        m_Icon = RasterImage{width, height, {pixels, pixels + static_cast<std::size_t>(width) * height * 4}};
+                        stbi_image_free(pixels);
+                    }
+                }
+                else if (std::filesystem::is_regular_file(path, error) && path.extension() == ".svg")
+                {
+                    if (auto icon = RasterizeSvgFile(path, 128, 128))
+                    {
+                        m_Icon = std::move(*icon);
+                    }
+                    else
+                    {
+                        m_Logger->Warn("Window icon {} not loaded: {}", path.string(), icon.error());
+                    }
+                }
+            }
+        }
+        if (!m_Icon) return;
+
+        SDL_Surface* surface = SDL_CreateSurfaceFrom(m_Icon->Width, m_Icon->Height, SDL_PIXELFORMAT_RGBA32,
+                                                     m_Icon->Rgba.data(), m_Icon->Width * 4);
+        if (!surface) return;
+        SDL_SetWindowIcon(static_cast<SDL_Window*>(sdlWindow), surface);
+        SDL_DestroySurface(surface);
     }
 
     std::shared_ptr<Window> WindowManager::GetWindow(WindowId id) const

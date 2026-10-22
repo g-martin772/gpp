@@ -4,6 +4,7 @@ import std;
 import GPP.Core;
 import :Windowing.Window;
 import :Windowing.Events;
+import :Assets.Svg;
 
 namespace GPP
 {
@@ -12,12 +13,13 @@ namespace GPP
     public:
         static constexpr std::string_view MainWindowName = "main";
 
-        using Dependencies = std::tuple<Logger, EventDispatcher, WindowDefinitions, WindowOptions, AppInfo>;
+        using Dependencies = std::tuple<Logger, EventDispatcher, WindowDefinitions, WindowOptions, AppInfo, IFileSystem>;
         WindowManager(std::shared_ptr<Logger> logger,
                       std::shared_ptr<EventDispatcher> dispatcher,
                       std::shared_ptr<WindowDefinitions> definitions,
                       std::shared_ptr<WindowOptions> options,
-                      std::shared_ptr<AppInfo> appInfo);
+                      std::shared_ptr<AppInfo> appInfo,
+                      std::shared_ptr<IFileSystem> fileSystem);
         ~WindowManager() override;
 
         Task<void> StartAsync(std::stop_token stopToken) override;
@@ -41,6 +43,8 @@ namespace GPP
 
         Task<void> ShowMessageBox(std::string_view title, std::string_view message, bool isError = false);
     private:
+        void ApplyWindowIcon(void* sdlWindow);
+
         mutable std::mutex m_WindowsMutex;
         std::unordered_map<WindowId, std::shared_ptr<Window>> m_Windows;
         std::unordered_map<std::string, WindowId> m_WindowNames;
@@ -50,6 +54,9 @@ namespace GPP
         std::shared_ptr<WindowDefinitions> m_Definitions;
         std::shared_ptr<WindowOptions> m_Options;
         std::shared_ptr<AppInfo> m_AppInfo;
+        std::shared_ptr<IFileSystem> m_FileSystem;
+        std::optional<RasterImage> m_Icon;
+        bool m_IconLoaded{false};
         std::promise<void> m_ReadyPromise;
         std::shared_future<void> m_SharedFuture{ m_ReadyPromise.get_future().share() };
     };
