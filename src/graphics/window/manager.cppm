@@ -12,11 +12,12 @@ namespace GPP
     public:
         static constexpr std::string_view MainWindowName = "main";
 
-        using Dependencies = std::tuple<Logger, EventDispatcher, WindowDefinitions, WindowOptions>;
+        using Dependencies = std::tuple<Logger, EventDispatcher, WindowDefinitions, WindowOptions, AppInfo>;
         WindowManager(std::shared_ptr<Logger> logger,
                       std::shared_ptr<EventDispatcher> dispatcher,
                       std::shared_ptr<WindowDefinitions> definitions,
-                      std::shared_ptr<WindowOptions> options);
+                      std::shared_ptr<WindowOptions> options,
+                      std::shared_ptr<AppInfo> appInfo);
         ~WindowManager() override;
 
         Task<void> StartAsync(std::stop_token stopToken) override;
@@ -48,6 +49,7 @@ namespace GPP
         std::shared_ptr<EventDispatcher> m_Dispatcher;
         std::shared_ptr<WindowDefinitions> m_Definitions;
         std::shared_ptr<WindowOptions> m_Options;
+        std::shared_ptr<AppInfo> m_AppInfo;
         std::promise<void> m_ReadyPromise;
         std::shared_future<void> m_SharedFuture{ m_ReadyPromise.get_future().share() };
     };

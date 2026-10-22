@@ -21,6 +21,7 @@ namespace GPP
         bool Resizable = true;
         bool Fullscreen = false;
         bool Headless = false;
+        bool Center = false;
 
         std::optional<std::vector<std::string>> ImGuiConfigFlags;
         std::optional<bool> ImGuiDockSpace;
@@ -34,6 +35,7 @@ namespace GPP
             options.Resizable = config.GetValue<bool>("Resizable", true);
             options.Fullscreen = config.GetValue<bool>("Fullscreen", false);
             options.Headless = config.GetValue<bool>("Headless", false);
+            options.Center = config.GetValue<bool>("Center", false);
 
             const auto imgui = config.GetSection("ImGui");
             std::vector<std::string> configFlags;

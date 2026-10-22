@@ -10,11 +10,13 @@ namespace GPP
     WindowManager::WindowManager(std::shared_ptr<Logger> logger,
                                  std::shared_ptr<EventDispatcher> dispatcher,
                                  std::shared_ptr<WindowDefinitions> definitions,
-                                 std::shared_ptr<WindowOptions> options)
+                                 std::shared_ptr<WindowOptions> options,
+                                 std::shared_ptr<AppInfo> appInfo)
         : m_Logger(std::move(logger)),
           m_Dispatcher(std::move(dispatcher)),
           m_Definitions(std::move(definitions)),
-          m_Options(std::move(options))
+          m_Options(std::move(options)),
+          m_AppInfo(std::move(appInfo))
     {
     }
 
@@ -33,11 +35,13 @@ namespace GPP
                 m_ReadyPromise.set_value();
                 return;
             }
+            SDL_SetAppMetadata(m_AppInfo->Name.c_str(), m_AppInfo->Version.c_str(), m_AppInfo->Id.c_str());
+            SDL_SetHint(SDL_HINT_APP_ID, m_AppInfo->Id.c_str());
             if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
             {
                 throw std::runtime_error(std::string("Failed to initialize SDL3: ") + SDL_GetError());
             }
-            if (!SDL_Vulkan_LoadLibrary("/usr/lib/libvulkan.so.1"))
+            if (!SDL_Vulkan_LoadLibrary(nullptr) && !SDL_Vulkan_LoadLibrary("/usr/lib/libvulkan.so.1"))
             {
                 throw std::runtime_error(std::string("SDL3 failed to bind system Vulkan: ") + SDL_GetError());
             }
@@ -126,6 +130,11 @@ namespace GPP
         if (!sdlWindow)
         {
             throw std::runtime_error(std::string("Failed to create SDL3 window: ") + SDL_GetError());
+        }
+
+        if (options.Center)
+        {
+            SDL_SetWindowPosition(sdlWindow, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
         }
 
         auto wrappedWindow = std::shared_ptr<Window>(new Window(sdlWindow));
