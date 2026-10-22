@@ -7,6 +7,7 @@ export import :Application;
 export import :Application.Info;
 export import :Application.Builder;
 export import :IO;
+export import :Platform.Desktop;
 export import :Events;
 export import :Math;
 export import :Easing;
