@@ -145,6 +145,41 @@ namespace GPP
         Wake();
     }
 
+    void SimulationRunner::EnqueueMarker(const TransactionMarker marker, CommandOptions options)
+    {
+        {
+            std::scoped_lock lock(m_EditMutex);
+            PendingEdit edit;
+            edit.Options = std::move(options);
+            edit.Marker = marker;
+            m_PendingEdits.push(std::move(edit));
+        }
+        Wake();
+    }
+
+    void SimulationRunner::BeginTransaction(std::string label, std::string coalesceKey)
+    {
+        CommandOptions options;
+        options.Label = std::move(label);
+        options.CoalesceKey = std::move(coalesceKey);
+        EnqueueMarker(TransactionMarker::Begin, std::move(options));
+    }
+
+    void SimulationRunner::EndTransaction()
+    {
+        EnqueueMarker(TransactionMarker::End, {});
+    }
+
+    void SimulationRunner::FlushTransaction()
+    {
+        if (!m_Transaction) return;
+        auto entry = std::move(*m_Transaction);
+        m_Transaction.reset();
+        if (entry.Undo.empty()) return;
+        entry.Compact();
+        m_History.Record(std::move(entry));
+    }
+
     std::vector<CommandRecord> SimulationRunner::CommandLog() const
     {
         std::scoped_lock lock(m_LogMutex);
@@ -197,7 +232,15 @@ namespace GPP
             entry.Time = Clock::now();
             for (const auto& record : applied) entry.Redo.push_back(record.Applied);
             for (auto it = applied.rbegin(); it != applied.rend(); ++it) entry.Undo.push_back(*it->Inverse);
-            m_History.Record(std::move(entry));
+            if (m_Transaction)
+            {
+                if (m_Transaction->Label.empty()) m_Transaction->Label = std::move(entry.Label);
+                m_Transaction->Append(std::move(entry));
+            }
+            else
+            {
+                m_History.Record(std::move(entry));
+            }
         }
 
         if (m_Recording)
@@ -268,6 +311,18 @@ namespace GPP
             if (edit.Options.TargetTick && *edit.Options.TargetTick > tick)
             {
                 m_Deferred.push_back(std::move(edit));
+                continue;
+            }
+            if (edit.Marker != TransactionMarker::None)
+            {
+                FlushTransaction();
+                if (edit.Marker == TransactionMarker::Begin)
+                {
+                    m_Transaction.emplace();
+                    m_Transaction->Label = std::move(edit.Options.Label);
+                    m_Transaction->CoalesceKey = std::move(edit.Options.CoalesceKey);
+                    m_Transaction->Time = Clock::now();
+                }
                 continue;
             }
             if (edit.Options.OnlyWhilePlaying && IsPaused()) continue;

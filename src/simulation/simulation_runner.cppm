@@ -162,6 +162,10 @@ namespace GPP
         void EnqueueCommands(std::vector<Command> commands, CommandOptions options = {});
         [[nodiscard]] std::vector<CommandRecord> CommandLog() const;
 
+        // Undoable commands applied between Begin and End merge into one undo step (a nested Begin ends the open one).
+        void BeginTransaction(std::string label = {}, std::string coalesceKey = {});
+        void EndTransaction();
+
         [[nodiscard]] bool CanUndo() const { return m_History.CanUndo(); }
         [[nodiscard]] bool CanRedo() const { return m_History.CanRedo(); }
         [[nodiscard]] std::string UndoLabel() const { return m_History.UndoLabel(); }
@@ -195,12 +199,15 @@ namespace GPP
     private:
         using Clock = std::chrono::steady_clock;
 
+        enum class TransactionMarker : std::uint8_t { None, Begin, End };
+
         struct PendingEdit
         {
             std::move_only_function<void(Scene&)> Fn;
             bool Tracked = false;
             std::vector<Command> Commands;
             CommandOptions Options;
+            TransactionMarker Marker = TransactionMarker::None;
         };
 
         struct PoolEntry
@@ -214,6 +221,8 @@ namespace GPP
         void Wake();
         bool DrainEdits();
         void ApplyCommands(PendingEdit& edit);
+        void EnqueueMarker(TransactionMarker marker, CommandOptions options);
+        void FlushTransaction();
         void RunTick(float deltaTime, double clockDt);
         void StepOne(float deltaTime, double clockDt);
         void ExecuteSteps(std::uint64_t ticks);
@@ -248,6 +257,7 @@ namespace GPP
 
         std::shared_ptr<SimulationRandom> m_Random;
         CommandHistory m_History;
+        std::optional<UndoEntry> m_Transaction; // sim thread only
         mutable std::mutex m_LogMutex;
         std::deque<CommandRecord> m_CommandLog;
         std::optional<SimulationRecording> m_Recording;
@@ -264,5 +274,22 @@ namespace GPP
 
         RateMeter m_TickMeter;
         std::atomic<std::int64_t> m_TickStartNs{0};
+    };
+
+    export class ScopedTransaction
+    {
+    public:
+        explicit ScopedTransaction(SimulationRunner& runner, std::string label = {}, std::string coalesceKey = {})
+            : m_Runner(runner)
+        {
+            m_Runner.BeginTransaction(std::move(label), std::move(coalesceKey));
+        }
+        ~ScopedTransaction() { m_Runner.EndTransaction(); }
+
+        ScopedTransaction(const ScopedTransaction&) = delete;
+        ScopedTransaction& operator=(const ScopedTransaction&) = delete;
+
+    private:
+        SimulationRunner& m_Runner;
     };
 }

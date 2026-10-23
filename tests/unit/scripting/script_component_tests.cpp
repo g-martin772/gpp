@@ -391,3 +391,32 @@ TEST_CASE("Hot reload rebuilds the script, keeps self and props, and restarts it
     const auto errors = rig.Host->TakeErrors();
     CHECK_FALSE(errors.empty());
 }
+
+TEST_CASE("SetComponent edits and undoes a Scripts component", "[scripting][components][commands]")
+{
+    RegisterBaseComponents();
+    RegisterScriptComponents();
+    Scene scene("Edit");
+    const auto entity = scene.CreateEntity("Camera");
+    const auto guid = scene.GuidOf(entity);
+    const auto entries = [&] { return scene.Registry().get<ScriptsComponent>(scene.FindByGuid(guid)).Entries; };
+
+    ScriptsComponent scripts;
+    scripts.Entries.push_back(ScriptEntry{"A", {{"Speed", 2.5f}}});
+    Command undoAdd = DestroyEntityCommand{};
+    REQUIRE(ApplyCommand(scene, MakeSetComponentCommand(guid, kScriptsComponentName, scripts), &undoAdd));
+    REQUIRE(entries().size() == 1);
+
+    scripts.Entries.push_back(ScriptEntry{"B", {}});
+    scripts.Entries[0].Props["Speed"] = 3.5f;
+    Command undoEdit = DestroyEntityCommand{};
+    REQUIRE(ApplyCommand(scene, MakeSetComponentCommand(guid, kScriptsComponentName, scripts), &undoEdit));
+    REQUIRE(entries().size() == 2);
+
+    REQUIRE(ApplyCommand(scene, undoEdit));
+    REQUIRE(entries().size() == 1);
+    CHECK(std::get<float>(entries()[0].Props.at("Speed")) == 2.5f);
+
+    REQUIRE(ApplyCommand(scene, undoAdd));
+    CHECK_FALSE(scene.Registry().all_of<ScriptsComponent>(scene.FindByGuid(guid)));
+}

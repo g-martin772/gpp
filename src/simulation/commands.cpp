@@ -154,6 +154,69 @@ namespace GPP
             return true;
         }
 
+        bool Apply(Scene& scene, const CustomCommand& c, Command* inverse)
+        {
+            const auto handler = CustomCommandRegistry::Instance().Find(c.Name);
+            if (!handler) return false;
+            YAML::Node payload;
+            try { payload = YAML::Load(c.Payload); }
+            catch (const YAML::Exception&) { return false; }
+            if (c.Undo) return handler->Undo && handler->Undo(scene, payload);
+            if (!handler->Do) return false;
+            const auto undo = handler->Do(scene, payload);
+            if (!undo) return false;
+            if (inverse) *inverse = CustomCommand{c.Name, *undo, true};
+            return true;
+        }
+
+        std::optional<std::string> SetComponent(Scene& scene, const YAML::Node& payload)
+        {
+            const auto guid = payload["Guid"].as<std::uint64_t>(0);
+            const auto component = payload["Component"].as<std::string>("");
+            const auto entity = scene.FindByGuid(guid);
+            const auto* info = ComponentRegistry::Instance().FindByName(component);
+            if (!scene.IsValid(entity) || !info || !info->Add || !info->Remove || component == "Metadata")
+            {
+                return std::nullopt;
+            }
+            auto& registry = scene.Registry();
+            const bool had = info->Has(registry, entity);
+            YAML::Node undo;
+            undo["Guid"] = guid;
+            undo["Component"] = component;
+            std::string before;
+            if (had && info->Encode)
+            {
+                YAML::Node node;
+                info->Encode(registry, entity, node);
+                before = YAML::Dump(node);
+                undo["Yaml"] = before;
+            }
+            else if (!had)
+            {
+                undo["Remove"] = true;
+            }
+
+            if (payload["Remove"].as<bool>(false))
+            {
+                if (!had) return std::nullopt;
+                info->Remove(registry, entity);
+            }
+            else
+            {
+                if (!had) info->Add(registry, entity);
+                if (info->Decode) info->Decode(registry, entity, YAML::Load(payload["Yaml"].as<std::string>("")));
+                if (had && info->Encode)
+                {
+                    YAML::Node node;
+                    info->Encode(registry, entity, node);
+                    if (YAML::Dump(node) == before) return std::nullopt;
+                }
+            }
+            scene.MarkDirty(entity);
+            return YAML::Dump(undo);
+        }
+
         // Keeps the last SetField per (entity, component, field); everything else is untouched.
         void KeepLastFieldWrites(std::vector<Command>& commands)
         {
@@ -209,6 +272,48 @@ namespace GPP
         }
     }
 
+    CustomCommandRegistry& CustomCommandRegistry::Instance()
+    {
+        static CustomCommandRegistry instance;
+        return instance;
+    }
+
+    CustomCommandRegistry::CustomCommandRegistry()
+    {
+        const auto setComponent = [](Scene& scene, const YAML::Node& payload) { return SetComponent(scene, payload); };
+        m_Handlers["SetComponent"] = CustomCommandHandler{
+            setComponent,
+            [setComponent](Scene& scene, const YAML::Node& payload) { return setComponent(scene, payload).has_value(); }};
+    }
+
+    void CustomCommandRegistry::Register(std::string name, CustomCommandHandler handler)
+    {
+        std::scoped_lock lock(m_Mutex);
+        m_Handlers.insert_or_assign(std::move(name), std::move(handler));
+    }
+
+    void CustomCommandRegistry::Unregister(const std::string& name)
+    {
+        std::scoped_lock lock(m_Mutex);
+        m_Handlers.erase(name);
+    }
+
+    std::optional<CustomCommandHandler> CustomCommandRegistry::Find(const std::string& name) const
+    {
+        std::scoped_lock lock(m_Mutex);
+        const auto it = m_Handlers.find(name);
+        return it != m_Handlers.end() ? std::optional<CustomCommandHandler>(it->second) : std::nullopt;
+    }
+
+    CustomCommand MakeSetComponentCommand(const std::uint64_t guid, const std::string& component, const std::string& yaml)
+    {
+        YAML::Node payload;
+        payload["Guid"] = guid;
+        payload["Component"] = component;
+        payload["Yaml"] = yaml;
+        return CustomCommand{"SetComponent", YAML::Dump(payload), false};
+    }
+
     bool ApplyCommand(Scene& scene, const Command& command, Command* inverse)
     {
         return std::visit([&](const auto& c) { return Apply(scene, c, inverse); }, command);
@@ -249,6 +354,10 @@ namespace GPP
             {
                 n["Type"] = "SetParent"; n["Guid"] = c.Guid; n["Parent"] = c.Parent;
             }
+            else if constexpr (std::is_same_v<T, CustomCommand>)
+            {
+                n["Type"] = "Custom"; n["Name"] = c.Name; n["Payload"] = c.Payload; n["Undo"] = c.Undo;
+            }
             else
             {
                 n["Type"] = "SetExtension"; n["Name"] = c.Name; n["Yaml"] = c.Yaml; n["Remove"] = c.Remove;
@@ -281,6 +390,11 @@ namespace GPP
                 return CloneEntityCommand{n["Source"].as<std::uint64_t>(0), n["New"].as<std::uint64_t>(0)};
             }
             if (type == "SetParent") return SetParentCommand{guid(), n["Parent"].as<std::uint64_t>(0)};
+            if (type == "Custom")
+            {
+                return CustomCommand{n["Name"].as<std::string>(), n["Payload"].as<std::string>(""),
+                                     n["Undo"].as<bool>(false)};
+            }
             if (type == "SetExtension")
             {
                 return SetExtensionCommand{n["Name"].as<std::string>(), n["Yaml"].as<std::string>(""),
@@ -289,6 +403,19 @@ namespace GPP
         }
         catch (const YAML::Exception&) {}
         return std::nullopt;
+    }
+
+    void UndoEntry::Append(UndoEntry later)
+    {
+        Undo.insert(Undo.begin(), std::make_move_iterator(later.Undo.begin()), std::make_move_iterator(later.Undo.end()));
+        Redo.insert(Redo.end(), std::make_move_iterator(later.Redo.begin()), std::make_move_iterator(later.Redo.end()));
+        Time = later.Time;
+    }
+
+    void UndoEntry::Compact()
+    {
+        KeepLastFieldWrites(Undo);
+        KeepLastFieldWrites(Redo);
     }
 
     void CommandHistory::Record(UndoEntry entry, const std::chrono::milliseconds coalesceWindow)
@@ -300,14 +427,8 @@ namespace GPP
             auto& top = m_Undo.back();
             if (top.CoalesceKey == entry.CoalesceKey && entry.Time - top.Time <= coalesceWindow)
             {
-                entry.Undo.insert(entry.Undo.end(), std::make_move_iterator(top.Undo.begin()),
-                                  std::make_move_iterator(top.Undo.end()));
-                top.Redo.insert(top.Redo.end(), std::make_move_iterator(entry.Redo.begin()),
-                                std::make_move_iterator(entry.Redo.end()));
-                top.Undo = std::move(entry.Undo);
-                KeepLastFieldWrites(top.Undo);
-                KeepLastFieldWrites(top.Redo);
-                top.Time = entry.Time;
+                top.Append(std::move(entry));
+                top.Compact();
                 return;
             }
         }

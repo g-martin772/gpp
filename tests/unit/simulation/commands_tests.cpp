@@ -205,3 +205,166 @@ TEST_CASE("OnlyWhilePlaying commands are dropped while paused", "[simulation][co
     REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 5.0f; }));
     runner.Stop();
 }
+
+namespace
+{
+    void RegisterCounter()
+    {
+        CustomCommandRegistry::Instance().Register("Test.Counter", CustomCommandHandler{
+            [](Scene& scene, const YAML::Node& payload) -> std::optional<std::string>
+            {
+                const auto* current = scene.FindExtension("Counter");
+                const int previous = current ? (*current)["Value"].as<int>() : -1;
+                scene.SetExtension("Counter", payload);
+                return std::format("Value: {}", previous);
+            },
+            [](Scene& scene, const YAML::Node& payload)
+            {
+                if (payload["Value"].as<int>() < 0) scene.RemoveExtension("Counter");
+                else scene.SetExtension("Counter", payload);
+                return true;
+            }});
+    }
+
+    CustomCommand Counter(int value)
+    {
+        return CustomCommand{"Test.Counter", std::format("Value: {}", value), false};
+    }
+
+    int CounterOf(const Scene& scene)
+    {
+        const auto* node = scene.FindExtension("Counter");
+        return node ? (*node)["Value"].as<int>() : -1;
+    }
+}
+
+TEST_CASE("Custom commands run through registered handlers and invert", "[commands][custom]")
+{
+    RegisterCounter();
+    Scene scene("S");
+
+    Command inverse = DestroyEntityCommand{};
+    REQUIRE(ApplyCommand(scene, Counter(7), &inverse));
+    CHECK(CounterOf(scene) == 7);
+    REQUIRE(std::holds_alternative<CustomCommand>(inverse));
+    CHECK(std::get<CustomCommand>(inverse).Undo);
+    REQUIRE(ApplyCommand(scene, inverse));
+    CHECK(CounterOf(scene) == -1);
+
+    CHECK_FALSE(ApplyCommand(scene, CustomCommand{"Test.Missing", "a: 1", false}));
+    CHECK_FALSE(ApplyCommand(scene, CustomCommand{"Test.Counter", "[: bad", false}));
+
+    const Command command = Counter(3);
+    const auto text = CommandToYaml(command);
+    const auto parsed = CommandFromYaml(text);
+    REQUIRE(parsed.has_value());
+    CHECK(CommandToYaml(*parsed) == text);
+    CHECK(std::get<CustomCommand>(*parsed).Name == "Test.Counter");
+}
+
+TEST_CASE("SetComponent replaces a whole component and restores it on undo", "[commands][custom]")
+{
+    Scene scene("S");
+    const auto guid = MakeBox(scene, "A");
+
+    RigidBodyComponent body;
+    body.Mass = 12.0f;
+    Command undo = DestroyEntityCommand{};
+    REQUIRE(ApplyCommand(scene, MakeSetComponentCommand(guid, "RigidBody", body), &undo));
+    CHECK(scene.Registry().get<RigidBodyComponent>(scene.FindByGuid(guid)).Mass == 12.0f);
+
+    body.Mass = 20.0f;
+    Command undoEdit = DestroyEntityCommand{};
+    REQUIRE(ApplyCommand(scene, MakeSetComponentCommand(guid, "RigidBody", body), &undoEdit));
+    CHECK_FALSE(ApplyCommand(scene, MakeSetComponentCommand(guid, "RigidBody", body)));
+    REQUIRE(ApplyCommand(scene, undoEdit));
+    CHECK(scene.Registry().get<RigidBodyComponent>(scene.FindByGuid(guid)).Mass == 12.0f);
+
+    REQUIRE(ApplyCommand(scene, undo));
+    CHECK_FALSE(scene.Registry().all_of<RigidBodyComponent>(scene.FindByGuid(guid)));
+}
+
+TEST_CASE("A transaction groups commands into one undo step", "[commands][transaction]")
+{
+    Scene scene("S");
+    const auto a = MakeBox(scene, "A");
+    const auto b = MakeBox(scene, "B");
+    SimulationRunner runner(std::move(scene), std::make_shared<NoopModule>());
+
+    CommandOptions options;
+    options.Undoable = true;
+    options.Label = "Step";
+    {
+        ScopedTransaction transaction(runner, "Gizmo drag");
+        for (int i = 1; i <= 5; ++i)
+        {
+            runner.EnqueueCommand(SetFieldCommand{a, "Transform", "Position", glm::vec3(static_cast<float>(i), 0, 0)}, options);
+            runner.EnqueueCommand(SetFieldCommand{b, "Transform", "Position", glm::vec3(0, static_cast<float>(i), 0)}, options);
+        }
+    }
+    runner.EnqueueCommand(SetFieldCommand{a, "Transform", "Scale", glm::vec3(3)}, options);
+    runner.StepAndWait(1);
+    CHECK(PositionOf(*runner.AcquireSnapshot(), a).x == 5.0f);
+
+    REQUIRE(runner.Undo());
+    runner.StepAndWait(1);
+    CHECK(runner.UndoLabel() == "Gizmo drag");
+    REQUIRE(runner.Undo());
+    runner.StepAndWait(1);
+    CHECK(PositionOf(*runner.AcquireSnapshot(), a) == glm::vec3(0));
+    CHECK(PositionOf(*runner.AcquireSnapshot(), b) == glm::vec3(0));
+    CHECK_FALSE(runner.CanUndo());
+
+    REQUIRE(runner.Redo());
+    REQUIRE(runner.Redo());
+    runner.StepAndWait(1);
+    CHECK(PositionOf(*runner.AcquireSnapshot(), a).x == 5.0f);
+    CHECK(PositionOf(*runner.AcquireSnapshot(), b).y == 5.0f);
+}
+
+TEST_CASE("Empty and nested transactions are harmless", "[commands][transaction]")
+{
+    Scene scene("S");
+    MakeBox(scene, "A");
+    SimulationRunner runner(std::move(scene), std::make_shared<NoopModule>());
+    runner.BeginTransaction("empty");
+    runner.EndTransaction();
+    runner.BeginTransaction("one");
+    runner.BeginTransaction("two");
+    runner.EndTransaction();
+    runner.EndTransaction();
+    runner.StepAndWait(1);
+    CHECK_FALSE(runner.CanUndo());
+}
+
+TEST_CASE("Custom commands and transactions replay from a recording", "[commands][custom][replay]")
+{
+    RegisterCounter();
+    Scene scene("S");
+    const auto guid = MakeBox(scene, "A");
+    SimulationRunner source(std::move(scene), std::make_shared<NoopModule>());
+    source.StepAndWait(2);
+    source.BeginRecording();
+    CommandOptions options;
+    options.Undoable = true;
+    {
+        ScopedTransaction transaction(source, "Batch");
+        source.EnqueueCommand(Counter(4), options);
+        source.EnqueueCommand(SetFieldCommand{guid, "Transform", "Position", glm::vec3(1, 2, 3)}, options);
+    }
+    source.StepAndWait(2);
+    source.Undo();
+    source.StepAndWait(2);
+    source.Redo();
+    source.StepAndWait(2);
+    auto recording = source.EndRecording();
+    const auto expected = source.AcquireSnapshot()->SerializeToYaml();
+    REQUIRE(recording.Commands.size() == 6);
+    CHECK(CounterOf(*source.AcquireSnapshot()) == 4);
+
+    SimulationRunner replay(Scene("Empty"), std::make_shared<NoopModule>());
+    replay.PrepareReplay(recording);
+    replay.StepAndWait(recording.Ticks());
+    CHECK(replay.AcquireSnapshot()->SerializeToYaml() == expected);
+    CHECK(CounterOf(*replay.AcquireSnapshot()) == 4);
+}
