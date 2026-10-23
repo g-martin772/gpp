@@ -20,6 +20,7 @@ export import :UI.LogPanel;
 export import :UI.Launcher;
 export import :UI.NotificationOverlay;
 export import :Assets.Image;
+export import :Assets.Texture;
 export import :Assets.Svg;
 export import :Assets.Tangents;
 export import :Assets.Gltf;

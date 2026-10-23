@@ -246,7 +246,8 @@ namespace GPP
     }
 
     VulkanSampler::VulkanSampler(const std::shared_ptr<VulkanDevice>& device, const vk::Filter filter,
-                                 const vk::SamplerAddressMode addressMode, const bool anisotropy)
+                                 const vk::SamplerAddressMode addressMode, const bool anisotropy,
+                                 const std::optional<vk::SamplerAddressMode> addressModeV)
         : m_Device(device)
     {
         vk::SamplerCreateInfo info{};
@@ -254,7 +255,7 @@ namespace GPP
         info.minFilter = filter;
         info.mipmapMode = vk::SamplerMipmapMode::eLinear;
         info.addressModeU = addressMode;
-        info.addressModeV = addressMode;
+        info.addressModeV = addressModeV.value_or(addressMode);
         info.addressModeW = addressMode;
         info.maxLod = VK_LOD_CLAMP_NONE;
         if (anisotropy && device->GetPhysicalDevice().getFeatures().samplerAnisotropy)
@@ -361,7 +362,8 @@ namespace GPP
                                      m_Specification.mipLevels, m_Specification.arrayLayers);
         if (m_Specification.createSampler)
             m_Sampler = VulkanSampler(device, m_Specification.samplerFilter,
-                                      m_Specification.samplerAddressMode);
+                                      m_Specification.samplerAddressMode, true,
+                                      m_Specification.samplerAddressModeV);
         SetDebugName(m_Specification.debugName);
     }
 

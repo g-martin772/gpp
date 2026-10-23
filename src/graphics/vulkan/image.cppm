@@ -27,6 +27,7 @@ namespace GPP
         bool createSampler = false;
         vk::Filter samplerFilter = vk::Filter::eLinear;
         vk::SamplerAddressMode samplerAddressMode = vk::SamplerAddressMode::eRepeat;
+        std::optional<vk::SamplerAddressMode> samplerAddressModeV; // defaults to samplerAddressMode
         std::string debugName;
     };
 
@@ -72,7 +73,8 @@ namespace GPP
     public:
         VulkanSampler() = default;
         VulkanSampler(const std::shared_ptr<VulkanDevice>& device, vk::Filter filter,
-                      vk::SamplerAddressMode addressMode, bool anisotropy = true);
+                      vk::SamplerAddressMode addressMode, bool anisotropy = true,
+                      std::optional<vk::SamplerAddressMode> addressModeV = std::nullopt);
         ~VulkanSampler();
         VulkanSampler(const VulkanSampler&) = delete;
         VulkanSampler& operator=(const VulkanSampler&) = delete;
