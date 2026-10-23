@@ -364,3 +364,131 @@ TEST_CASE ("Scene creates entities with a chosen guid and clones them", "[simula
     CHECK(scene.Registry().get<MetadataComponent>(copy).Name == "A");
     CHECK(scene.Registry().get<TransformComponent>(copy).Position == glm::dvec3(1.0f, 2.0f, 3.0f));
 }
+
+namespace
+{
+    constexpr auto kHealthyYaml = R"(Scene: Healthy
+Seed: 7
+Entities:
+  - Guid: 101
+    Components:
+      Health:
+        Value: 5
+  - Guid: 102
+    Components:
+      Health:
+        Value: 6
+Extra:
+  Key: 1
+)";
+
+    Scene LoadHealthy()
+    {
+        RegisterTestComponents();
+        Scene scene;
+        scene.DeserializeFromYaml(kHealthyYaml);
+        return scene;
+    }
+
+    void CheckHealthyIntact(const Scene& scene)
+    {
+        CHECK(scene.Metadata().Name == "Healthy");
+        CHECK(scene.Metadata().Seed == 7);
+        REQUIRE(scene.IsValid(scene.FindByGuid(101)));
+        REQUIRE(scene.IsValid(scene.FindByGuid(102)));
+        CHECK(scene.Registry().get<HealthComponent>(scene.FindByGuid(101)).Value == 5.0f);
+        CHECK(scene.Registry().get<HealthComponent>(scene.FindByGuid(102)).Value == 6.0f);
+        CHECK(scene.FindExtension("Extra") != nullptr);
+    }
+}
+
+TEST_CASE ("Scene::DeserializeFromYaml keeps the previous scene on malformed YAML", "[simulation][scene][transactional]")
+{
+    auto scene = LoadHealthy();
+    const auto revision = scene.ExtensionRevision();
+
+    CHECK_THROWS(scene.DeserializeFromYaml("Scene: [unclosed\nEntities: {"));
+    CheckHealthyIntact(scene);
+    CHECK(scene.ExtensionRevision() == revision);
+}
+
+TEST_CASE ("Scene::DeserializeFromYaml rejects non-mapping documents without touching the scene",
+           "[simulation][scene][transactional]")
+{
+    auto scene = LoadHealthy();
+
+    CHECK_THROWS(scene.DeserializeFromYaml(""));
+    CHECK_THROWS(scene.DeserializeFromYaml("- just\n- a list\n"));
+    CHECK_THROWS(scene.DeserializeFromYaml("42"));
+    CheckHealthyIntact(scene);
+}
+
+TEST_CASE ("Scene::DeserializeFromYaml keeps the previous scene when a later component fails to decode",
+           "[simulation][scene][transactional]")
+{
+    auto scene = LoadHealthy();
+
+    const std::string yaml = R"(Scene: Broken
+Seed: 99
+Entities:
+  - Guid: 201
+    Components:
+      Health:
+        Value: 1
+  - Guid: 202
+    Components:
+      Health:
+        Value: not-a-number
+)";
+    try
+    {
+        scene.DeserializeFromYaml(yaml);
+        FAIL("expected the load to throw");
+    }
+    catch (const std::exception& error)
+    {
+        const std::string message = error.what();
+        CHECK(message.find("202") != std::string::npos);
+        CHECK(message.find("Health") != std::string::npos);
+    }
+
+    CheckHealthyIntact(scene);
+    CHECK_FALSE(scene.IsValid(scene.FindByGuid(201)));
+}
+
+TEST_CASE ("Scene::DeserializeFromYaml replaces the scene on success", "[simulation][scene][transactional]")
+{
+    auto scene = LoadHealthy();
+
+    scene.DeserializeFromYaml("Scene: Other\nEntities:\n  - Guid: 301\n    Components:\n      Health:\n        Value: 2\n");
+    CHECK(scene.Metadata().Name == "Other");
+    CHECK(scene.Extensions().empty());
+    CHECK_FALSE(scene.IsValid(scene.FindByGuid(101)));
+    REQUIRE(scene.IsValid(scene.FindByGuid(301)));
+    CHECK(scene.Registry().get<HealthComponent>(scene.FindByGuid(301)).Value == 2.0f);
+}
+
+TEST_CASE ("SceneManager::LoadSceneFromFile leaves the registered scene intact on a bad file",
+           "[simulation][scene][transactional]")
+{
+    RegisterTestComponents();
+    const auto dir = std::filesystem::temp_directory_path() / "gpp_transactional_load";
+    std::filesystem::create_directories(dir);
+    const auto good = dir / "good.yaml";
+    const auto bad = dir / "bad.yaml";
+    { std::ofstream(good) << kHealthyYaml; }
+    { std::ofstream(bad) << "Scene: Healthy\nEntities: [\n"; }
+
+    auto logger = std::make_shared<Logger>();
+    SceneManager manager(logger, std::make_shared<FileSystem>());
+    manager.LoadSceneFromFile(good);
+
+    CHECK_THROWS(manager.LoadSceneFromFile(bad));
+    CHECK_THROWS(manager.LoadSceneFromFile(dir / "missing.yaml"));
+
+    const auto* scene = manager.FindScene("Healthy");
+    REQUIRE(scene != nullptr);
+    CheckHealthyIntact(*scene);
+
+    std::filesystem::remove_all(dir);
+}

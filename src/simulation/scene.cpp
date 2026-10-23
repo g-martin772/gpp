@@ -340,57 +340,68 @@ namespace GPP
 
     void Scene::DeserializeFromYaml(const std::string& yaml)
     {
-        m_Registry.clear();
-        m_GuidIndex = GuidIndex{};
-        m_Extensions.clear();
-        m_ExtensionRevision = NextExtensionRevision();
-        MarkAllDirty();
+        Scene staged;
+        staged.m_Metadata = m_Metadata;
 
         const auto root = YAML::Load(yaml);
-        if (root["Scene"]) m_Metadata.Name = root["Scene"].as<std::string>();
-        m_Metadata.Seed = root["Seed"] ? root["Seed"].as<std::uint64_t>() : 0;
+        if (!root.IsMap()) throw std::runtime_error("Scene YAML: document is empty or not a mapping");
+        if (root["Scene"]) staged.m_Metadata.Name = root["Scene"].as<std::string>();
+        staged.m_Metadata.Seed = root["Seed"] ? root["Seed"].as<std::uint64_t>() : 0;
         const int version = root["SchemaVersion"] ? root["SchemaVersion"].as<int>() : 1;
-        m_Metadata.LoadedSchemaVersion = version;
-        m_Metadata.TimeScale = root["TimeScale"] ? root["TimeScale"].as<double>()
-                               : (version < 2 ? Units::Legacy::kTimeS : 1.0);
-        if (root.IsMap())
+        staged.m_Metadata.LoadedSchemaVersion = version;
+        staged.m_Metadata.TimeScale = root["TimeScale"] ? root["TimeScale"].as<double>()
+                                      : (version < 2 ? Units::Legacy::kTimeS : 1.0);
+        for (const auto& pair : root)
         {
-            for (const auto& pair : root)
+            const auto key = pair.first.as<std::string>();
+            if (key != "Scene" && key != "Entities" && key != "Seed" && key != "SchemaVersion"
+                && key != "TimeScale")
             {
-                const auto key = pair.first.as<std::string>();
-                if (key != "Scene" && key != "Entities" && key != "Seed" && key != "SchemaVersion"
-                    && key != "TimeScale")
+                staged.m_Extensions[key] = YAML::Clone(pair.second);
+            }
+        }
+
+        if (const auto entities = root["Entities"]; entities && entities.IsSequence())
+        {
+            for (const auto& entityNode : entities)
+            {
+                const auto guid = entityNode["Guid"] ? entityNode["Guid"].as<std::uint64_t>() : GenerateGuid();
+                const auto entity = staged.m_GuidIndex.GetOrCreate(staged.m_Registry, guid);
+
+                const auto componentsNode = entityNode["Components"];
+                if (!componentsNode) continue;
+
+                for (const auto& pair : componentsNode)
                 {
-                    m_Extensions[key] = YAML::Clone(pair.second);
+                    const auto name = pair.first.as<std::string>();
+                    const auto* info = ComponentRegistry::Instance().FindByName(name);
+                    if (!info || !info->Decode) continue;
+                    try
+                    {
+                        if (version < 2 && info->MigrateLegacy)
+                        {
+                            YAML::Node migrated = YAML::Clone(pair.second);
+                            info->MigrateLegacy(migrated);
+                            info->Decode(staged.m_Registry, entity, migrated);
+                        }
+                        else
+                        {
+                            info->Decode(staged.m_Registry, entity, pair.second);
+                        }
+                    }
+                    catch (const std::exception& error)
+                    {
+                        throw std::runtime_error(std::format("Entity {}, component '{}': {}", guid, name, error.what()));
+                    }
                 }
             }
         }
 
-        const auto entities = root["Entities"];
-        if (!entities || !entities.IsSequence()) return;
-
-        for (const auto& entityNode : entities)
-        {
-            const auto guid = entityNode["Guid"] ? entityNode["Guid"].as<std::uint64_t>() : GenerateGuid();
-            const auto entity = m_GuidIndex.GetOrCreate(m_Registry, guid);
-
-            const auto componentsNode = entityNode["Components"];
-            if (!componentsNode) continue;
-
-            for (const auto& pair : componentsNode)
-            {
-                const auto name = pair.first.as<std::string>();
-                const auto* info = ComponentRegistry::Instance().FindByName(name);
-                if (!info || !info->Decode) continue;
-                if (version < 2 && info->MigrateLegacy)
-                {
-                    YAML::Node migrated = YAML::Clone(pair.second);
-                    info->MigrateLegacy(migrated);
-                    info->Decode(m_Registry, entity, migrated);
-                    continue;
-                }
-                info->Decode(m_Registry, entity, pair.second);
-            }
-        }
+        m_Registry = std::move(staged.m_Registry);
+        m_GuidIndex = std::move(staged.m_GuidIndex);
+        m_Extensions = std::move(staged.m_Extensions);
+        m_Metadata = std::move(staged.m_Metadata);
+        m_ExtensionRevision = NextExtensionRevision();
+        MarkAllDirty();
     }
 }
