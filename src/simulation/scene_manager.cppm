@@ -3,6 +3,7 @@ export module GPP.Simulation:SceneManager;
 import std;
 import GPP.Core;
 import :Scene;
+import :SceneValidation;
 import :Runner;
 
 namespace GPP
@@ -36,7 +37,7 @@ namespace GPP
         void DestroySimulationAsync(const std::string& name);
 
         void SaveSceneToFile(const std::string& name, const std::filesystem::path& path);
-        Scene& LoadSceneFromFile(const std::filesystem::path& path);
+        Scene& LoadSceneFromFile(const std::filesystem::path& path, std::vector<SceneDiagnostic>* diagnostics = nullptr);
 
     private:
         std::shared_ptr<Logger> m_Logger;

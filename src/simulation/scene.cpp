@@ -287,7 +287,7 @@ namespace GPP
                 }
             }
         }
-        catch (const YAML::Exception&)
+        catch (const std::exception&)
         {
             m_GuidIndex.Untrack(entity);
             m_Registry.destroy(entity);

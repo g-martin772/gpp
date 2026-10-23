@@ -96,6 +96,7 @@ namespace GPP
         std::function<void(entt::registry&, entt::entity)> Add;
         bool Serializable = false;
         bool SyncToRenderState = true;
+        bool StrictFields = false;
 
         std::function<bool(const entt::registry&, entt::entity)> Has;
         std::function<void(entt::registry&, entt::entity)> Remove;
@@ -260,6 +261,7 @@ namespace GPP
         info.Inspectable = description.Inspectable;
         info.GraphExposed = description.GraphExposed;
         info.Serializable = options.Serializable;
+        info.StrictFields = !description.DecodeExtra;
 
         for (const auto& field : description.Fields)
         {

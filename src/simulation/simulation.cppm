@@ -5,6 +5,7 @@ export import :Reflection;
 export import :Settings;
 export import :ComponentRegistry;
 export import :Components;
+export import :SceneValidation;
 export import :LightComponents;
 export import :Clock;
 export import :Scene;

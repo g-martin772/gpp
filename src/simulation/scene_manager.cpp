@@ -172,9 +172,19 @@ namespace GPP
         file << yaml;
     }
 
-    Scene& SceneManager::LoadSceneFromFile(const std::filesystem::path& path)
+    Scene& SceneManager::LoadSceneFromFile(const std::filesystem::path& path, std::vector<SceneDiagnostic>* diagnostics)
     {
         const auto text = m_FileSystem->ReadAllText(path);
+
+        auto found = ValidateSceneYaml(text);
+        constexpr std::size_t kMaxLogged = 50;
+        const auto fileName = path.string();
+        for (std::size_t i = 0; i < found.size() && i < kMaxLogged; ++i)
+        {
+            m_Logger->Warn("{}", found[i].Format(fileName));
+        }
+        if (found.size() > kMaxLogged) m_Logger->Warn("{}: {} more diagnostics not shown", fileName, found.size() - kMaxLogged);
+        if (diagnostics) *diagnostics = std::move(found);
 
         Scene scene;
         scene.DeserializeFromYaml(text);
