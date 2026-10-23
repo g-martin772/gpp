@@ -295,7 +295,7 @@ namespace GPP
 
         std::mutex m_WakeMutex;
         std::condition_variable_any m_Wake;
-        std::uint64_t m_WakeSignal = 0;
+        std::atomic<std::uint64_t> m_WakeSignal{0};
 
         std::vector<PoolEntry> m_Pool;
         mutable std::mutex m_MetadataMutex;

@@ -9,6 +9,7 @@ namespace GPP
     namespace
     {
         constexpr std::size_t kMaxSnapshotBuffers = 8;
+        constexpr std::chrono::steady_clock::duration kFinalSpin = std::chrono::microseconds(200);
 
         std::int64_t ToNs(const std::chrono::steady_clock::time_point t) noexcept
         {
@@ -748,6 +749,7 @@ namespace GPP
             if (requested > completed)
             {
                 ExecuteSteps(requested - completed);
+        auto lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
                 {
                     std::scoped_lock lock(m_StepMutex);
                     m_StepsCompleted = requested;
@@ -775,7 +777,8 @@ namespace GPP
 
                 const auto period = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
                 std::uint32_t ticks = 0;
-                while (!stopToken.stop_requested() && ticks < maxCatchUp && (!fixedRate || next <= tickNow))
+                while (!stopToken.stop_requested() && ticks < maxCatchUp &&
+                       (fixedRate ? next <= tickNow : tickNow - lastTick >= publishInterval))
                 {
                     const float deltaTime = fixedRate
                                                 ? std::chrono::duration<float>(period).count()
@@ -789,9 +792,15 @@ namespace GPP
                     tickNow = Clock::now();
                     if (!fixedRate) break;
                     next += period;
+                    lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
                 }
                 if (fixedRate && next + period * maxCatchUp < tickNow)
                 {
+                if (period != lastPeriod)
+                {
+                    next += period - lastPeriod; // reschedule the pending tick under the new rate
+                    lastPeriod = period;
+                }
                     next = tickNow;
                 }
             }
@@ -814,16 +823,11 @@ namespace GPP
                 lastPublish = now;
             }
 
-            if (!paused && !fixedRate)
-            {
-                std::this_thread::yield();
-                continue;
-            }
-
             std::optional<Clock::time_point> deadline;
             if (!paused)
             {
-                deadline = next;
+                tickDeadline = fixedRate ? next : lastTick + publishInterval;
+                deadline = tickDeadline;
             }
             if (dirty)
             {
@@ -831,17 +835,36 @@ namespace GPP
                 deadline = deadline ? std::min(*deadline, publishAt) : publishAt;
             }
 
-            std::unique_lock lock(m_WakeMutex);
-            const auto changed = [&] { return m_WakeSignal != seenSignal; };
-            if (deadline)
+            // Sleep to just before a tick, then spin the last stretch for pacing; wake-ups cut both short.
+            const auto spin = tickDeadline && deadline == tickDeadline
+                                  ? std::min(kFinalSpin, std::chrono::duration_cast<Clock::duration>((*tickDeadline - lastTick) / 8))
+                                  : Clock::duration::zero();
+            const auto sleepUntil = deadline ? std::optional(*deadline - std::max(spin, Clock::duration::zero())) : std::nullopt;
+
+            bool signalled = false;
             {
-                m_Wake.wait_until(lock, stopToken, *deadline, changed);
+                std::unique_lock lock(m_WakeMutex);
+                const auto changed = [&] { return m_WakeSignal.load(std::memory_order_relaxed) != seenSignal; };
+                if (sleepUntil)
+                {
+                    m_Wake.wait_until(lock, stopToken, *sleepUntil, changed);
+                }
+                else
+                {
+                    m_Wake.wait(lock, stopToken, changed);
+                }
+                signalled = m_WakeSignal.load(std::memory_order_relaxed) != seenSignal;
+                seenSignal = m_WakeSignal.load(std::memory_order_relaxed);
             }
-            else
+            if (spin > Clock::duration::zero() && !signalled)
             {
-                m_Wake.wait(lock, stopToken, changed);
+            std::optional<Clock::time_point> tickDeadline;
+                while (!stopToken.stop_requested() && Clock::now() < *deadline &&
+                       m_WakeSignal.load(std::memory_order_relaxed) == seenSignal)
+                {
+                    std::this_thread::yield();
+                }
             }
-            seenSignal = m_WakeSignal;
         }
 
         {

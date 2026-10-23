@@ -323,3 +323,108 @@ TEST_CASE("Incremental publish delivers module changes and edits to the snapshot
     auto lock = runner.LockRenderScene();
     CHECK(lock->Registry().get<TransformComponent>(lock->FindByGuid(moverGuid)).Position.x >= 0.0f);
 }
+
+namespace
+{
+    struct TickCounter final : ISimulationModule
+    {
+        std::atomic<int> Ticks{0};
+        void OnTick(Scene&, float) override { ++Ticks; }
+    };
+
+    // Share of one core the process used while `run` ran; the test process is idle apart from the runner thread.
+    double CpuShare(const std::chrono::milliseconds window, const std::function<void()>& setup = {})
+    {
+        if (setup) setup();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const auto cpuStart = std::clock();
+        const auto wallStart = std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(window);
+        const double cpu = static_cast<double>(std::clock() - cpuStart) / CLOCKS_PER_SEC;
+        const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
+        return cpu / wall;
+    }
+
+    double MeasureRunner(const bool paused, const bool fixed, const double tickRate = 60.0)
+    {
+        auto module = std::make_shared<TickCounter>();
+        SimulationOptions options;
+        options.UseFixedTimestep = fixed;
+        SimulationRunner runner(Scene("Cpu"), module, options);
+        runner.SetTickRate(tickRate);
+        runner.Start();
+        const double share = CpuShare(std::chrono::milliseconds(1500), [&] { runner.SetPaused(paused); });
+        runner.Stop();
+        WARN(std::format("cpu share paused={} fixed={} rate={}: {:.1f}%", paused, fixed, tickRate, share * 100.0));
+        return share;
+    }
+}
+
+TEST_CASE("The sim thread does not burn CPU while paused or waiting for the next tick", "[simulation_runner][cpu]")
+{
+    CHECK(MeasureRunner(true, true) < 0.05);
+    CHECK(MeasureRunner(false, true) < 0.30);
+    CHECK(MeasureRunner(false, false) < 0.40);
+}
+
+TEST_CASE("Variable timestep ticks at the publish rate, not flat out", "[simulation_runner][cpu]")
+{
+    auto module = std::make_shared<TickCounter>();
+    SimulationOptions options;
+    options.UseFixedTimestep = false;
+    options.MaxPublishRate = 100.0;
+    SimulationRunner runner(Scene("Var"), module, options);
+    runner.Start();
+    runner.SetPaused(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    runner.Stop();
+    CHECK(module->Ticks.load() >= 80);
+    CHECK(module->Ticks.load() <= 110);
+}
+
+TEST_CASE("Fixed ticks stay paced and wake-ups are immediate", "[simulation_runner][latency]")
+{
+    auto module = std::make_shared<TickCounter>();
+    SimulationRunner runner(Scene("Pace"), module);
+    runner.SetTickRate(100.0);
+    runner.Start();
+    runner.SetPaused(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    const int ticks = module->Ticks.load();
+    CHECK(ticks >= 190);
+    CHECK(ticks <= 205);
+
+    using Clock = std::chrono::steady_clock;
+    const auto measure = [](const std::function<void()>& trigger, const std::function<bool()>& done)
+    {
+        const auto start = Clock::now();
+        trigger();
+        while (!done() && Clock::now() - start < std::chrono::seconds(1)) std::this_thread::yield();
+        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    };
+
+    runner.SetPaused(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::atomic<bool> applied{false};
+    const double edit = measure([&] { runner.EnqueueEdit([&](Scene&) { applied = true; }); }, [&] { return applied.load(); });
+
+    const int before = module->Ticks.load();
+    const double resume = measure([&] { runner.SetPaused(false); }, [&] { return module->Ticks.load() > before; });
+    runner.SetPaused(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    runner.SetTickRate(1.0);
+    runner.SetPaused(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const int slow = module->Ticks.load();
+    const double rate = measure([&] { runner.SetTickRate(1000.0); }, [&] { return module->Ticks.load() > slow + 1; });
+
+    const auto stopStart = Clock::now();
+    runner.Stop();
+    const double stop = std::chrono::duration<double, std::milli>(Clock::now() - stopStart).count();
+    WARN(std::format("latency ms: edit {:.2f} resume {:.2f} tick-rate change {:.2f} stop {:.2f}", edit, resume, rate, stop));
+    CHECK(edit < 8.0);
+    CHECK(resume < 20.0);
+    CHECK(rate < 20.0);
+    CHECK(stop < 50.0);
+}
