@@ -247,6 +247,68 @@ TEST_CASE("HotReloadAsset reports a clear error for an ABI version mismatch", "[
     CHECK(asset.LastError().find("ABI version mismatch") != std::string::npos);
 }
 
+TEST_CASE("HotReloadAsset reads the build id of a plugin without loading it", "[hotreload][asset][build-id]")
+{
+    CHECK(ReadHotReloadBuildId(TestPluginPath()) == std::optional<std::string>("fixture-build-id"));
+    CHECK_FALSE(ReadHotReloadBuildId(std::filesystem::temp_directory_path() / "gpp_no_such_plugin.so"));
+}
+
+TEST_CASE("HotReloadAsset refuses a plugin with a different build id and keeps the running one",
+          "[hotreload][asset][build-id]")
+{
+    auto fileSystem = std::make_shared<FileSystem>();
+    auto dispatcher = std::make_shared<EventDispatcher>();
+    auto logger = std::make_shared<Logger>();
+    ServiceCollection services;
+    auto provider = services.Build();
+
+    HotReloadAssetDescription description{
+        .libraryPath = TestPluginPath(),
+        .shadowCopy = false,
+        .expectedBuildId = "fixture-build-id"
+    };
+    HotReloadAsset asset("build-id-asset", description, fileSystem, dispatcher, logger);
+    REQUIRE(asset.Load(provider));
+    const auto running = asset.GetInstance();
+
+    SetHotReloadHostBuildId("another-build-id");
+    HotReloadAssetDescription hostChecked{.libraryPath = TestPluginPath(), .shadowCopy = false};
+    HotReloadAsset mismatched("build-id-mismatch", hostChecked, fileSystem, dispatcher, logger);
+    CHECK_FALSE(mismatched.Stage(provider));
+    SetHotReloadHostBuildId({});
+    CHECK(mismatched.GetState() == HotReloadState::Failed);
+    CHECK(mismatched.LastError().find("different build") != std::string::npos);
+    CHECK(mismatched.LastError().find("fixture-build-id") != std::string::npos);
+    CHECK(mismatched.LastError().find("another-build-id") != std::string::npos);
+
+    HotReloadAssetDescription explicitMismatch{
+        .libraryPath = TestPluginPath(), .shadowCopy = false, .expectedBuildId = "other"};
+    HotReloadAsset staleRunning("build-id-keeps", explicitMismatch, fileSystem, dispatcher, logger);
+    CHECK_FALSE(staleRunning.Stage(provider));
+    CHECK(asset.GetInstance().instance == running.instance);
+}
+
+TEST_CASE("HotReloadAsset refuses a plugin without any build id when the host has one",
+          "[hotreload][asset][build-id]")
+{
+    auto fileSystem = std::make_shared<FileSystem>();
+    auto dispatcher = std::make_shared<EventDispatcher>();
+    auto logger = std::make_shared<Logger>();
+    ServiceCollection services;
+    auto provider = services.Build();
+
+    const auto dir = MakeTempDirectory("gpp_hotreload_noid_");
+    const auto fake = dir / "not_a_plugin.so";
+    {
+        std::ofstream out(fake, std::ios::binary);
+        out << "\x7f" "ELF no build id in here";
+    }
+    HotReloadAssetDescription description{.libraryPath = fake, .shadowCopy = false, .expectedBuildId = "x"};
+    HotReloadAsset asset("no-id-asset", description, fileSystem, dispatcher, logger);
+    CHECK_FALSE(asset.Stage(provider));
+    CHECK(asset.LastError().find("no build id") != std::string::npos);
+}
+
 TEST_CASE("HotReloadAsset keeps the current instance running after a failed reload, and recovers",
           "[hotreload][asset]")
 {

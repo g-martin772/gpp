@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hot_reload_build_id.h"
+
 // USAGE
 
 /*
@@ -22,12 +24,18 @@ GPP_DEFINE_HOT_RELOAD_LAYER(MyLayer)
 */
 
 #if defined(_WIN32)
-#define GPP_HOT_RELOAD_EXPORT extern "C" __declspec(dllexport)
+#define GPP_HOT_RELOAD_EXPORT_ATTR __declspec(dllexport)
 #else
-#define GPP_HOT_RELOAD_EXPORT extern "C" __attribute__((visibility("default")))
+#define GPP_HOT_RELOAD_EXPORT_ATTR __attribute__((visibility("default")))
 #endif
+#define GPP_HOT_RELOAD_EXPORT extern "C" GPP_HOT_RELOAD_EXPORT_ATTR
+
+#define GPP_HOT_RELOAD_EXPORT_BUILD_ID(id)                                                             \
+    extern "C" GPP_HOT_RELOAD_EXPORT_ATTR const char GPP_HotReloadModuleBuildIdData[] =                 \
+        GPP_HOT_RELOAD_BUILD_ID_MARKER id;
 
 #define GPP_DEFINE_HOT_RELOAD_LAYER(LayerType)                                                         \
+    GPP_HOT_RELOAD_EXPORT_BUILD_ID(GPP_HOT_RELOAD_BUILD_ID)                                            \
     GPP_HOT_RELOAD_EXPORT std::uint32_t GPP_HotReloadModuleAbiVersion()                                \
     {                                                                                                  \
         return GPP::kHotReloadAbiVersion;                                                              \
@@ -61,6 +69,7 @@ GPP_DEFINE_HOT_RELOAD_THEME(MyTheme)
 */
 
 #define GPP_DEFINE_HOT_RELOAD_THEME(ThemeType)                                                         \
+    GPP_HOT_RELOAD_EXPORT_BUILD_ID(GPP_HOT_RELOAD_BUILD_ID)                                            \
     GPP_HOT_RELOAD_EXPORT std::uint32_t GPP_HotReloadThemeModuleAbiVersion()                            \
     {                                                                                                  \
         return GPP::kHotReloadAbiVersion;                                                              \

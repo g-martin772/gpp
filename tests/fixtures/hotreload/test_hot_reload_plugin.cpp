@@ -31,6 +31,14 @@ __declspec(dllexport)
 #else
 __attribute__((visibility("default")))
 #endif
+const char GPP_HotReloadModuleBuildIdData[] = "GPP_BUILD_ID=fixture-build-id";
+
+extern "C"
+#if defined(_WIN32)
+__declspec(dllexport)
+#else
+__attribute__((visibility("default")))
+#endif
 std::uint32_t GPP_HotReloadModuleAbiVersion()
 {
     return GPP::kHotReloadAbiVersion;

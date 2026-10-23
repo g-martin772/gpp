@@ -19,6 +19,11 @@ namespace GPP
 #endif
         }
 
+        constexpr std::string_view kBuildIdMarker = "GPP_BUILD_ID=";
+
+        std::mutex g_HostBuildIdMutex;
+        std::string g_HostBuildId;
+
         std::string WaitUntilSettled(const std::filesystem::path& path, const HotReloadAssetDescription& description)
         {
             const auto deadline = std::chrono::steady_clock::now() + description.settleTimeout;
@@ -38,6 +43,54 @@ namespace GPP
                 std::this_thread::sleep_for(description.settleInterval);
             }
         }
+    }
+
+    void SetHotReloadHostBuildId(std::string id)
+    {
+        std::scoped_lock lock(g_HostBuildIdMutex);
+        g_HostBuildId = std::move(id);
+    }
+
+    std::string HotReloadHostBuildId()
+    {
+        std::scoped_lock lock(g_HostBuildIdMutex);
+        return g_HostBuildId;
+    }
+
+    std::optional<std::string> ReadHotReloadBuildId(const std::filesystem::path& library)
+    {
+        std::ifstream file(library, std::ios::binary);
+        if (!file)
+        {
+            return std::nullopt;
+        }
+        constexpr std::size_t kChunk = 1 << 20;
+        std::string window;
+        std::vector<char> buffer(kChunk);
+        while (file)
+        {
+            file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            const auto got = static_cast<std::size_t>(file.gcount());
+            if (got == 0)
+            {
+                break;
+            }
+            window.append(buffer.data(), got);
+            if (const auto at = window.find(kBuildIdMarker); at != std::string::npos)
+            {
+                const auto start = at + kBuildIdMarker.size();
+                auto end = window.find('\0', start);
+                while (end == std::string::npos && file)
+                {
+                    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                    window.append(buffer.data(), static_cast<std::size_t>(file.gcount()));
+                    end = window.find('\0', start);
+                }
+                return window.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            }
+            window.erase(0, window.size() - std::min(window.size(), kBuildIdMarker.size() - 1));
+        }
+        return std::nullopt;
     }
 
     HotReloadAsset::HotReloadAsset(std::string assetId,
@@ -205,6 +258,25 @@ namespace GPP
         try
         {
             const auto libraryFile = PrepareLibraryFile();
+            const auto expectedBuildId = m_Description.expectedBuildId.empty() ? HotReloadHostBuildId()
+                                                                              : m_Description.expectedBuildId;
+            if (!expectedBuildId.empty())
+            {
+                const auto pluginBuildId = ReadHotReloadBuildId(libraryFile);
+                if (!pluginBuildId)
+                {
+                    throw std::runtime_error(std::format(
+                        "Plugin '{}' carries no build id (built before build ids existed or without "
+                        "GPP_DEFINE_HOT_RELOAD_*); refusing to load it. Rebuild the plugin.", m_AssetId));
+                }
+                if (*pluginBuildId != expectedBuildId)
+                {
+                    throw std::runtime_error(std::format(
+                        "Plugin '{}' was built against a different build (plugin: {}; host: {}); refusing to "
+                        "load a possibly ABI-incompatible library. Rebuild the plugin.",
+                        m_AssetId, *pluginBuildId, expectedBuildId));
+                }
+            }
             DynamicLibrary library(libraryFile, m_Description.keepResident);
 
             const auto abiVersionFn = library.GetSymbol<AbiVersionFn>(m_Description.abiVersionSymbol);
