@@ -93,9 +93,7 @@ namespace GPP
         std::shared_ptr<EventDispatcher> m_Dispatcher;
         std::shared_ptr<Logger> m_Logger;
 
-        physx::PxDefaultAllocator m_Allocator;
-        physx::PxDefaultErrorCallback m_ErrorCallback;
-        physx::PxFoundation* m_Foundation = nullptr;
+        bool m_RuntimeHeld = false;
         physx::PxPhysics* m_Physics = nullptr;
         physx::PxDefaultCpuDispatcher* m_CpuDispatcher = nullptr;
         physx::PxScene* m_Scene = nullptr;

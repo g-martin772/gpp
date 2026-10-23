@@ -456,15 +456,29 @@ namespace GPP
             try
             {
                 module->OnShutdown(m_SimScene);
+                RecordInitError(e.what());
             }
             catch (...)
             {
                 Logger::LogError("Simulation shutdown for scene '{}' failed", m_SimScene.Metadata().Name);
             }
+                RecordInitError("unknown exception");
         }
     }
 
     void SimulationRunner::RunOnSimThread(std::function<void()> fn)
+    void SimulationRunner::RecordInitError(std::string message)
+    {
+        std::scoped_lock lock(m_InitErrorMutex);
+        m_InitErrors.push_back(std::move(message));
+    }
+
+    std::vector<std::string> SimulationRunner::TakeInitErrors()
+    {
+        std::scoped_lock lock(m_InitErrorMutex);
+        return std::exchange(m_InitErrors, {});
+    }
+
     {
         if (!m_Running.load(std::memory_order_acquire))
         {

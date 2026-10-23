@@ -25,6 +25,53 @@ namespace GPP
 
         glm::dvec3 FromPhysXVector(const physx::PxVec3& v) { return {v.x, v.y, v.z}; }
 
+        // PhysX allows one foundation per process, but a scene switch builds the next module while the
+        // previous one is still being torn down on a worker.
+        struct SharedPhysX
+        {
+            physx::PxDefaultAllocator Allocator;
+            physx::PxDefaultErrorCallback ErrorCallback;
+            physx::PxFoundation* Foundation = nullptr;
+            physx::PxPhysics* Physics = nullptr;
+        };
+
+        std::mutex g_SharedPhysXMutex;
+        SharedPhysX* g_SharedPhysX = nullptr;
+        int g_SharedPhysXRefs = 0;
+
+        physx::PxPhysics* AcquirePhysX()
+        {
+            std::scoped_lock lock(g_SharedPhysXMutex);
+            if (!g_SharedPhysX)
+            {
+                auto shared = std::make_unique<SharedPhysX>();
+                shared->Foundation = PxCreateFoundation(physx::PxPhysicsVersion, shared->Allocator, shared->ErrorCallback);
+                if (!shared->Foundation)
+                {
+                    throw std::runtime_error("PhysicsSimulationModule: PxCreateFoundation failed.");
+                }
+                shared->Physics = PxCreatePhysics(physx::PxPhysicsVersion, *shared->Foundation, physx::PxTolerancesScale());
+                if (!shared->Physics)
+                {
+                    shared->Foundation->release();
+                    throw std::runtime_error("PhysicsSimulationModule: PxCreatePhysics failed.");
+                }
+                g_SharedPhysX = shared.release();
+            }
+            ++g_SharedPhysXRefs;
+            return g_SharedPhysX->Physics;
+        }
+
+        void ReleasePhysX()
+        {
+            std::scoped_lock lock(g_SharedPhysXMutex);
+            if (--g_SharedPhysXRefs > 0) return;
+            g_SharedPhysX->Physics->release();
+            g_SharedPhysX->Foundation->release();
+            delete g_SharedPhysX;
+            g_SharedPhysX = nullptr;
+        }
+
         float ToPhysXScalar(const double value) { return static_cast<float>(value); }
 
         physx::PxFilterFlags DefaultFilterShader(
@@ -53,22 +100,15 @@ namespace GPP
     {
         if (m_Scene) { m_Scene->release(); m_Scene = nullptr; }
         if (m_CpuDispatcher) { m_CpuDispatcher->release(); m_CpuDispatcher = nullptr; }
-        if (m_Physics) { m_Physics->release(); m_Physics = nullptr; }
-        if (m_Foundation) { m_Foundation->release(); m_Foundation = nullptr; }
+        if (m_RuntimeHeld) { ReleasePhysX(); m_RuntimeHeld = false; m_Physics = nullptr; }
     }
 
     void PhysicsSimulationModule::OnInit(Scene& scene)
     {
-        m_Foundation = PxCreateFoundation(physx::PxPhysicsVersion, m_Allocator, m_ErrorCallback);
-        if (!m_Foundation)
+        if (!m_RuntimeHeld)
         {
-            throw std::runtime_error("PhysicsSimulationModule: PxCreateFoundation failed.");
-        }
-        m_Physics = PxCreatePhysics(physx::PxPhysicsVersion, *m_Foundation,
-                                           physx::PxTolerancesScale());
-        if (!m_Physics)
-        {
-            throw std::runtime_error("PhysicsSimulationModule: PxCreatePhysics failed.");
+            m_Physics = AcquirePhysX();
+            m_RuntimeHeld = true;
         }
         m_CpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
 
@@ -102,6 +142,7 @@ namespace GPP
 
     void PhysicsSimulationModule::OnTick(Scene& scene, const float deltaTime)
     {
+        if (!m_Scene) return;
         m_CurrentScene = &scene;
 
         const bool debugViz = m_DebugVisualizationEnabled.load(std::memory_order_relaxed);
@@ -184,8 +225,7 @@ namespace GPP
 
         if (m_Scene) { m_Scene->release(); m_Scene = nullptr; }
         if (m_CpuDispatcher) { m_CpuDispatcher->release(); m_CpuDispatcher = nullptr; }
-        if (m_Physics) { m_Physics->release(); m_Physics = nullptr; }
-        if (m_Foundation) { m_Foundation->release(); m_Foundation = nullptr; }
+        if (m_RuntimeHeld) { ReleasePhysX(); m_RuntimeHeld = false; m_Physics = nullptr; }
     }
 
     void PhysicsSimulationModule::SyncActors(Scene& scene)

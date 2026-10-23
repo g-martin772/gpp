@@ -205,3 +205,23 @@ TEST_CASE ("PhysicsSimulationModule zeroes motion when a body without velocity d
     CHECK(scene.Registry().get<TransformComponent>(body).Position.x == Catch::Approx(3.0f).margin(0.01f));
     physics.OnShutdown(scene);
 }
+
+TEST_CASE ("PhysicsSimulationModule instances can overlap in one process", "[simulation][physics]")
+{
+    auto dispatcher = std::make_shared<EventDispatcher>();
+    auto logger = std::make_shared<Logger>();
+    PhysicsSimulationModule first(dispatcher, logger);
+    PhysicsSimulationModule second(dispatcher, logger);
+    Scene firstScene("First");
+    Scene secondScene("Second");
+
+    first.OnInit(firstScene);
+    CHECK_NOTHROW(second.OnInit(secondScene));
+    first.OnShutdown(firstScene);
+    CHECK_NOTHROW(second.OnTick(secondScene, 1.0f / 60.0f));
+    second.OnShutdown(secondScene);
+
+    PhysicsSimulationModule third(dispatcher, logger);
+    CHECK_NOTHROW(third.OnInit(firstScene));
+    third.OnShutdown(firstScene);
+}

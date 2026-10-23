@@ -158,6 +158,7 @@ namespace GPP
 
         template <typename T>
         [[nodiscard]] std::shared_ptr<T> GetModule() const
+        [[nodiscard]] std::vector<std::string> TakeInitErrors();
         {
             for (const auto& module : m_Modules)
             {
@@ -259,6 +260,7 @@ namespace GPP
 
         std::atomic<bool> m_Paused{false};
         std::atomic<bool> m_Manual{false};
+        void RecordInitError(std::string message);
         std::atomic<bool> m_Running{false};
         std::atomic<double> m_TickRate{60.0};
 
@@ -280,6 +282,8 @@ namespace GPP
         mutable std::mutex m_LogMutex;
         std::deque<CommandRecord> m_CommandLog;
         std::optional<SimulationRecording> m_Recording;
+        std::mutex m_InitErrorMutex;
+        std::vector<std::string> m_InitErrors;
 
         struct CheckpointLog
         {
