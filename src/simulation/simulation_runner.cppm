@@ -5,6 +5,7 @@ import GPP.Core;
 import :Scene;
 import :Commands;
 import :Random;
+import :StateHash;
 
 namespace GPP
 {
@@ -57,6 +58,12 @@ namespace GPP
         std::uint64_t RngState{0};
     };
 
+    export struct StateCheckpoint
+    {
+        std::uint64_t Tick{0};
+        std::uint64_t Hash{0};
+    };
+
     export struct SimulationRecording
     {
         Scene Initial;
@@ -65,6 +72,11 @@ namespace GPP
         std::uint64_t EndTick{0};
         RunnerState State;
         std::vector<CommandRecord> Commands;
+        // State hash after the tick completes (before that tick's edits), every CheckpointInterval ticks from StartTick,
+        // plus the start state itself. FinalHash is taken once everything recorded has been applied.
+        std::uint64_t CheckpointInterval{0};
+        std::vector<StateCheckpoint> Checkpoints;
+        std::optional<std::uint64_t> FinalHash;
 
         [[nodiscard]] std::uint64_t Ticks() const noexcept { return EndTick - StartTick; }
     };
@@ -190,8 +202,13 @@ namespace GPP
         [[nodiscard]] RunnerState CaptureState() const;
         void RestoreState(const RunnerState& state);
 
-        // Both marshal onto the sim thread and wait.
-        void BeginRecording();
+        // Scene, runner random state and module state hashed together; marshals onto the sim thread and waits.
+        [[nodiscard]] std::uint64_t StateHash();
+        // Checkpoints taken since PrepareReplay.
+        [[nodiscard]] std::vector<StateCheckpoint> ReplayCheckpoints();
+
+        // Both marshal onto the sim thread and wait. checkpointInterval 0 records no hashes.
+        void BeginRecording(std::uint64_t checkpointInterval = 60);
         [[nodiscard]] SimulationRecording EndRecording();
         // Loads the recording into this fresh, not yet started runner; then StepAndWait(recording.Ticks()).
         void PrepareReplay(const SimulationRecording& recording);
@@ -223,6 +240,8 @@ namespace GPP
         void ApplyCommands(PendingEdit& edit);
         void EnqueueMarker(TransactionMarker marker, CommandOptions options);
         void FlushTransaction();
+        [[nodiscard]] std::uint64_t ComputeStateHash() const;
+        void AddCheckpoint();
         void RunTick(float deltaTime, double clockDt);
         void StepOne(float deltaTime, double clockDt);
         void ExecuteSteps(std::uint64_t ticks);
@@ -261,6 +280,14 @@ namespace GPP
         mutable std::mutex m_LogMutex;
         std::deque<CommandRecord> m_CommandLog;
         std::optional<SimulationRecording> m_Recording;
+
+        struct CheckpointLog
+        {
+            std::uint64_t Interval{0};
+            std::uint64_t Origin{0};
+            std::vector<StateCheckpoint> Entries;
+        };
+        std::optional<CheckpointLog> m_Checkpoints; // sim thread only
 
         std::mutex m_WakeMutex;
         std::condition_variable_any m_Wake;

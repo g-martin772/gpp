@@ -1,6 +1,7 @@
 module GPP.Simulation;
 
 import :Runner;
+import :StateHash;
 import std;
 
 namespace GPP
@@ -502,16 +503,55 @@ namespace GPP
         m_Random->SetState(state.RngState);
     }
 
-    void SimulationRunner::BeginRecording()
+    std::uint64_t SimulationRunner::ComputeStateHash() const
     {
-        RunOnSimThread([this]
+        StateHasher hasher;
+        hasher.U64(HashScene(m_SimScene));
+        const auto state = CaptureState();
+        hasher.U64(state.RngState);
+        for (const auto& module : state.Modules) hasher.String(module);
+        return hasher.Value();
+    }
+
+    void SimulationRunner::AddCheckpoint()
+    {
+        m_Checkpoints->Entries.push_back(StateCheckpoint{Tick(), ComputeStateHash()});
+    }
+
+    std::uint64_t SimulationRunner::StateHash()
+    {
+        std::uint64_t hash = 0;
+        RunOnSimThread([this, &hash] { hash = ComputeStateHash(); });
+        return hash;
+    }
+
+    std::vector<StateCheckpoint> SimulationRunner::ReplayCheckpoints()
+    {
+        std::vector<StateCheckpoint> result;
+        RunOnSimThread([this, &result]
+        {
+            if (m_Checkpoints) result = m_Checkpoints->Entries;
+        });
+        return result;
+    }
+
+    void SimulationRunner::BeginRecording(const std::uint64_t checkpointInterval)
+    {
+        RunOnSimThread([this, checkpointInterval]
         {
             SimulationRecording recording;
+            recording.CheckpointInterval = checkpointInterval;
             recording.Initial = m_SimScene.Clone();
             recording.TickRate = m_TickRate.load(std::memory_order_relaxed);
             recording.StartTick = Tick();
             recording.State = CaptureState();
             m_Recording = std::move(recording);
+            m_Checkpoints.reset();
+            if (checkpointInterval > 0)
+            {
+                m_Checkpoints = CheckpointLog{checkpointInterval, m_Recording->StartTick, {}};
+                AddCheckpoint();
+            }
         });
     }
 
@@ -524,6 +564,12 @@ namespace GPP
             result = std::move(*m_Recording);
             m_Recording.reset();
             result.EndTick = Tick();
+            if (m_Checkpoints && result.CheckpointInterval > 0)
+            {
+                result.Checkpoints = std::move(m_Checkpoints->Entries);
+                result.FinalHash = ComputeStateHash();
+            }
+            m_Checkpoints.reset();
         });
         return result;
     }
@@ -542,6 +588,12 @@ namespace GPP
         m_Tick.store(recording.StartTick, std::memory_order_release);
         EnsureInitialized();
         RestoreState(recording.State);
+        m_Checkpoints.reset();
+        if (recording.CheckpointInterval > 0)
+        {
+            m_Checkpoints = CheckpointLog{recording.CheckpointInterval, recording.StartTick, {}};
+            AddCheckpoint();
+        }
         for (const auto& record : recording.Commands)
         {
             CommandOptions options;
@@ -597,6 +649,11 @@ namespace GPP
             if (m_Metadata.TimeScale != m_SimScene.Metadata().TimeScale) m_Metadata = m_SimScene.Metadata();
         }
         m_Tick.fetch_add(1, std::memory_order_acq_rel);
+        if (m_Checkpoints && m_Checkpoints->Interval > 0 &&
+            (Tick() - m_Checkpoints->Origin) % m_Checkpoints->Interval == 0)
+        {
+            AddCheckpoint();
+        }
         const auto end = Clock::now();
         m_TickStartNs.store(0, std::memory_order_release);
         m_TickMeter.Tick(std::chrono::duration<double, std::milli>(end - start).count(), end);
