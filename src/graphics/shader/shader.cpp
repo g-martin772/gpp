@@ -1,5 +1,7 @@
 module;
 
+#include <dlfcn.h>
+#include <sys/stat.h>
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_cross.hpp>
 
@@ -36,6 +38,29 @@ namespace GPP
             return hash;
         }
 
+        // Identifies the loaded shaderc build (library file size and mtime plus SPIR-V version) so compiler upgrades invalidate cached SPIR-V.
+        const std::string& CompilerIdentity()
+        {
+            static const std::string identity = []
+            {
+                std::uint32_t spvVersion = 0;
+                std::uint32_t spvRevision = 0;
+                shaderc_get_spv_version(&spvVersion, &spvRevision);
+                std::string result = std::format("spv{:x}.{}", spvVersion, spvRevision);
+                Dl_info info{};
+                struct stat fileInfo{};
+                if (dladdr(reinterpret_cast<const void*>(&shaderc_compile_into_spv), &info) != 0 &&
+                    info.dli_fname != nullptr && stat(info.dli_fname, &fileInfo) == 0)
+                {
+                    result += std::format(":{}:{}:{}", info.dli_fname,
+                                          static_cast<long long>(fileInfo.st_size),
+                                          static_cast<long long>(fileInfo.st_mtime));
+                }
+                return result;
+            }();
+            return identity;
+        }
+
         std::uint64_t HashShader(std::string_view source, const ShaderSource& shader,
                                  const ShaderCompileOptions& options)
         {
@@ -51,6 +76,8 @@ namespace GPP
                 key.push_back('=');
                 key += value;
             }
+            key.push_back('\0');
+            key += CompilerIdentity();
             key += options.generateDebugInfo ? ":debug" : ":release";
             key += options.optimize ? ":optimized" : ":unoptimized";
             for (const auto& includeDirectory : options.includeDirectories)

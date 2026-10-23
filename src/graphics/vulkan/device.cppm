@@ -29,12 +29,16 @@ namespace GPP
         vk::DeviceSize blockBytes = 0;
     };
 
+    export [[nodiscard]] bool IsPipelineCacheDataCompatible(
+        std::span<const std::byte> data, const vk::PhysicalDeviceProperties& properties);
+
     export class VulkanDevice
     {
     public:
         VulkanDevice(const DeviceRequirements& requirements,
                      const std::shared_ptr<VulkanContext>& context,
-                     const std::shared_ptr<Logger>& logger);
+                     const std::shared_ptr<Logger>& logger,
+                     std::filesystem::path pipelineCachePath = {});
         ~VulkanDevice();
 
         void WaitIdle();
@@ -51,6 +55,8 @@ namespace GPP
         [[nodiscard]] bool SupportsShaderFloat64() const noexcept { return m_Capabilities.ShaderFloat64; }
         [[nodiscard]] const GpuCapabilities& GetCapabilities() const noexcept { return m_Capabilities; }
         VmaAllocator GetAllocator() const noexcept { return m_Allocator; }
+        vk::PipelineCache GetPipelineCache() const noexcept { return m_PipelineCache; }
+        void SavePipelineCache() const;
         VulkanMemoryStats GetMemoryStats() const;
         void DumpMemoryStats() const;
 
@@ -72,6 +78,8 @@ namespace GPP
 
     private:
         void PickPhysicalDevice();
+        void CreatePipelineCache();
+        std::vector<std::byte> ReadPipelineCacheFile() const;
         DeviceRequirements m_Requirements = {};
         std::shared_ptr<VulkanContext> m_VulkanContext{nullptr};
         std::shared_ptr<Logger> m_Logger{nullptr};
@@ -89,6 +97,8 @@ namespace GPP
         std::vector<vk::SurfaceFormatKHR> m_SurfaceFormats;
         std::vector<vk::PresentModeKHR> m_SurfacePresentModes;
         VmaAllocator m_Allocator = nullptr;
+        vk::PipelineCache m_PipelineCache;
+        std::filesystem::path m_PipelineCachePath;
         GpuCapabilities m_Capabilities;
     };
 

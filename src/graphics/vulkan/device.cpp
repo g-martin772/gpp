@@ -268,8 +268,10 @@ namespace GPP
 
     VulkanDevice::VulkanDevice(const DeviceRequirements& requirements,
                                const std::shared_ptr<VulkanContext>& context,
-                               const std::shared_ptr<Logger>& logger)
-        : m_Requirements(requirements), m_VulkanContext(context), m_Logger(logger)
+                               const std::shared_ptr<Logger>& logger,
+                               std::filesystem::path pipelineCachePath)
+        : m_Requirements(requirements), m_VulkanContext(context), m_Logger(logger),
+          m_PipelineCachePath(std::move(pipelineCachePath))
     {
         PickPhysicalDevice();
 
@@ -511,7 +513,117 @@ namespace GPP
             }
         }
 
+        CreatePipelineCache();
+
         m_Logger->Info("Device and Queue allocation successful");
+    }
+
+    bool IsPipelineCacheDataCompatible(const std::span<const std::byte> data,
+                                       const vk::PhysicalDeviceProperties& properties)
+    {
+        struct Header
+        {
+            std::uint32_t headerSize;
+            std::uint32_t headerVersion;
+            std::uint32_t vendorId;
+            std::uint32_t deviceId;
+            std::uint8_t uuid[VK_UUID_SIZE];
+        };
+        if (data.size() < sizeof(Header))
+        {
+            return false;
+        }
+        Header header{};
+        std::memcpy(&header, data.data(), sizeof(Header));
+        return header.headerSize >= sizeof(Header) && header.headerSize <= data.size() &&
+               header.headerVersion == static_cast<std::uint32_t>(vk::PipelineCacheHeaderVersion::eOne) &&
+               header.vendorId == properties.vendorID && header.deviceId == properties.deviceID &&
+               std::memcmp(header.uuid, properties.pipelineCacheUUID.data(), VK_UUID_SIZE) == 0;
+    }
+
+    std::vector<std::byte> VulkanDevice::ReadPipelineCacheFile() const
+    {
+        std::vector<std::byte> data;
+        if (m_PipelineCachePath.empty())
+        {
+            return data;
+        }
+        std::ifstream file(m_PipelineCachePath, std::ios::binary | std::ios::ate);
+        if (!file)
+        {
+            return data;
+        }
+        const auto size = file.tellg();
+        if (size <= 0)
+        {
+            return data;
+        }
+        data.resize(static_cast<std::size_t>(size));
+        file.seekg(0);
+        file.read(reinterpret_cast<char*>(data.data()), size);
+        if (!file || !IsPipelineCacheDataCompatible(data, m_PhysicalDevice.getProperties()))
+        {
+            m_Logger->Info("Discarding incompatible pipeline cache {}", m_PipelineCachePath.string());
+            data.clear();
+        }
+        return data;
+    }
+
+    void VulkanDevice::CreatePipelineCache()
+    {
+        const auto initial = ReadPipelineCacheFile();
+        vk::PipelineCacheCreateInfo createInfo({}, initial.size(), initial.data());
+        try
+        {
+            m_PipelineCache = m_Device.createPipelineCache(createInfo);
+        }
+        catch (const vk::SystemError& err)
+        {
+            m_Logger->Warn("Pipeline cache unavailable: {}", err.what());
+            return;
+        }
+        m_Logger->Info("Pipeline cache: {} bytes loaded", initial.size());
+    }
+
+    void VulkanDevice::SavePipelineCache() const
+    {
+        if (!m_PipelineCache || m_PipelineCachePath.empty())
+        {
+            return;
+        }
+        try
+        {
+            // Other instances may have saved entries since startup; merge so the last writer does not drop them.
+            if (const auto onDisk = ReadPipelineCacheFile(); !onDisk.empty())
+            {
+                const vk::PipelineCacheCreateInfo createInfo({}, onDisk.size(), onDisk.data());
+                const auto other = m_Device.createPipelineCache(createInfo);
+                m_Device.mergePipelineCaches(m_PipelineCache, other);
+                m_Device.destroyPipelineCache(other);
+            }
+            const auto data = m_Device.getPipelineCacheData(m_PipelineCache);
+            if (data.empty())
+            {
+                return;
+            }
+            std::error_code error;
+            std::filesystem::create_directories(m_PipelineCachePath.parent_path(), error);
+            const auto result = WriteFileAtomic(
+                m_PipelineCachePath,
+                std::string_view(reinterpret_cast<const char*>(data.data()), data.size()));
+            if (!result)
+            {
+                m_Logger->Warn("Pipeline cache not saved: {}", result.error());
+            }
+            else
+            {
+                m_Logger->Info("Pipeline cache: {} bytes saved", data.size());
+            }
+        }
+        catch (const vk::SystemError& err)
+        {
+            m_Logger->Warn("Pipeline cache not saved: {}", err.what());
+        }
     }
 
     VulkanDevice::~VulkanDevice()
@@ -519,6 +631,12 @@ namespace GPP
         if (m_Device)
         {
             m_Device.waitIdle();
+            if (m_PipelineCache)
+            {
+                SavePipelineCache();
+                m_Device.destroyPipelineCache(m_PipelineCache);
+                m_PipelineCache = nullptr;
+            }
             if (m_Allocator)
             {
                 DumpMemoryStats();

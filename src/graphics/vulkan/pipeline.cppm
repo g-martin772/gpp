@@ -340,7 +340,7 @@ namespace GPP
             try
             {
                 // Create the Pipeline using standard vulkan.hpp bindings
-                auto result = logicalDevice.createGraphicsPipeline(nullptr, pipelineInfo);
+                auto result = logicalDevice.createGraphicsPipeline(m_Device->GetPipelineCache(), pipelineInfo);
                 if (result.result != vk::Result::eSuccess)
                 {
                     throw std::runtime_error("Failed to compile Vulkan Graphics Pipeline.");
@@ -380,7 +380,7 @@ namespace GPP
 
             try
             {
-                auto result = logicalDevice.createComputePipeline(nullptr, pipelineInfo);
+                auto result = logicalDevice.createComputePipeline(m_Device->GetPipelineCache(), pipelineInfo);
                 if (result.result != vk::Result::eSuccess)
                 {
                     throw std::runtime_error("Failed to compile Vulkan Compute Pipeline.");

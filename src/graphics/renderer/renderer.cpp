@@ -579,7 +579,9 @@ namespace GPP
                 .Sparse = true,
                 .Present = !m_WindowManager->IsHeadless(),
                 .Surface = surface
-            }, m_VulkanContext, m_Logger);
+            }, m_VulkanContext, m_Logger,
+            (m_FileSystem->CacheDir().empty() ? std::filesystem::path(".gpp") : m_FileSystem->CacheDir()) /
+                "pipeline_cache.bin");
         if (!m_Device)
         {
             throw std::runtime_error("Failed to create Vulkan device.");
