@@ -9,6 +9,7 @@ import :Ecs;
 import :ComponentRegistry;
 import :Components;
 import :Clock;
+import :SceneMigration;
 
 namespace GPP
 {
@@ -19,9 +20,9 @@ namespace GPP
         std::uint64_t Seed{0};
         double TimeScale{1.0};
         int LoadedSchemaVersion{0};
+        SceneVersions LoadedVersions;
+        std::vector<std::string> MigrationSteps;
     };
-
-    export constexpr int kSceneSchemaVersion = 2;
 
     export struct ChangeSet
     {

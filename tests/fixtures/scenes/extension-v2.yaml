@@ -1,0 +1,7 @@
+Scene: GoldenExtV2
+SchemaVersion: 2
+Entities: []
+ChainExt:
+  Version: 2
+  Alpha: 7
+  Beta: 20

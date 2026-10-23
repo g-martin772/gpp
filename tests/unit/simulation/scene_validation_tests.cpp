@@ -37,7 +37,7 @@ namespace
     std::vector<SceneDiagnostic> Validate(const std::string& entityComponents, const std::string& header = {})
     {
         RegisterProbe();
-        return ValidateSceneYaml(header + "Scene: V\nEntities:\n  - Guid: 5\n    Components:\n" + entityComponents);
+        return ValidateSceneYaml(header + "Scene: V\nSchemaVersion: 2\nEntities:\n  - Guid: 5\n    Components:\n" + entityComponents);
     }
 
     const SceneDiagnostic* Find(const std::vector<SceneDiagnostic>& diagnostics, const std::string& fragment)
@@ -64,9 +64,9 @@ TEST_CASE ("Unknown component is a located warning with entity context", "[simul
     CHECK(d.Component == "Bogus");
     CHECK(d.EntityGuid == 5);
     CHECK(d.EntityName == "Rock");
-    CHECK(d.Line == 7);
+    CHECK(d.Line == 8);
     CHECK(d.Column == 7);
-    CHECK(d.Format("f.yaml").starts_with("f.yaml:7:7: warning: entity 'Rock' (5), Bogus: "));
+    CHECK(d.Format("f.yaml").starts_with("f.yaml:8:7: warning: entity 'Rock' (5), Bogus: "));
 }
 
 TEST_CASE ("Unknown field and bad enum value are warnings", "[simulation][scene][validation]")
@@ -77,11 +77,11 @@ TEST_CASE ("Unknown field and bad enum value are warnings", "[simulation][scene]
     REQUIRE(mode);
     CHECK(mode->Field == "Mode");
     CHECK(mode->Severity == DiagnosticSeverity::Warning);
-    CHECK(mode->Line == 6);
+    CHECK(mode->Line == 7);
     const auto* spin = Find(diagnostics, "unknown field 'Spin'");
     REQUIRE(spin);
     CHECK(spin->Field == "Spin");
-    CHECK(spin->Line == 7);
+    CHECK(spin->Line == 8);
     CHECK(CountDiagnostics(diagnostics, DiagnosticSeverity::Error) == 0);
 }
 
@@ -108,7 +108,7 @@ TEST_CASE ("Unknown unit and unparsable values are errors with the field", "[sim
         REQUIRE(diagnostics.size() == 1);
         CHECK(diagnostics[0].Severity == DiagnosticSeverity::Error);
         CHECK(diagnostics[0].Field == "Gain");
-        CHECK(diagnostics[0].Line == 6);
+        CHECK(diagnostics[0].Line == 7);
     }
 }
 
@@ -118,7 +118,7 @@ TEST_CASE ("Schema, syntax, guid and reference problems are reported", "[simulat
     {
         const auto diagnostics = ValidateSceneYaml("Scene: V\nSchemaVersion: 99\nEntities: []\n");
         REQUIRE(diagnostics.size() == 1);
-        CHECK(diagnostics[0].Severity == DiagnosticSeverity::Warning);
+        CHECK(diagnostics[0].Severity == DiagnosticSeverity::Error);
         CHECK(diagnostics[0].Line == 2);
     }
     SECTION ("syntax error")

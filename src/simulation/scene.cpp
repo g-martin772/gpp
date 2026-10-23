@@ -343,14 +343,17 @@ namespace GPP
         Scene staged;
         staged.m_Metadata = m_Metadata;
 
-        const auto root = YAML::Load(yaml);
-        if (!root.IsMap()) throw std::runtime_error("Scene YAML: document is empty or not a mapping");
+        YAML::Node parsed = YAML::Load(yaml);
+        if (!parsed.IsMap()) throw std::runtime_error("Scene YAML: document is empty or not a mapping");
+        const auto migration = MigrateSceneDocument(parsed);
+        const YAML::Node root = parsed;
+
         if (root["Scene"]) staged.m_Metadata.Name = root["Scene"].as<std::string>();
         staged.m_Metadata.Seed = root["Seed"] ? root["Seed"].as<std::uint64_t>() : 0;
-        const int version = root["SchemaVersion"] ? root["SchemaVersion"].as<int>() : 1;
-        staged.m_Metadata.LoadedSchemaVersion = version;
-        staged.m_Metadata.TimeScale = root["TimeScale"] ? root["TimeScale"].as<double>()
-                                      : (version < 2 ? Units::Legacy::kTimeS : 1.0);
+        staged.m_Metadata.LoadedSchemaVersion = migration.Loaded.Schema;
+        staged.m_Metadata.LoadedVersions = migration.Loaded;
+        staged.m_Metadata.MigrationSteps = migration.Steps;
+        staged.m_Metadata.TimeScale = root["TimeScale"] ? root["TimeScale"].as<double>() : 1.0;
         for (const auto& pair : root)
         {
             const auto key = pair.first.as<std::string>();
@@ -378,16 +381,7 @@ namespace GPP
                     if (!info || !info->Decode) continue;
                     try
                     {
-                        if (version < 2 && info->MigrateLegacy)
-                        {
-                            YAML::Node migrated = YAML::Clone(pair.second);
-                            info->MigrateLegacy(migrated);
-                            info->Decode(staged.m_Registry, entity, migrated);
-                        }
-                        else
-                        {
-                            info->Decode(staged.m_Registry, entity, pair.second);
-                        }
+                        info->Decode(staged.m_Registry, entity, pair.second);
                     }
                     catch (const std::exception& error)
                     {

@@ -189,6 +189,9 @@ namespace GPP
         Scene scene;
         scene.DeserializeFromYaml(text);
         const auto name = scene.Metadata().Name;
+        const auto& loaded = scene.Metadata();
+        m_Logger->Info("{}: {}", fileName, loaded.LoadedVersions.Describe());
+        for (const auto& step : loaded.MigrationSteps) m_Logger->Info("{}: migrated {}", fileName, step);
 
         std::scoped_lock lock(m_Mutex);
         auto [it, _] = m_Scenes.insert_or_assign(name, std::move(scene));

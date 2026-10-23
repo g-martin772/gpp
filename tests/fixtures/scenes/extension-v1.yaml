@@ -1,0 +1,9 @@
+Scene: GoldenExtV1
+SchemaVersion: 2
+Entities:
+  - Guid: 5
+    Components:
+      Metadata: {Guid: 5, Name: A, TypeTag: Empty}
+ChainExt:
+  Version: 1
+  Alpha: 7

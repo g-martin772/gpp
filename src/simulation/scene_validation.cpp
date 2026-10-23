@@ -5,6 +5,7 @@ module GPP.Simulation;
 
 import :SceneValidation;
 import :Scene;
+import :SceneMigration;
 import :Components;
 import :ComponentRegistry;
 import :Reflection;
@@ -117,7 +118,8 @@ namespace GPP
             return true;
         }
 
-        void ValidateComponent(Sink& sink, const ComponentTypeInfo& info, const YAML::Node& node, const int version)
+        void ValidateComponent(Sink& sink, const ComponentTypeInfo& info, const YAML::Node& node,
+                               const YAML::Node& decodeNode)
         {
             if (!node.IsMap() && !node.IsNull() && !info.Fields.empty())
             {
@@ -149,28 +151,20 @@ namespace GPP
             const auto entity = scratch.create();
             try
             {
-                if (version < 2 && info.MigrateLegacy)
-                {
-                    YAML::Node migrated = YAML::Clone(node);
-                    info.MigrateLegacy(migrated);
-                    info.Decode(scratch, entity, migrated);
-                }
-                else
-                {
-                    info.Decode(scratch, entity, node);
-                }
+                info.Decode(scratch, entity, decodeNode);
             }
             catch (const YAML::Exception& error)
             {
+                const bool located = decodeNode.is(node) && error.mark.line >= 0;
                 std::string field;
-                if (node.IsMap() && error.mark.line >= 0)
+                if (located && node.IsMap())
                 {
                     for (const auto& pair : node)
                     {
                         if (pair.second.Mark().line == error.mark.line) field = pair.first.as<std::string>("");
                     }
                 }
-                sink.Fail(error.msg, error.mark.line >= 0 ? error.mark : node.Mark(), std::move(field));
+                sink.Fail(error.msg, located ? error.mark : node.Mark(), std::move(field));
             }
             catch (const std::exception& error)
             {
@@ -185,7 +179,7 @@ namespace GPP
             return metadata && metadata.IsMap() && metadata["Name"] ? metadata["Name"].as<std::string>("") : std::string{};
         }
 
-        void ValidateEntity(Sink& sink, const YAML::Node& entityNode, const int version,
+        void ValidateEntity(Sink& sink, const YAML::Node& entityNode, const YAML::Node& migratedEntity,
                             std::unordered_set<std::uint64_t>& seenGuids)
         {
             sink.Context = {};
@@ -234,7 +228,11 @@ namespace GPP
                 else if (!info->Decode)
                     sink.Warn("component has no YAML decoder (ignored)", pair.first.Mark());
                 else
-                    ValidateComponent(sink, *info, pair.second, version);
+                {
+                    const auto migratedComponents = migratedEntity.IsMap() ? migratedEntity["Components"] : YAML::Node();
+                    const auto migratedNode = migratedComponents && migratedComponents.IsMap() ? migratedComponents[name] : YAML::Node();
+                    ValidateComponent(sink, *info, pair.second, migratedNode ? migratedNode : pair.second);
+                }
             }
             sink.Context.Component.clear();
         }
@@ -267,6 +265,62 @@ namespace GPP
         }
     }
 
+    namespace
+    {
+        bool CheckVersions(Sink& sink, const YAML::Node& root)
+        {
+            const auto& migrations = SceneMigrations::Instance();
+            bool ok = true;
+            if (const auto node = root["SchemaVersion"])
+            {
+                int version = 0;
+                try
+                {
+                    version = node.as<int>();
+                }
+                catch (const YAML::Exception&)
+                {
+                    sink.Fail("SchemaVersion is not an integer", node.Mark());
+                    return false;
+                }
+                if (const auto current = *migrations.CurrentVersion(""); version > current)
+                {
+                    sink.Fail(std::format("scene schema version {} is newer than this build supports ({}); "
+                                          "the scene is not loaded",
+                                          version, current),
+                              node.Mark());
+                    ok = false;
+                }
+            }
+            for (const auto& pair : root)
+            {
+                const auto key = pair.first.as<std::string>("");
+                if (key == "Scene" || key == "Entities" || key == "Seed" || key == "SchemaVersion"
+                    || key == "TimeScale" || !pair.second.IsMap() || !pair.second["Version"])
+                {
+                    continue;
+                }
+                const auto version = pair.second["Version"].as<int>(0);
+                const auto current = migrations.CurrentVersion(key);
+                if (!current)
+                {
+                    sink.Warn(std::format("extension '{}' (version {}) is unknown to this build and kept unchanged",
+                                          key, version),
+                              pair.first.Mark());
+                }
+                else if (version > *current)
+                {
+                    sink.Fail(std::format("extension '{}' version {} is newer than this build supports ({}); "
+                                          "the scene is not loaded",
+                                          key, version, *current),
+                              pair.second["Version"].Mark());
+                    ok = false;
+                }
+            }
+            return ok;
+        }
+    }
+
     std::vector<SceneDiagnostic> ValidateSceneYaml(const std::string& text)
     {
         RegisterBaseComponents();
@@ -289,25 +343,18 @@ namespace GPP
             return std::move(sink.Items);
         }
 
-        int version = 1;
-        if (const auto node = root["SchemaVersion"])
+        if (!CheckVersions(sink, root)) return std::move(sink.Items);
+        YAML::Node migrated = YAML::Clone(root);
+        try
         {
-            try
-            {
-                version = node.as<int>();
-                if (version > kSceneSchemaVersion)
-                {
-                    sink.Warn(std::format("scene schema version {} is newer than this build supports ({}); "
-                                          "unknown data may be dropped",
-                                          version, kSceneSchemaVersion),
-                              node.Mark());
-                }
-            }
-            catch (const YAML::Exception&)
-            {
-                sink.Fail("SchemaVersion is not an integer", node.Mark());
-            }
+            if (MigrateSceneDocument(migrated).Steps.empty()) migrated = root;
         }
+        catch (const std::exception& error)
+        {
+            sink.Fail(error.what(), root.Mark());
+            return std::move(sink.Items);
+        }
+
         for (const auto* key : {"Seed", "TimeScale"})
         {
             const auto node = root[key];
@@ -324,6 +371,7 @@ namespace GPP
         }
 
         const auto entities = root["Entities"];
+        const auto migratedEntities = migrated["Entities"];
         if (!entities) return std::move(sink.Items);
         if (!entities.IsSequence())
         {
@@ -332,7 +380,11 @@ namespace GPP
         }
 
         std::unordered_set<std::uint64_t> guids;
-        for (const auto& entityNode : entities) ValidateEntity(sink, entityNode, version, guids);
+        for (std::size_t i = 0; i < entities.size(); ++i)
+        {
+            ValidateEntity(sink, entities[i], migratedEntities && migratedEntities.IsSequence() ? migratedEntities[i] : YAML::Node(),
+                           guids);
+        }
         CheckEntityRefs(sink, entities, guids);
         return std::move(sink.Items);
     }

@@ -1,0 +1,10 @@
+Scene: GoldenV1
+Entities:
+  - Guid: 11
+    Components:
+      Metadata: {Guid: 11, Name: Ship, TypeTag: Mesh}
+      Transform: {Position: [1, 2, 3], Rotation: [0, 0, 0, 1], Scale: [1, 1, 1]}
+      Velocity: {Linear: [2, 0, 0], Angular: [0, 1, 0]}
+      RigidBody: {Type: Dynamic, Mass: 5.0e+24}
+      Collider: {Shape: Sphere, Radius: 0.5}
+      Bogus: {X: 1}
