@@ -593,7 +593,6 @@ namespace GPP
         }
         try
         {
-            // Other instances may have saved entries since startup; merge so the last writer does not drop them.
             if (const auto onDisk = ReadPipelineCacheFile(); !onDisk.empty())
             {
                 const vk::PipelineCacheCreateInfo createInfo({}, onDisk.size(), onDisk.data());
@@ -682,6 +681,113 @@ namespace GPP
 
         static std::mutex fallback; //?
         return fallback;
+    }
+
+    std::vector<vk::Queue> VulkanDevice::GetUniqueQueues() const
+    {
+        std::vector<vk::Queue> queues;
+        queues.reserve(m_QueueMutexes.size());
+        for (const auto& entry : m_QueueMutexes)
+        {
+            queues.push_back(entry.first);
+        }
+        return queues;
+    }
+
+    QueueIdleFence::QueueIdleFence(VulkanDevice& device) : m_Device(device.GetDevice())
+    {
+        try
+        {
+            for (const auto queue : device.GetUniqueQueues())
+            {
+                const auto fence = m_Device.createFence({});
+                m_Fences.push_back(fence);
+                std::scoped_lock lock(device.GetQueueMutex(queue));
+                queue.submit(0, nullptr, fence);
+            }
+        }
+        catch (...)
+        {
+            m_Device.waitIdle();
+            for (const auto fence : m_Fences) m_Device.destroyFence(fence);
+            throw;
+        }
+    }
+
+    QueueIdleFence::~QueueIdleFence()
+    {
+        if (!m_Device)
+        {
+            return;
+        }
+        if (!m_Fences.empty())
+        {
+            (void)m_Device.waitForFences(static_cast<std::uint32_t>(m_Fences.size()), m_Fences.data(), vk::True,
+                                         5'000'000'000ull);
+        }
+        for (const auto fence : m_Fences) m_Device.destroyFence(fence);
+    }
+
+    bool QueueIdleFence::Signaled() const
+    {
+        return std::ranges::all_of(m_Fences, [this](const vk::Fence fence)
+        {
+            return m_Device.getFenceStatus(fence) == vk::Result::eSuccess;
+        });
+    }
+
+    RetiredObjects::RetiredObjects(std::shared_ptr<VulkanDevice> device, const std::chrono::milliseconds grace)
+        : m_Device(std::move(device)), m_Grace(grace)
+    {
+    }
+
+    RetiredObjects::~RetiredObjects()
+    {
+        std::deque<Entry> entries;
+        {
+            std::scoped_lock lock(m_Mutex);
+            entries.swap(m_Entries);
+        }
+        if (!entries.empty() && m_Device && m_Device->GetDevice())
+        {
+            m_Device->WaitIdle();
+        }
+    }
+
+    void RetiredObjects::Retire(std::shared_ptr<void> object)
+    {
+        if (!object)
+        {
+            return;
+        }
+        std::scoped_lock lock(m_Mutex);
+        m_Entries.push_back({std::move(object), std::chrono::steady_clock::now(), nullptr});
+        m_Pending.store(m_Entries.size(), std::memory_order_relaxed);
+    }
+
+    void RetiredObjects::Collect(const std::chrono::steady_clock::time_point now)
+    {
+        std::vector<std::shared_ptr<void>> released;
+        {
+            std::scoped_lock lock(m_Mutex);
+            for (auto it = m_Entries.begin(); it != m_Entries.end();)
+            {
+                if (!it->Fence && now >= it->RetiredAt + m_Grace)
+                {
+                    it->Fence = std::make_unique<QueueIdleFence>(*m_Device);
+                }
+                if (it->Fence && it->Fence->Signaled())
+                {
+                    released.push_back(std::move(it->Object));
+                    it = m_Entries.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+            m_Pending.store(m_Entries.size(), std::memory_order_relaxed);
+        }
     }
 
     void VulkanDevice::WaitIdle()

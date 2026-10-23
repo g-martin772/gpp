@@ -3,6 +3,7 @@ export module GPP.Graphics:HotReload;
 import vulkan;
 import GPP.Core;
 import :Shader;
+import :Vulkan.Device;
 import :Vulkan.Pipeline;
 
 namespace GPP
@@ -84,12 +85,12 @@ namespace GPP
         void HandleFileChanged(const ShaderFileChangedEvent& event);
         void HandleCompiled(const std::shared_ptr<CompiledPipeline>& compiled);
         void SetProgress(ShaderCompilationProgress progress);
-        void DrainRetired();
         void Notify(NotificationKind kind, std::string title, std::string message) const;
 
         std::shared_ptr<VulkanDevice> m_Device;
         VulkanPipelineSpecification m_PipelineSpecification;
         ShaderPipelineDescription m_Description;
+        mutable RetiredObjects m_Retired;
         bool m_IsCompute = false;
         ShaderCompiler m_Compiler;
         std::shared_ptr<Logger> m_Logger;
@@ -103,8 +104,6 @@ namespace GPP
         mutable std::mutex m_Mutex;
         std::condition_variable m_ReloadCondition;
         std::shared_ptr<VulkanPipeline> m_CurrentPipeline;
-        std::deque<std::shared_ptr<VulkanPipeline>> m_RetiredPipelines;
-        static constexpr std::size_t kMaxRetiredPipelines = 3;
         ShaderReflection m_Reflection;
         ShaderPipelineMetadata m_Metadata;
         ShaderCompilationProgress m_Progress;

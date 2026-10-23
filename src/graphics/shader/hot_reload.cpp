@@ -4,6 +4,7 @@ import vulkan;
 import GPP.Core;
 import :Shader;
 import :HotReload;
+import :Vulkan.Device;
 import :Vulkan.Pipeline;
 
 namespace GPP
@@ -35,6 +36,7 @@ namespace GPP
         : m_Device(std::move(device)),
           m_PipelineSpecification(pipelineSpecification),
           m_Description(std::move(description)),
+          m_Retired(m_Device),
           m_IsCompute(m_Description.compute.has_value()),
           m_Compiler(fileSystem, logger),
           m_Logger(std::move(logger)),
@@ -171,8 +173,7 @@ namespace GPP
         }
         if (m_CurrentPipeline)
         {
-            m_RetiredPipelines.push_back(std::move(m_CurrentPipeline));
-            DrainRetired();
+            m_Retired.Retire(std::move(m_CurrentPipeline));
         }
         m_CurrentPipeline = std::move(pipeline);
         m_Dependencies = std::move(dependencies);
@@ -499,16 +500,12 @@ namespace GPP
         m_Logger->Notifications()->Post(kind, std::move(title), std::move(message), 0.0f, "shader:" + name);
     }
 
-    void ShaderPipeline::DrainRetired()
-    {
-        while (m_RetiredPipelines.size() > kMaxRetiredPipelines)
-        {
-            m_RetiredPipelines.pop_front();
-        }
-    }
-
     std::shared_ptr<VulkanPipeline> ShaderPipeline::GetPipeline() const
     {
+        if (m_Retired.Pending() > 0)
+        {
+            m_Retired.Collect();
+        }
         std::scoped_lock lock(m_Mutex);
         return m_CurrentPipeline;
     }

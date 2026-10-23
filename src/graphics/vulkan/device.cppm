@@ -73,6 +73,7 @@ namespace GPP
         }
 
         [[nodiscard]] std::mutex& GetQueueMutex(vk::Queue queue) const;
+        [[nodiscard]] std::vector<vk::Queue> GetUniqueQueues() const;
 
         [[nodiscard]] const vk::detail::DispatchLoaderDynamic& GetDispatcher() const noexcept { return m_Dispatcher; }
 
@@ -100,6 +101,54 @@ namespace GPP
         vk::PipelineCache m_PipelineCache;
         std::filesystem::path m_PipelineCachePath;
         GpuCapabilities m_Capabilities;
+    };
+
+    // Signals once everything submitted to every queue before construction has finished executing.
+    export class QueueIdleFence
+    {
+    public:
+        explicit QueueIdleFence(VulkanDevice& device);
+        ~QueueIdleFence();
+
+        QueueIdleFence(const QueueIdleFence&) = delete;
+        QueueIdleFence& operator=(const QueueIdleFence&) = delete;
+
+        [[nodiscard]] bool Signaled() const;
+
+    private:
+        vk::Device m_Device;
+        std::vector<vk::Fence> m_Fences;
+    };
+
+    // Keeps objects alive until the GPU can no longer be using them: after a grace period that covers
+    // command buffers recorded but not yet submitted, plus a queue fence that covers submitted work.
+    export class RetiredObjects
+    {
+    public:
+        explicit RetiredObjects(std::shared_ptr<VulkanDevice> device,
+                                std::chrono::milliseconds grace = std::chrono::milliseconds(2000));
+        ~RetiredObjects();
+
+        RetiredObjects(const RetiredObjects&) = delete;
+        RetiredObjects& operator=(const RetiredObjects&) = delete;
+
+        void Retire(std::shared_ptr<void> object);
+        void Collect(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+        [[nodiscard]] std::size_t Pending() const noexcept { return m_Pending.load(std::memory_order_relaxed); }
+
+    private:
+        struct Entry
+        {
+            std::shared_ptr<void> Object;
+            std::chrono::steady_clock::time_point RetiredAt;
+            std::unique_ptr<QueueIdleFence> Fence;
+        };
+
+        std::shared_ptr<VulkanDevice> m_Device;
+        std::chrono::milliseconds m_Grace;
+        std::mutex m_Mutex;
+        std::deque<Entry> m_Entries;
+        std::atomic<std::size_t> m_Pending{0};
     };
 
     // Instance and device without a window system; nullptr when no usable Vulkan device exists.
