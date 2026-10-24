@@ -3,6 +3,7 @@ module;
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/base_sink.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 module GPP.Core;
@@ -93,6 +94,17 @@ namespace GPP
 
         std::vector<spdlog::sink_ptr> sinks{console_sink, file_sink};
         m_logger = spdlog::logger(name, sinks.begin(), sinks.end());
+        AttachBuffer();
+    }
+
+    void Logger::CreateRotatingMultiLogger(const $string &name, const $string &filename, const std::size_t maxBytes,
+                                           const std::size_t maxFiles) {
+        const auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        const auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(filename, maxBytes, maxFiles);
+
+        std::vector<spdlog::sink_ptr> sinks{console_sink, file_sink};
+        m_logger = spdlog::logger(name, sinks.begin(), sinks.end());
+        m_logger.flush_on(spdlog::level::info);
         AttachBuffer();
     }
 

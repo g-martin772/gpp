@@ -53,6 +53,7 @@ namespace GPP
         [[nodiscard]] const std::filesystem::path& ConfigDir() const noexcept { return m_ConfigDir; }
         [[nodiscard]] const std::filesystem::path& StateDir() const noexcept { return m_StateDir; }
         [[nodiscard]] const std::filesystem::path& CacheDir() const noexcept { return m_CacheDir; }
+        [[nodiscard]] const std::filesystem::path& LogDir() const noexcept { return m_LogDir; }
         [[nodiscard]] const std::filesystem::path& UserDataDir() const noexcept { return m_UserDataDir; }
         [[nodiscard]] std::filesystem::path UserSubdir(std::string_view name) const;
         [[nodiscard]] std::filesystem::path TempDir() const;
@@ -65,6 +66,7 @@ namespace GPP
         std::filesystem::path m_ConfigDir;
         std::filesystem::path m_StateDir;
         std::filesystem::path m_CacheDir;
+        std::filesystem::path m_LogDir;
         std::filesystem::path m_UserDataDir;
     };
 }

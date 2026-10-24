@@ -26,6 +26,16 @@ namespace GPP
             {
                 auto logger = std::make_shared<Logger>();
                 logger->CreateConsoleLogger("GPP APP");
+                if (const auto paths = _.GetRequiredService<AppPaths>(); paths->IsInstalled())
+                {
+                    std::error_code error;
+                    std::filesystem::create_directories(paths->LogDir(), error);
+                    if (!error)
+                    {
+                        logger->CreateRotatingMultiLogger("GPP APP", (paths->LogDir() / "app.log").string(),
+                                                          std::size_t{2} << 20, 3);
+                    }
+                }
 #ifdef NDEBUG
                 logger->SetLevel(LogLevel::Info);
 #else

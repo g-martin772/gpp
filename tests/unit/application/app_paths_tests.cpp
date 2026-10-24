@@ -125,6 +125,7 @@ TEST_CASE("Dev mode paths reproduce the .gpp layout", "[application][paths]")
     CHECK(paths.ResourceDir() == tree.Root / "repo");
     CHECK(paths.ConfigDir().string() == ".gpp");
     CHECK(paths.StateDir().string() == ".gpp");
+    CHECK(paths.LogDir().string() == ".gpp/logs");
     CHECK((paths.CacheDir() / "shader-cache").string() == ".gpp/shader-cache");
     CHECK((paths.CacheDir() / "hot-reload-cache").string() == ".gpp/hot-reload-cache");
     CHECK((paths.ConfigDir() / "imgui_main.ini").string() == ".gpp/imgui_main.ini");
@@ -146,10 +147,12 @@ TEST_CASE("Installed mode paths follow XDG and the documents dir", "[application
             {"HOME", "/home/u"},
             {"XDG_CONFIG_HOME", "/cfg"},
             {"XDG_CACHE_HOME", "/cache"},
+            {"XDG_STATE_HOME", "/state"},
             {"XDG_DOCUMENTS_DIR", "/docs"}
         })
     });
     CHECK(paths.IsInstalled());
+    CHECK(paths.LogDir() == "/state/demo/logs");
     CHECK(paths.ResourceDir() == tree.Root / "share" / "demo");
     CHECK(paths.ConfigDir() == "/cfg/demo");
     CHECK(paths.StateDir() == "/cfg/demo");

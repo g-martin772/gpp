@@ -145,6 +145,7 @@ namespace GPP
         {
             paths.m_ResourceDir = inputs.WorkingDir;
             paths.m_ConfigDir = paths.m_StateDir = paths.m_CacheDir = paths.m_UserDataDir = ".gpp";
+            paths.m_LogDir = std::filesystem::path(".gpp") / "logs";
             return paths;
         }
 
@@ -153,6 +154,7 @@ namespace GPP
         paths.m_ResourceDir = (inputs.BinaryDir / ".." / ".." / "share" / id).lexically_normal();
         paths.m_ConfigDir = paths.m_StateDir = xdg.ConfigHome / id;
         paths.m_CacheDir = xdg.CacheHome / id;
+        paths.m_LogDir = xdg.StateHome / id / "logs";
         paths.m_UserDataDir = xdg.Documents / (inputs.Info.Name.empty() ? inputs.Info.Id : inputs.Info.Name);
         return paths;
     }

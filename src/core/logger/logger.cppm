@@ -27,6 +27,7 @@ namespace GPP
         void CreateConsoleLogger(const $string& name = "console");
         void CreateFileLogger(const $string& name, const $string& filename, bool truncate = false);
         void CreateMultiLogger(const $string& name, const $string& filename, bool truncate = false);
+        void CreateRotatingMultiLogger(const $string& name, const $string& filename, std::size_t maxBytes, std::size_t maxFiles);
         void SetPattern(const $string& pattern);
         void SetLevel(LogLevel level);
         void Flush();
