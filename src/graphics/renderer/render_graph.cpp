@@ -411,7 +411,6 @@ namespace GPP
             }
 
             auto& slicer = slicerFor(pass.Name);
-            slicer.BeginJob();
             std::uint32_t done = 0;
             while (done < pass.TotalItems)
             {

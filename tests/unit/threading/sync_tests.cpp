@@ -101,16 +101,64 @@ TEST_CASE("AdaptiveSlicer converges on slices of about the target duration", "[s
     CHECK(largest >= 300);
 }
 
-TEST_CASE("AdaptiveSlicer shrinks immediately after an expensive slice", "[sync][slicer]")
+TEST_CASE("AdaptiveSlicer jumps to the measured cost after a budget-blowing slice", "[sync][slicer]")
 {
     AdaptiveSlicer slicer;
-    slicer.Report(1000, 1.0); // cheap: 0.001 ms/item
+    slicer.Report(1000, 1.0);
     const auto cheapSize = slicer.NextSliceSize(1'000'000);
-    slicer.Report(cheapSize, 40.0); // one slice blows the budget
-    const auto afterSpike = slicer.NextSliceSize(1'000'000);
-    CHECK(afterSpike < cheapSize);
-    // Cost per item is now 40ms/cheapSize, so a 4ms budget must give <= cheapSize/10 (+ rounding).
-    CHECK(afterSpike <= cheapSize / 10 + 2);
+    slicer.Report(cheapSize, 40.0);
+    CHECK(slicer.CostPerItemMs() == Catch::Approx(40.0 / cheapSize));
+    CHECK(slicer.NextSliceSize(1'000'000) == cheapSize / 4);
+}
+
+TEST_CASE("AdaptiveSlicer moves slowly on small deviations", "[sync][slicer]")
+{
+    AdaptiveSlicer slicer;
+    slicer.Report(1000, 4.0);
+    const double base = slicer.CostPerItemMs();
+    slicer.Report(1000, 5.0);
+    CHECK(slicer.CostPerItemMs() == Catch::Approx(base + (0.005 - base) * slicer.GetConfig().SlowerGain));
+    slicer.Reset();
+    slicer.Report(1000, 4.0);
+    slicer.Report(1000, 3.0);
+    CHECK(slicer.CostPerItemMs() == Catch::Approx(base + (0.003 - base) * slicer.GetConfig().FasterGain));
+}
+
+TEST_CASE("AdaptiveSlicer slice size stays within the clamp of the previous slice", "[sync][slicer]")
+{
+    AdaptiveSlicer slicer;
+    slicer.Report(1000, 4.0);
+    const auto first = slicer.NextSliceSize(1'000'000);
+    slicer.Report(first, 0.01);
+    for (int i = 0; i < 5; ++i)
+    {
+        const auto previous = slicer.NextSliceSize(1'000'000);
+        slicer.Report(previous, 0.01);
+        const auto next = slicer.NextSliceSize(1'000'000);
+        CHECK(next <= previous * 2 + 1);
+        CHECK(next + 1 >= previous / 4);
+    }
+}
+
+TEST_CASE("AdaptiveSlicer slice durations stay steady under noisy samples", "[sync][slicer]")
+{
+    AdaptiveSlicer slicer;
+    constexpr double kCostMs = 0.01;
+    const double noise[] = {1.0, 1.3, 0.8, 1.1, 0.9, 1.4, 0.7, 1.0, 1.2, 0.85};
+    std::vector<double> durations;
+    for (int i = 0; i < 400; ++i)
+    {
+        const auto size = slicer.NextSliceSize(1'000'000);
+        const double elapsed = size * kCostMs * noise[i % 10];
+        slicer.Report(size, elapsed);
+        if (i >= 20)
+        {
+            durations.push_back(size * kCostMs);
+        }
+    }
+    const auto [low, high] = std::minmax_element(durations.begin(), durations.end());
+    CHECK(*low > 2.8);
+    CHECK(*high < 5.2);
 }
 
 TEST_CASE("AdaptiveSlicer never exceeds the dispatch cap or the remaining work", "[sync][slicer]")

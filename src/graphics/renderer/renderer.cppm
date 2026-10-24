@@ -156,6 +156,7 @@ namespace GPP
         RateMeter FrameMeter;
         std::atomic<double> LastGpuMs{0.0};
         std::atomic<std::uint32_t> LastSubmissions{0};
+        std::atomic<double> LastMaxSubmitMs{0.0};
         std::atomic<std::int64_t> InFlightSinceNs{0};
         std::atomic<bool> Idle{false};
         mutable std::mutex PassMutex;
@@ -255,6 +256,7 @@ namespace GPP
             double CurrentFrameMs = 0.0;
             std::vector<GpuScopeTiming> Passes;
             std::uint32_t Submissions = 0;
+            double MaxSubmitMs = 0.0;
             std::uint64_t FramesRendered = 0;
             glm::uvec2 Extent{0, 0};
             bool Visible = false;

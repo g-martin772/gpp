@@ -299,6 +299,7 @@ namespace GPP
             stats.Passes = target->PassTimings;
         }
         stats.Submissions = target->LastSubmissions.load(std::memory_order_relaxed);
+        stats.MaxSubmitMs = target->LastMaxSubmitMs.load(std::memory_order_relaxed);
         stats.FramesRendered = target->FrameMeter.Total();
         stats.Extent = BufferTargetResources::UnpackExtent(target->DesiredExtent.load(std::memory_order_relaxed));
         stats.Visible = target->Visible.load(std::memory_order_relaxed);
@@ -941,6 +942,7 @@ namespace GPP
 
             const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
             m_GpuMs += ms;
+            m_MaxSubmitMs = std::max(m_MaxSubmitMs, ms);
             ++m_Submissions;
             return ms;
         }
@@ -950,6 +952,7 @@ namespace GPP
 
         [[nodiscard]] double GpuMs() const noexcept { return m_GpuMs; }
         [[nodiscard]] std::uint32_t Submissions() const noexcept { return m_Submissions; }
+        [[nodiscard]] double MaxSubmitMs() const noexcept { return m_MaxSubmitMs; }
 
     private:
         VulkanDevice& m_Device;
@@ -959,6 +962,7 @@ namespace GPP
         VulkanFence m_Fence;
         std::optional<VulkanCommandBuffer> m_Cmd;
         double m_GpuMs = 0.0;
+        double m_MaxSubmitMs = 0.0;
         std::uint32_t m_Submissions = 0;
     };
 
@@ -1135,6 +1139,7 @@ namespace GPP
         const auto frameEnd = std::chrono::steady_clock::now();
         target.LastGpuMs.store(sink.GpuMs(), std::memory_order_relaxed);
         target.LastSubmissions.store(sink.Submissions(), std::memory_order_relaxed);
+        target.LastMaxSubmitMs.store(sink.MaxSubmitMs(), std::memory_order_relaxed);
         target.FrameMeter.Tick(std::chrono::duration<double, std::milli>(frameEnd - frameStart).count(), frameEnd);
         return true;
     }
@@ -1769,9 +1774,9 @@ namespace GPP
                 {
                     if (const auto stats = GetBufferTargetStats(target->Id))
                     {
-                        m_Logger->Debug("Render stats: target {} {:.1f} fps (avg {:.1f} ms, gpu {:.1f} ms in {} submissions, {}x{}, {})",
+                        m_Logger->Debug("Render stats: target {} {:.1f} fps (avg {:.1f} ms, gpu {:.1f} ms in {} submissions, slowest {:.1f} ms, {}x{}, {})",
                                         target->Id, stats->FramesPerSecond, stats->AverageFrameMs, stats->GpuMs,
-                                        stats->Submissions, stats->Extent.x, stats->Extent.y,
+                                        stats->Submissions, stats->MaxSubmitMs, stats->Extent.x, stats->Extent.y,
                                         stats->Visible ? "visible" : "hidden");
                     }
                 }

@@ -130,12 +130,16 @@ namespace GPP
             std::uint32_t MaxItems = 65535;
             std::uint32_t InitialItems = 256;
             double GrowthLimit = 2.0;
+            double ShrinkLimit = 0.25;
+            double SlowerGain = 0.25;
+            double FasterGain = 0.1;
+            double SpikeFactor = 1.5;
         };
 
         AdaptiveSlicer() = default;
         explicit AdaptiveSlicer(Config config) : m_Config(config) {}
 
-        [[nodiscard]] std::uint32_t NextSliceSize(const std::uint32_t remaining) const noexcept
+        [[nodiscard]] std::uint32_t NextSliceSize(const std::uint32_t remaining) noexcept
         {
             if (remaining == 0)
             {
@@ -145,10 +149,12 @@ namespace GPP
             double size = m_CostPerItemMs > 0.0
                               ? m_Config.TargetMs / m_CostPerItemMs
                               : static_cast<double>(m_Config.InitialItems);
-            if (m_LastSize > 0)
+            if (m_Reference > 0)
             {
-                size = std::min(size, static_cast<double>(m_LastSize) * m_Config.GrowthLimit);
+                const double reference = static_cast<double>(m_Reference);
+                size = std::clamp(size, reference * m_Config.ShrinkLimit, reference * m_Config.GrowthLimit);
             }
+            m_Planned = static_cast<std::uint32_t>(std::clamp(size, 1.0, static_cast<double>(m_Config.MaxItems)));
             auto items = static_cast<std::uint32_t>(
                 std::clamp(size, static_cast<double>(m_Config.MinItems), static_cast<double>(cap)));
             // Don't leave a sliver for a whole extra submission when the rest nearly fits.
@@ -166,15 +172,19 @@ namespace GPP
                 return;
             }
             const double sample = std::max(elapsedMs, 0.0) / static_cast<double>(items);
-
-            m_CostPerItemMs = m_CostPerItemMs <= 0.0 || sample > m_CostPerItemMs
-                                  ? sample
-                                  : m_CostPerItemMs * 0.75 + sample * 0.25;
-            m_LastSize = items;
+            double gain = 1.0;
+            if (m_CostPerItemMs > 0.0 && elapsedMs <= m_Config.SpikeFactor * m_Config.TargetMs)
+            {
+                gain = sample > m_CostPerItemMs ? m_Config.SlowerGain : m_Config.FasterGain;
+            }
+            m_CostPerItemMs += (sample - m_CostPerItemMs) * gain;
+            if (items >= m_Planned)
+            {
+                m_Reference = items;
+            }
         }
 
-        void BeginJob() noexcept { m_LastSize = 0; }
-        void Reset() noexcept { m_CostPerItemMs = 0.0; m_LastSize = 0; }
+        void Reset() noexcept { m_CostPerItemMs = 0.0; m_Reference = 0; m_Planned = 0; }
 
         [[nodiscard]] double CostPerItemMs() const noexcept { return m_CostPerItemMs; }
         [[nodiscard]] const Config& GetConfig() const noexcept { return m_Config; }
@@ -183,6 +193,7 @@ namespace GPP
     private:
         Config m_Config{};
         double m_CostPerItemMs = 0.0;
-        std::uint32_t m_LastSize = 0;
+        std::uint32_t m_Reference = 0;
+        std::uint32_t m_Planned = 0;
     };
 }
