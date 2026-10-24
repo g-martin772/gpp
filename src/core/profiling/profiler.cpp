@@ -1,3 +1,5 @@
+module;
+#include <pthread.h>
 module GPP.Core;
 
 import :Profiling;
@@ -53,6 +55,7 @@ namespace GPP
     void Profiler::SetThreadName(const std::string_view name)
     {
         ThisRing()->Rename(std::string(name));
+        pthread_setname_np(pthread_self(), std::string(name.substr(0, 15)).c_str());
     }
 
     const char* Profiler::Intern(const std::string_view name)
