@@ -3,6 +3,7 @@ module GPP.Graphics;
 import std;
 import GPP.Core;
 import :ShaderAssets;
+import :ShaderDiagnostics;
 
 namespace GPP
 {
@@ -241,16 +242,34 @@ namespace GPP
                 const auto matches = std::ranges::find(
                     shader.dependencies, normalizedChangedPath) != shader.dependencies.end() ||
                     shader.resolvedPath.lexically_normal() == normalizedChangedPath;
-                if (matches)
+                if (!matches) continue;
+                const auto id = "asset:" + key;
+                const auto name = shader.resolvedPath.filename().string();
+                try
                 {
-                    replacements.emplace_back(key, m_Compiler.Compile(
-                        shader.source, GetCompileOptions()));
+                    replacements.emplace_back(key, m_Compiler.Compile(shader.source, GetCompileOptions()));
+                    ShaderDiagnostics::Instance().ReportSuccess(id);
+                }
+                catch (const std::exception& exception)
+                {
+                    ShaderDiagnostics::Instance().ReportFailure(id, name, exception.what());
+                    if (m_Logger)
+                    {
+                        m_Logger->Error("Shader reload failed: {}", exception.what());
+                        m_Logger->Notifications()->Post(NotificationKind::Error, "Shader compile failed",
+                                                        name + "\n" + DescribeShaderError(exception.what()), 0.0f,
+                                                        "shader:" + name);
+                    }
                 }
             }
         }
         if (replacements.empty())
         {
             return;
+        }
+        if (m_Logger)
+        {
+            m_Logger->Notifications()->Post(NotificationKind::Info, "Shaders reloaded", {}, 2.0f, "shaders-reloaded");
         }
         {
             std::scoped_lock lock(m_Mutex);

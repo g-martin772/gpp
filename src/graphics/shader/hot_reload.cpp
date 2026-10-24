@@ -6,6 +6,7 @@ import vulkan;
 import GPP.Core;
 import :Shader;
 import :HotReload;
+import :ShaderDiagnostics;
 import :Vulkan.Device;
 import :Vulkan.Pipeline;
 
@@ -32,6 +33,8 @@ namespace GPP
                 std::clamp<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(ThreadPool::Instance().WorkerCount()) / 2, 1, 64));
             return gate;
         }
+
+        std::atomic<std::uint64_t> g_NextPipelineId{1};
 
         struct ShaderPipelineCompiledEvent
         {
@@ -76,6 +79,11 @@ namespace GPP
             m_SourcePaths.push_back(fileSystem->ResolvePath(m_Description.vertex->path));
             m_SourcePaths.push_back(fileSystem->ResolvePath(m_Description.fragment->path));
         }
+        for (const auto& path : m_SourcePaths)
+        {
+            m_SourceName += (m_SourceName.empty() ? "" : " + ") + path.filename().string();
+        }
+        m_DiagnosticsId = std::format("{}#{}", m_SourceName, g_NextPipelineId.fetch_add(1));
         if (m_Description.enableHotReload)
         {
             for (const auto& path : m_SourcePaths)
@@ -94,6 +102,14 @@ namespace GPP
         catch (...)
         {
         }
+        ShaderDiagnostics::Instance().Forget(m_DiagnosticsId);
+    }
+
+    void ShaderPipeline::ReportFailure(const std::string& error)
+    {
+        ShaderDiagnostics::Instance().ReportFailure(m_DiagnosticsId, m_SourceName, error);
+        if (m_Logger) m_Logger->Error("Shader reload failed: {}", error);
+        Notify(NotificationKind::Error, "Shader compile failed", DescribeShaderError(error));
     }
 
     void ShaderPipeline::SetProgress(ShaderCompilationProgress progress)
@@ -208,6 +224,7 @@ namespace GPP
             .reflection = reflection
         };
         m_LastError.clear();
+        ShaderDiagnostics::Instance().ReportSuccess(m_DiagnosticsId);
         m_Progress = {
             ShaderCompilationState::Ready,
             2,
@@ -278,7 +295,7 @@ namespace GPP
                     EventDelivery::Async, EventTarget::Render);
                 m_Watcher.StartAsync(m_Description.pollingInterval, m_StopSource.get_token()).get();
             }
-            QueueReload();
+            QueueReload(false);
             return true;
         }
         catch (...)
@@ -301,6 +318,7 @@ namespace GPP
                 m_Progress.message = error;
             }
             m_Logger->Error("Shader pipeline initialization failed: {}", error);
+            ShaderDiagnostics::Instance().ReportFailure(m_DiagnosticsId, m_SourceName, error);
             return false;
         }
     }
@@ -353,7 +371,7 @@ namespace GPP
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
             m_Running = false;
-            Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
+            ReportFailure(m_LastError);
             throw;
         }
         co_return;
@@ -388,8 +406,7 @@ namespace GPP
             m_LastError = exception.what();
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
-            m_Logger->Error("Shader reload failed: {}", m_LastError);
-            Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
+            ReportFailure(m_LastError);
             return false;
         }
     }
@@ -417,7 +434,7 @@ namespace GPP
                     std::scoped_lock lock(m_Mutex);
                     return std::exchange(m_NotifyOnInstall, false);
                 }();
-                if (notify) Notify(NotificationKind::Success, "Shader recompiled", {});
+                if (notify) NotifyReloaded();
             }
         }
         catch (const std::exception& exception)
@@ -426,8 +443,8 @@ namespace GPP
             m_LastError = exception.what();
             m_Progress.state = ShaderCompilationState::Failed;
             m_Progress.message = m_LastError;
-            m_Logger->Error("Shader reload failed: {}", m_LastError);
-            Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
+            m_NotifyOnInstall = false;
+            ReportFailure(m_LastError);
         }
         {
             std::scoped_lock lock(m_Mutex);
@@ -436,7 +453,7 @@ namespace GPP
         m_ReloadCondition.notify_all();
     }
 
-    void ShaderPipeline::QueueReload()
+    void ShaderPipeline::QueueReload(const bool userTriggered)
     {
         {
             std::scoped_lock lock(m_Mutex);
@@ -446,7 +463,7 @@ namespace GPP
             }
             m_Reloading = true;
             m_CompilationInFlight = true;
-            m_NotifyOnInstall = true;
+            m_NotifyOnInstall = userTriggered;
         }
         ThreadPool::Instance().Submit([this]
         {
@@ -475,8 +492,7 @@ namespace GPP
                 m_Reloading = false;
                 m_CompilationInFlight = false;
                 m_NotifyOnInstall = false;
-                m_Logger->Error("Shader reload failed: {}", m_LastError);
-                Notify(NotificationKind::Error, "Shader compile failed", m_LastError);
+                ReportFailure(m_LastError);
                 m_ReloadCondition.notify_all();
             }
         });
@@ -505,15 +521,20 @@ namespace GPP
         }
         if (matches(m_SourcePaths) || matches(dependencies))
         {
-            QueueReload();
+            QueueReload(true);
         }
+    }
+
+    void ShaderPipeline::NotifyReloaded() const
+    {
+        if (!m_Logger) return;
+        m_Logger->Notifications()->Post(NotificationKind::Info, "Shaders reloaded", {}, 2.0f, "shaders-reloaded");
     }
 
     void ShaderPipeline::Notify(const NotificationKind kind, std::string title, std::string message) const
     {
         if (!m_Logger) return;
-        std::string name;
-        for (const auto& path : m_SourcePaths) name += (name.empty() ? "" : " + ") + path.filename().string();
+        const auto& name = m_SourceName;
         constexpr std::size_t kMaxMessage = 480;
         if (message.size() > kMaxMessage) message = message.substr(0, kMaxMessage) + "...";
         if (!message.empty()) message = name + "\n" + message;

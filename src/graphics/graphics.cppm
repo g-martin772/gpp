@@ -11,6 +11,7 @@ export import :Renderer;
 export import :RenderConfig;
 export import :Shader;
 export import :ShaderAssets;
+export import :ShaderDiagnostics;
 export import :FontAssets;
 export import :HotReload;
 export import :UI;

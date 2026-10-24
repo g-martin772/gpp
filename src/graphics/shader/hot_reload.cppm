@@ -3,6 +3,7 @@ export module GPP.Graphics:HotReload;
 import vulkan;
 import GPP.Core;
 import :Shader;
+import :ShaderDiagnostics;
 import :Vulkan.Device;
 import :Vulkan.Pipeline;
 
@@ -81,11 +82,13 @@ namespace GPP
         Task<std::shared_ptr<CompiledPipeline>> CompileAsync();
         std::shared_ptr<CompiledPipeline> Compile();
         bool Install(std::shared_ptr<CompiledPipeline> compiled);
-        void QueueReload();
+        void QueueReload(bool userTriggered);
+        void ReportFailure(const std::string& error);
         void HandleFileChanged(const ShaderFileChangedEvent& event);
         void HandleCompiled(const std::shared_ptr<CompiledPipeline>& compiled);
         void SetProgress(ShaderCompilationProgress progress);
         void Notify(NotificationKind kind, std::string title, std::string message) const;
+        void NotifyReloaded() const;
 
         std::shared_ptr<VulkanDevice> m_Device;
         VulkanPipelineSpecification m_PipelineSpecification;
@@ -112,7 +115,9 @@ namespace GPP
         bool m_Running = false;
         bool m_Reloading = false;
         bool m_CompilationInFlight = false;
-        bool m_NotifyOnInstall = false; // set by file-triggered reloads, which report their outcome
+        bool m_NotifyOnInstall = false;
+        std::string m_DiagnosticsId;
+        std::string m_SourceName;
     };
 
     export using ShaderProgram = ShaderPipeline;
