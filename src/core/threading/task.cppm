@@ -33,6 +33,21 @@ export namespace GPP
             std::exception_ptr exception{nullptr};
             bool completed{false};
 
+            [[nodiscard]] bool IsCompleted()
+            {
+                std::scoped_lock lock(mutex);
+                return completed;
+            }
+
+            // False when the task already finished: the caller continues without suspending.
+            [[nodiscard]] bool TrySetContinuation(std::coroutine_handle<> awaiting)
+            {
+                std::scoped_lock lock(mutex);
+                if (completed) return false;
+                continuation = awaiting;
+                return true;
+            }
+
             struct FinalAwaiter
             {
                 [[nodiscard]] bool await_ready() const noexcept { return false; }
@@ -42,17 +57,12 @@ export namespace GPP
                 {
                     auto& promise = h.promise();
 
-                    {
-                        std::scoped_lock lock(promise.mutex);
-                        promise.completed = true;
-                    }
+                    // Completion, continuation hand-off and the wake-up happen under one lock: once a waiter sees
+                    // `completed` it may destroy this frame, so nothing below may touch the promise afterwards.
+                    std::scoped_lock lock(promise.mutex);
+                    promise.completed = true;
                     promise.cv.notify_all();
-
-                    if (promise.continuation)
-                    {
-                        return promise.continuation;
-                    }
-                    return std::noop_coroutine();
+                    return promise.continuation ? promise.continuation : std::noop_coroutine();
                 }
 
                 void await_resume() const noexcept
@@ -170,11 +180,8 @@ export namespace GPP
             if (!m_Handle) throw std::runtime_error("Task is empty or has been moved.");
 
             auto& promise = m_Handle.promise();
-            if (!promise.completed)
             {
-                // block caller
                 std::unique_lock lock(promise.mutex);
-                // wait until completed
                 promise.cv.wait(lock, [&] { return promise.completed; });
             }
 
@@ -192,13 +199,12 @@ export namespace GPP
 
             [[nodiscard]] bool await_ready() const noexcept
             {
-                return handle.done();
+                return handle.promise().IsCompleted();
             }
 
             [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting_coroutine) noexcept
             {
-                auto& promise = handle.promise();
-                promise.continuation = awaiting_coroutine;
+                if (!handle.promise().TrySetContinuation(awaiting_coroutine)) return awaiting_coroutine;
                 return std::noop_coroutine();
             }
 
@@ -306,9 +312,7 @@ export namespace GPP
             if (!m_Handle) throw std::runtime_error("Task is empty or has been moved.");
 
             auto& promise = m_Handle.promise();
-            if (!promise.completed)
             {
-                //m_Handle.resume();
                 std::unique_lock lock(promise.mutex);
                 promise.cv.wait(lock, [&] { return promise.completed; });
             }
@@ -325,13 +329,12 @@ export namespace GPP
 
             [[nodiscard]] bool await_ready() const noexcept
             {
-                return handle.done();
+                return handle.promise().IsCompleted();
             }
 
             [[nodiscard]] std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting_coroutine) noexcept
             {
-                auto& promise = handle.promise();
-                promise.continuation = awaiting_coroutine;
+                if (!handle.promise().TrySetContinuation(awaiting_coroutine)) return awaiting_coroutine;
                 return std::noop_coroutine();
             }
 

@@ -121,3 +121,31 @@ TEST_CASE("Task then -> Task<void> continuation", "[task][continuation]")
     cont.get();
     REQUIRE(ran);
 }
+
+namespace
+{
+    Task<int> Immediate(const int value)
+    {
+        co_return value;
+    }
+
+    Task<int> AwaitImmediate(const int value)
+    {
+        const int inner = co_await Immediate(value);
+        co_return inner + 1;
+    }
+}
+
+TEST_CASE("Awaiting a task that completes concurrently neither hangs nor touches a freed frame", "[GPP::Task][stress]")
+{
+    constexpr int kIterations = 20000;
+    auto finished = std::async(std::launch::async, [&]
+    {
+        long long sum = 0;
+        for (int i = 0; i < kIterations; ++i) sum += AwaitImmediate(i).get();
+        return sum;
+    });
+
+    REQUIRE(finished.wait_for(std::chrono::seconds(60)) == std::future_status::ready);
+    CHECK(finished.get() == static_cast<long long>(kIterations) * (kIterations - 1) / 2 + kIterations);
+}
