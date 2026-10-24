@@ -48,6 +48,7 @@ namespace GPP
             OpenFile,
             OpenTemplate,
             RemoveRecent,
+            Rescan,
             Quit,
             Custom
         };
@@ -79,6 +80,58 @@ namespace GPP
         LauncherPage Page = LauncherPage::Recent;
         std::string Filter;
         std::size_t Selected = 0;
+        std::size_t SelectedTemplate = 0;
+        std::size_t PageRows = 8;
+        bool FilterFocused = false;
+        bool FocusFilter = false;
+        bool ScrollToSelected = false;
+        std::string PendingRemove;
+    };
+
+    export enum class LauncherKey
+    {
+        Up, Down, Left, Right, Home, End, PageUp, PageDown, Enter, Escape, Tab, Delete, F5, Slash, N, O, R, F
+    };
+
+    export struct LauncherKeyEvent
+    {
+        LauncherKey Key = LauncherKey::Enter;
+        bool Ctrl = false;
+        bool Shift = false;
+    };
+
+    export struct LauncherKeyState
+    {
+        LauncherPage Page = LauncherPage::Recent;
+        bool TextActive = false;
+        bool FilterFocused = false;
+        bool FilterEmpty = true;
+        bool ModalOpen = false;
+        std::size_t ItemCount = 0;
+    };
+
+    export enum class LauncherKeyCommand
+    {
+        None,
+        Previous,
+        Next,
+        First,
+        Last,
+        PageUp,
+        PageDown,
+        Activate,
+        NextPage,
+        PreviousPage,
+        New,
+        Open,
+        Remove,
+        RemoveNow,
+        Rescan,
+        FocusFilter,
+        ClearFilter,
+        Close,
+        ConfirmRemove,
+        CancelRemove
     };
 
     export struct LauncherButton
@@ -97,6 +150,13 @@ namespace GPP
 
     export [[nodiscard]] std::vector<std::size_t> FilterLauncherRecents(
         const std::vector<LauncherRecent>& recents, std::string_view filter);
+
+    export [[nodiscard]] LauncherKeyCommand ResolveLauncherKey(const LauncherKeyEvent& event, const LauncherKeyState& state);
+
+    export [[nodiscard]] std::size_t MoveLauncherSelection(
+        std::size_t selected, std::size_t count, LauncherKeyCommand command, std::size_t pageRows);
+
+    export [[nodiscard]] std::string LauncherKeyHints(LauncherPage page);
 
     export [[nodiscard]] LauncherAction DrawLauncher(LauncherData& data, const LauncherHooks& hooks = {});
 }
