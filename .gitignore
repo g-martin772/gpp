@@ -2,6 +2,9 @@
 .cache/
 .gpp/
 /build/
+/build-asan/
+/build-tsan/
+/vcpkg_installed/
 
 /compile_commands.json
 *.spv
