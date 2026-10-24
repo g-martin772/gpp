@@ -216,3 +216,52 @@ TEST_CASE("Manual stepping stops the realtime loop but still honours Step", "[st
     REQUIRE(WaitFor([&] { return module->Ticks > frozen + 10; }));
     runner.Stop();
 }
+
+TEST_CASE("Step on a paused running runner equals the same ticks stepped one by one", "[step][transport]")
+{
+    glm::vec3 results[2];
+    for (int mode = 0; mode < 2; ++mode)
+    {
+        std::uint64_t guid = 0;
+        auto module = std::make_shared<DriftModule>();
+        auto runner = MakeRunner(MakeScene(guid), module);
+        module->Target = guid;
+        runner->Start();
+        runner->SetPaused(true);
+        runner->StepAndWait(2);
+        if (mode == 0)
+        {
+            runner->StepAndWait(7);
+        }
+        else
+        {
+            for (int i = 0; i < 7; ++i) runner->StepAndWait(1);
+        }
+        CHECK(runner->Tick() == 9);
+        const auto snapshot = runner->AcquireSnapshot();
+        results[mode] = glm::vec3(snapshot->Registry().get<TransformComponent>(snapshot->FindByGuid(guid)).Position);
+        runner->Stop();
+    }
+    CHECK(results[0].x > 0.0f);
+    CHECK(results[0] == results[1]);
+}
+
+TEST_CASE("A queued edit is applied before the requested steps run", "[step][transport]")
+{
+    std::uint64_t guid = 0;
+    auto module = std::make_shared<DriftModule>();
+    auto runner = MakeRunner(MakeScene(guid), module);
+    module->Target = guid;
+    runner->Start();
+    runner->SetPaused(true);
+
+    runner->EnqueueEdit([guid](Scene& scene)
+    {
+        scene.Registry().get<TransformComponent>(scene.FindByGuid(guid)).Position.z = 5.0f;
+    });
+    runner->StepAndWait(1);
+    const auto snapshot = runner->AcquireSnapshot();
+    CHECK(snapshot->Registry().get<TransformComponent>(snapshot->FindByGuid(guid)).Position.z == 5.0f);
+    CHECK(runner->IsPaused());
+    runner->Stop();
+}
