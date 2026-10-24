@@ -38,12 +38,18 @@ namespace GPP
 
         void TriggerWindowClose(WindowId id);
 
+        // Runs on the main thread when the main window is asked to close; returning false keeps the app open.
+        void SetCloseGuard(std::function<bool()> guard);
+        // Safe from any thread.
+        void SetMainWindowTitle(std::string title);
+
         void PollEvents();
         bool ShouldQuit() const noexcept;
 
         Task<void> ShowMessageBox(std::string_view title, std::string_view message, bool isError = false);
     private:
         void ApplyWindowIcon(void* sdlWindow);
+        bool AllowClose(WindowId id);
 
         mutable std::mutex m_WindowsMutex;
         std::unordered_map<WindowId, std::shared_ptr<Window>> m_Windows;
@@ -55,6 +61,8 @@ namespace GPP
         std::shared_ptr<WindowOptions> m_Options;
         std::shared_ptr<AppInfo> m_AppInfo;
         std::shared_ptr<IFileSystem> m_FileSystem;
+        std::mutex m_CloseGuardMutex;
+        std::function<bool()> m_CloseGuard;
         std::optional<RasterImage> m_Icon;
         bool m_IconLoaded{false};
         std::promise<void> m_ReadyPromise;

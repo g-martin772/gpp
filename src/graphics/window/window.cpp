@@ -85,6 +85,11 @@ namespace GPP
         co_return;
     }
 
+    void Window::SetTitleNow(const std::string& title) noexcept
+    {
+        SDL_SetWindowTitle(m_Window, title.c_str());
+    }
+
     Task<bool> Window::CreateVulkanSurface(VkInstance instance, vk::SurfaceKHR* outSurface) const noexcept
     {
         co_await ResumeOn(Application::Instance());

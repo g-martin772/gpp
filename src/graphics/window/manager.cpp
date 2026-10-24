@@ -39,6 +39,7 @@ namespace GPP
             }
             SDL_SetAppMetadata(m_AppInfo->Name.c_str(), m_AppInfo->Version.c_str(), m_AppInfo->Id.c_str());
             SDL_SetHint(SDL_HINT_APP_ID, m_AppInfo->Id.c_str());
+            SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
             if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
             {
                 throw std::runtime_error(std::string("Failed to initialize SDL3: ") + SDL_GetError());
@@ -266,6 +267,28 @@ namespace GPP
         }
     }
 
+    void WindowManager::SetCloseGuard(std::function<bool()> guard)
+    {
+        std::scoped_lock lock(m_CloseGuardMutex);
+        m_CloseGuard = std::move(guard);
+    }
+
+    bool WindowManager::AllowClose(const WindowId id)
+    {
+        const auto main = GetMainWindow();
+        if (!main || main->GetID() != id) return true;
+        std::scoped_lock lock(m_CloseGuardMutex);
+        return !m_CloseGuard || m_CloseGuard();
+    }
+
+    void WindowManager::SetMainWindowTitle(std::string title)
+    {
+        Application::Instance().ScheduleOnMainThread([this, title = std::move(title)]
+        {
+            if (const auto window = GetMainWindow()) window->SetTitleNow(title);
+        });
+    }
+
     void WindowManager::PollEvents()
     {
         SDL_Event event;
@@ -343,6 +366,7 @@ namespace GPP
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                 {
                     const auto windowId = event.window.windowID;
+                    if (!AllowClose(windowId)) break;
                     TriggerWindowClose(windowId);
                     m_Dispatcher->Publish(WindowCloseRequestedEvent{windowId});
                     break;
