@@ -62,7 +62,6 @@ namespace GPP
         bool Remove{false};
     };
 
-    // Dispatched by name to a CustomCommandHandler. Undo=true runs the handler's Undo with the payload Do returned.
     export struct CustomCommand
     {
         std::string Name;
@@ -76,7 +75,6 @@ namespace GPP
 
     export struct CustomCommandHandler
     {
-        // Applies the payload and returns the payload Undo needs; nullopt when nothing changed.
         std::function<std::optional<std::string>(Scene&, const YAML::Node&)> Do;
         std::function<bool(Scene&, const YAML::Node&)> Undo;
     };
@@ -97,11 +95,9 @@ namespace GPP
         std::map<std::string, CustomCommandHandler> m_Handlers;
     };
 
-    // Built-in custom command "SetComponent": replaces (or adds) a whole component from YAML; undo restores or removes it.
     export [[nodiscard]] CustomCommand MakeSetComponentCommand(std::uint64_t guid, const std::string& component,
                                                                const std::string& yaml);
 
-    // Encodes `value` through the component's registered Encode; for components without entity references.
     export template <typename T>
     [[nodiscard]] CustomCommand MakeSetComponentCommand(std::uint64_t guid, const std::string& component, const T& value)
     {
@@ -123,7 +119,6 @@ namespace GPP
         std::optional<Command> Inverse;
     };
 
-    // Applies through the dirty-tracked path. False when it changed nothing; `inverse` receives the undo command.
     export bool ApplyCommand(Scene& scene, const Command& command, Command* inverse = nullptr);
 
     export [[nodiscard]] std::string CommandToYaml(const Command& command);
@@ -137,9 +132,7 @@ namespace GPP
         std::string CoalesceKey;
         std::chrono::steady_clock::time_point Time{};
 
-        // Appends a later entry: its undo runs first, redo order stays chronological.
         void Append(UndoEntry later);
-        // Keeps only the last SetField per field in both directions.
         void Compact();
     };
 
@@ -148,7 +141,6 @@ namespace GPP
     public:
         static constexpr std::size_t kCapacity = 256;
 
-        // Clears redo. Merges into the top entry when both share a non-empty key and arrive within the window.
         void Record(UndoEntry entry, std::chrono::milliseconds coalesceWindow = std::chrono::milliseconds(600));
         std::optional<UndoEntry> TakeUndo();
         std::optional<UndoEntry> TakeRedo();

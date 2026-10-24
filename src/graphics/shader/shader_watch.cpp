@@ -45,7 +45,6 @@ namespace GPP
         constexpr auto kDebounce = std::chrono::milliseconds(100);
         constexpr auto kMaxDebounce = std::chrono::milliseconds(500);
 
-        // Compares tracked entries against disk. A null filter checks every entry.
         void Scan(State& state, const std::set<std::filesystem::path>* filter, std::vector<Change>& changes)
         {
             std::scoped_lock lock(state.mutex);
@@ -76,7 +75,6 @@ namespace GPP
             }
         }
 
-        // One event per (dispatcher, file) however many watchers track it.
         void Publish(const std::vector<Change>& changes)
         {
             std::set<std::pair<const EventDispatcher*, std::filesystem::path>> sent;
@@ -89,8 +87,6 @@ namespace GPP
             }
         }
 
-        // Single inotify-driven thread for every ShaderFileWatcher in the process. Without inotify
-        // (or for directories that cannot be watched) it falls back to polling mtimes.
         class WatchHub
         {
         public:

@@ -103,7 +103,6 @@ namespace GPP
         GpuCapabilities m_Capabilities;
     };
 
-    // Signals once everything submitted to every queue before construction has finished executing.
     export class QueueIdleFence
     {
     public:
@@ -120,8 +119,6 @@ namespace GPP
         std::vector<vk::Fence> m_Fences;
     };
 
-    // Keeps objects alive until the GPU can no longer be using them: after a grace period that covers
-    // command buffers recorded but not yet submitted, plus a queue fence that covers submitted work.
     export class RetiredObjects
     {
     public:
@@ -151,7 +148,6 @@ namespace GPP
         std::atomic<std::size_t> m_Pending{0};
     };
 
-    // Instance and device without a window system; nullptr when no usable Vulkan device exists.
     export std::shared_ptr<VulkanDevice> CreateHeadlessDevice(const std::shared_ptr<Logger>& logger);
 
     class VulkanFence {

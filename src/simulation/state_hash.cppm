@@ -11,10 +11,10 @@ namespace GPP
 {
     export struct StateHashOptions
     {
-        bool IncludeExtensions = false; // scene extensions carry UI and render settings, off by default
+        bool IncludeExtensions = false;
     };
 
-    // Incremental FNV-1a (64 bit); stable across runs and platforms.
+    // Incremental FNV-1a (64 bit) - stable across runs and platforms.
     export class StateHasher
     {
     public:
@@ -39,7 +39,5 @@ namespace GPP
         std::uint64_t m_Value = 0xCBF29CE484222325ull;
     };
 
-    // Order independent over entities (sorted by guid); components through their registered YAML encoding, which prints
-    // floats with round-trip precision. Non-serializable components, the scene id, name and dirty flags are excluded.
     export [[nodiscard]] std::uint64_t HashScene(const Scene& scene, StateHashOptions options = {});
 }

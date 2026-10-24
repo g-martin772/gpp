@@ -66,7 +66,5 @@ namespace GPP
     export [[nodiscard]] SceneVersions ReadSceneVersions(const YAML::Node& root);
     export [[nodiscard]] std::string DescribeSceneVersions(const std::string& yaml);
 
-    // Rewrites `root` to the current schema, or throws SceneVersionError (file newer than this build, or a
-    // gap in the chain). `root` is only modified in place; callers stage it so a throw changes nothing.
     export SceneMigrationReport MigrateSceneDocument(YAML::Node& root);
 }

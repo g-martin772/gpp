@@ -1,4 +1,3 @@
-# Run as a script (cmake -P) on every build: writes OUTPUT only when the content changes.
 file(STRINGS "${LIST_FILE}" files)
 list(SORT files)
 set(acc "${PREFIX}")

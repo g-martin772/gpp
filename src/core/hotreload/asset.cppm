@@ -37,10 +37,9 @@ namespace GPP
         std::string destroySymbol{"GPP_DestroyHotReloadModule"};
         std::string abiVersionSymbol{"GPP_HotReloadModuleAbiVersion"};
         std::uint32_t expectedAbiVersion = kHotReloadAbiVersion;
-        std::string expectedBuildId; // empty = the host build id; if that is empty too, the check is skipped
+        std::string expectedBuildId;
     };
 
-    // Set once by the host executable from GPP_HOT_RELOAD_BUILD_ID (gpp/hot_reload_build_id.h).
     export void SetHotReloadHostBuildId(std::string id);
     export [[nodiscard]] std::string HotReloadHostBuildId();
     export [[nodiscard]] std::optional<std::string> ReadHotReloadBuildId(const std::filesystem::path& library);
