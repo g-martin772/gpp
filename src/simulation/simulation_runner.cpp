@@ -121,11 +121,16 @@ namespace GPP
         Enqueue(std::move(edit), true);
     }
 
-    void SimulationRunner::Enqueue(std::move_only_function<void(Scene&)> edit, const bool tracked)
+    void SimulationRunner::EnqueueSystemEdit(std::move_only_function<void(Scene&)> edit, const bool tracked)
+    {
+        Enqueue(std::move(edit), tracked, true);
+    }
+
+    void SimulationRunner::Enqueue(std::move_only_function<void(Scene&)> edit, const bool tracked, const bool system)
     {
         {
             std::scoped_lock lock(m_EditMutex);
-            m_PendingEdits.push(PendingEdit{std::move(edit), tracked, {}, {}});
+            m_PendingEdits.push(PendingEdit{std::move(edit), tracked, system, {}, {}});
         }
         Wake();
     }
@@ -142,7 +147,7 @@ namespace GPP
         if (commands.empty()) return;
         {
             std::scoped_lock lock(m_EditMutex);
-            m_PendingEdits.push(PendingEdit{nullptr, true, std::move(commands), std::move(options)});
+            m_PendingEdits.push(PendingEdit{nullptr, true, false, std::move(commands), std::move(options)});
         }
         Wake();
     }
@@ -192,7 +197,9 @@ namespace GPP
     {
         auto entry = m_History.TakeUndo();
         if (!entry) return false;
-        EnqueueCommands(entry->Undo);
+        CommandOptions options;
+        options.Move = RevisionMove{entry->Stamp.After, entry->Stamp.Before, entry->Stamp.Epoch};
+        EnqueueCommands(entry->Undo, std::move(options));
         m_History.PushRedo(std::move(*entry));
         return true;
     }
@@ -201,7 +208,9 @@ namespace GPP
     {
         auto entry = m_History.TakeRedo();
         if (!entry) return false;
-        EnqueueCommands(entry->Redo);
+        CommandOptions options;
+        options.Move = RevisionMove{entry->Stamp.Before, entry->Stamp.After, entry->Stamp.Epoch};
+        EnqueueCommands(entry->Redo, std::move(options));
         m_History.PushUndo(std::move(*entry));
         return true;
     }
@@ -226,7 +235,13 @@ namespace GPP
         }
         if (applied.empty()) return;
 
-        if (edit.Options.Undoable)
+        const bool countsAsEdit = !edit.Options.OnlyWhilePlaying;
+        RevisionStamp stamp;
+        if (edit.Options.Move) m_Revision.Moved(*edit.Options.Move);
+        else if (countsAsEdit && edit.Options.Undoable) stamp = m_Revision.Recorded();
+        else if (countsAsEdit) m_Revision.Changed();
+
+        if (edit.Options.Undoable && !edit.Options.Move)
         {
             UndoEntry entry;
             entry.Label = std::move(edit.Options.Label);
@@ -236,6 +251,7 @@ namespace GPP
             for (auto it = applied.rbegin(); it != applied.rend(); ++it) entry.Undo.push_back(*it->Inverse);
             if (m_Transaction)
             {
+            entry.Stamp = stamp;
                 if (m_Transaction->Label.empty()) m_Transaction->Label = std::move(entry.Label);
                 m_Transaction->Append(std::move(entry));
             }
@@ -354,6 +370,7 @@ namespace GPP
         {
             std::scoped_lock lock(m_MetadataMutex);
             m_Metadata = m_SimScene.Metadata();
+            if (!edit.System) m_Revision.Changed();
         }
         return true;
     }
@@ -490,7 +507,7 @@ namespace GPP
         }
         auto done = std::make_shared<std::promise<void>>();
         auto future = done->get_future();
-        EnqueueTrackedEdit([fn = std::move(fn), done](Scene&)
+        EnqueueSystemEdit([fn = std::move(fn), done](Scene&)
         {
             try { fn(); } catch (...) {}
             done->set_value();
@@ -728,6 +745,7 @@ namespace GPP
 
         auto lastTick = Clock::now();
         auto next = lastTick;
+        target->ContentRevision = m_Revision.Current();
         auto lastPublish = lastTick - publishInterval;
         bool dirty = true;
         bool wasPaused = true;

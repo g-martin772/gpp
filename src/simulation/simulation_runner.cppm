@@ -4,6 +4,7 @@ import std;
 import GPP.Core;
 import :Scene;
 import :Commands;
+import :ContentRevision;
 import :Random;
 import :StateHash;
 
@@ -50,6 +51,7 @@ namespace GPP
         std::string Label;
         std::string CoalesceKey;
         bool OnlyWhilePlaying = false; // dropped if the runner is paused when it would be applied
+        std::optional<RevisionMove> Move; // set by Undo/Redo: the content revision the history step restores
     };
 
     export struct RunnerState
@@ -103,6 +105,7 @@ namespace GPP
         struct Data
         {
             Data(Scene scene, std::uint64_t generation) : Value(std::move(scene)), Generation(generation) {}
+            std::uint64_t ContentRevision{0};
             Scene Value;
             std::uint64_t Generation;
         };
@@ -113,6 +116,8 @@ namespace GPP
         const Scene* operator->() const noexcept { return &m_Data->Value; }
         const Scene& operator*() const noexcept { return m_Data->Value; }
         explicit operator bool() const noexcept { return m_Data != nullptr; }
+        // Identifies the user-visible scene content (edits, not simulation ticks); equal revisions mean equal content.
+        [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Data ? m_Data->ContentRevision : 0; }
 
         [[nodiscard]] std::uint64_t Generation() const noexcept { return m_Data ? m_Data->Generation : 0; }
 
@@ -171,6 +176,8 @@ namespace GPP
         void EnqueueTrackedEdit(std::move_only_function<void(Scene&)> edit);
 
         // Applied on the sim thread through the tracked path, stamped with the tick and kept in the command log.
+        // Like EnqueueTrackedEdit, but not a content change (play/stop bookkeeping, queries).
+        void EnqueueSystemEdit(std::move_only_function<void(Scene&)> edit, bool tracked = true);
         void EnqueueCommand(Command command, CommandOptions options = {});
         void EnqueueCommands(std::vector<Command> commands, CommandOptions options = {});
         [[nodiscard]] std::vector<CommandRecord> CommandLog() const;
@@ -189,6 +196,11 @@ namespace GPP
 
         // Ticks completed so far.
         [[nodiscard]] std::uint64_t Tick() const noexcept { return m_Tick.load(std::memory_order_acquire); }
+        [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Revision.Current(); }
+        // Sim-thread only (inside an enqueued edit).
+        void MarkContentChanged() noexcept { m_Revision.Changed(); }
+        void RestoreContentRevision(std::uint64_t revision) noexcept { m_Revision.Restore(revision); }
+
         // Advances exactly n fixed ticks regardless of pause or wall-clock; runs inline when the thread is not started.
         void Step(std::uint64_t ticks);
         // Same, but returns once the ticks ran and the resulting snapshot is published.
@@ -225,6 +237,7 @@ namespace GPP
             bool Tracked = false;
             std::vector<Command> Commands;
             CommandOptions Options;
+            bool System = false;
             TransactionMarker Marker = TransactionMarker::None;
         };
 
@@ -234,7 +247,7 @@ namespace GPP
             ChangeSet Pending;
         };
 
-        void Enqueue(std::move_only_function<void(Scene&)> edit, bool tracked);
+        void Enqueue(std::move_only_function<void(Scene&)> edit, bool tracked, bool system = false);
         void ThreadMain(std::stop_token stopToken);
         void Wake();
         bool DrainEdits();
@@ -283,6 +296,7 @@ namespace GPP
         std::deque<CommandRecord> m_CommandLog;
         std::optional<SimulationRecording> m_Recording;
         std::mutex m_InitErrorMutex;
+        RevisionCounter m_Revision;
         std::vector<std::string> m_InitErrors;
 
         struct CheckpointLog

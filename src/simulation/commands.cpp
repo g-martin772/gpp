@@ -407,6 +407,15 @@ namespace GPP
 
     void UndoEntry::Append(UndoEntry later)
     {
+        if (Undo.empty() && Redo.empty())
+        {
+            Stamp = later.Stamp;
+        }
+        else
+        {
+            if (Stamp.Epoch != later.Stamp.Epoch || Stamp.After != later.Stamp.Before) Stamp.Epoch = 0;
+            Stamp.After = later.Stamp.After;
+        }
         Undo.insert(Undo.begin(), std::make_move_iterator(later.Undo.begin()), std::make_move_iterator(later.Undo.end()));
         Redo.insert(Redo.end(), std::make_move_iterator(later.Redo.begin()), std::make_move_iterator(later.Redo.end()));
         Time = later.Time;

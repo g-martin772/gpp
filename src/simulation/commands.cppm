@@ -8,6 +8,7 @@ import :Reflection;
 import :ComponentRegistry;
 import :Components;
 import :Scene;
+import :ContentRevision;
 
 namespace GPP
 {
@@ -131,6 +132,7 @@ namespace GPP
         std::string Label;
         std::string CoalesceKey;
         std::chrono::steady_clock::time_point Time{};
+        RevisionStamp Stamp;
 
         void Append(UndoEntry later);
         void Compact();

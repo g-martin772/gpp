@@ -11,6 +11,7 @@ export import :SceneMigration;
 export import :Scene;
 export import :SceneValidation;
 export import :Lights;
+export import :ContentRevision;
 export import :Commands;
 export import :Random;
 export import :StateHash;
