@@ -18,6 +18,7 @@ export namespace ax::NodeEditor
     using ax::NodeEditor::StyleVar;
     using ax::NodeEditor::StyleColor;
     using ax::NodeEditor::FlowDirection;
+    using ax::NodeEditor::CanvasSizeMode;
     using ax::NodeEditor::Style;
 
     using ax::NodeEditor::CreateEditor;
