@@ -1657,6 +1657,14 @@ namespace GPP
                     ImGui_ImplVulkan_NewFrame();
                 }
                 GPP_ZONE("Ui.ImGuiFrame");
+                {
+                    std::vector<std::function<void()>> tasks;
+                    {
+                        std::scoped_lock lock(m_BeforeFrameMutex);
+                        tasks.swap(m_BeforeFrameTasks);
+                    }
+                    for (const auto& task : tasks) task();
+                }
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
                 if (m_MainWindowResources.EnableDockSpace &&

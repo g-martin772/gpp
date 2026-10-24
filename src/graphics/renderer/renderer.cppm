@@ -234,6 +234,12 @@ namespace GPP
 
         [[nodiscard]] unsigned int GetMainDockspaceId() const noexcept { return m_MainDockspaceId; }
 
+        void RunBeforeUiFrame(std::function<void()> task)
+        {
+            std::scoped_lock lock(m_BeforeFrameMutex);
+            m_BeforeFrameTasks.push_back(std::move(task));
+        }
+
         struct ReadbackResult
         {
             std::vector<std::uint8_t> Pixels; // tightly packed, row 0 first, 4 bytes/pixel, channel
@@ -379,6 +385,8 @@ namespace GPP
         std::vector<vk::ImageLayout> m_SwapchainImageLayouts{};
         std::uint32_t m_FrameIndex = 0;
         unsigned int m_MainDockspaceId = 0;
+        std::mutex m_BeforeFrameMutex;
+        std::vector<std::function<void()>> m_BeforeFrameTasks;
         float m_LastFrameElapsed = 0.0f;
 
         bool m_ImGuiEnabled = false;
