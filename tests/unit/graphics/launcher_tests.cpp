@@ -44,6 +44,7 @@ TEST_CASE("DrawLauncher runs a frame without a backend", "[launcher]")
     LauncherHooks hooks;
     hooks.DrawSettings = [&] { settingsDrawn = true; };
     hooks.ExtraButtons = {{"Docs", "docs"}};
+    data.Notice = {"Last run crashed", "Open report", "notice:open", "notice:dismiss"};
 
     for (const auto page : {LauncherPage::Recent, LauncherPage::Templates, LauncherPage::Settings})
     {

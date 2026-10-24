@@ -154,4 +154,25 @@ namespace GPP
         if (self.empty()) return std::unexpected("spawn: cannot resolve /proc/self/exe");
         return SpawnExe(self, args);
     }
+
+    std::expected<void, std::string> OpenPath(const std::filesystem::path& path)
+    {
+        std::string search = std::getenv("PATH") ? std::getenv("PATH") : "/usr/bin:/bin";
+        std::size_t start = 0;
+        while (start <= search.size())
+        {
+            const auto end = std::min(search.find(':', start), search.size());
+            const auto candidate = std::filesystem::path(search.substr(start, end - start)) / "xdg-open";
+            std::error_code error;
+            if (std::filesystem::is_regular_file(candidate, error))
+            {
+                const std::array args{path.string()};
+                const auto spawned = SpawnExe(candidate, args);
+                if (!spawned) return std::unexpected(spawned.error());
+                return {};
+            }
+            start = end + 1;
+        }
+        return std::unexpected("xdg-open not found");
+    }
 }

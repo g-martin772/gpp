@@ -56,12 +56,21 @@ namespace GPP
         std::string Path;
     };
 
+    export struct LauncherNotice
+    {
+        std::string Text;
+        std::string ActionLabel;
+        std::string ActionId;
+        std::string DismissId;
+    };
+
     export struct LauncherData
     {
         LauncherBranding Branding;
         LauncherStyle Style;
         std::vector<LauncherRecent> Recents;
         std::vector<LauncherTemplate> Templates;
+        LauncherNotice Notice;
         bool ShowOnStartup = true;
         std::string NewLabel = "New Scene";
         std::string OpenLabel = "Open...";

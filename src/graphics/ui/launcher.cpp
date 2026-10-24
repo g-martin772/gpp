@@ -173,6 +173,33 @@ namespace GPP
             if (ImGui::Button("Quit", ImVec2(width, 0.0f))) action.Kind = LauncherAction::Quit;
         }
 
+        void DrawNotice(const LauncherNotice& notice, LauncherAction& action)
+        {
+            if (notice.Text.empty()) return;
+            const auto& style = ImGui::GetStyle();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.45f, 0.18f, 0.12f, 0.55f));
+            const float height = ImGui::GetFrameHeight() * 2.0f + style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
+            if (ImGui::BeginChild("##launcher_notice", ImVec2(0.0f, height),
+                                  ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar))
+            {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted(notice.Text.c_str());
+                ImGui::PopTextWrapPos();
+                if (!notice.ActionId.empty() && ImGui::SmallButton(notice.ActionLabel.empty() ? "Open" : notice.ActionLabel.c_str()))
+                {
+                    action = {LauncherAction::Custom, notice.ActionId};
+                }
+                if (!notice.DismissId.empty())
+                {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Dismiss")) action = {LauncherAction::Custom, notice.DismissId};
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::Spacing();
+        }
+
         void DrawRecentPage(LauncherData& data, LauncherAction& action)
         {
             Heading("Recent");
@@ -311,6 +338,7 @@ namespace GPP
         ImGui::SameLine(0.0f, 0.0f);
         if (ImGui::BeginChild("##launcher_page", ImVec2(0.0f, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding))
         {
+            DrawNotice(data.Notice, action);
             switch (data.Page)
             {
                 case LauncherPage::Recent: DrawRecentPage(data, action); break;
