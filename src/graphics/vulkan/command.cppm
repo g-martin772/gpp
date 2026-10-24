@@ -6,6 +6,76 @@ import :Vulkan.Device;
 
 namespace GPP
 {
+    // Thread-safe bounded free list. Give() fails when full or after Close(); Close() hands back what is cached.
+    export template <typename T>
+    class RecycleList
+    {
+    public:
+        explicit RecycleList(const std::size_t capacity = 16) : m_Capacity(capacity) {}
+
+        [[nodiscard]] std::optional<T> Take()
+        {
+            std::scoped_lock lock(m_Mutex);
+            if (m_Items.empty()) return std::nullopt;
+            T item = std::move(m_Items.back());
+            m_Items.pop_back();
+            return item;
+        }
+
+        [[nodiscard]] bool Give(T item)
+        {
+            std::scoped_lock lock(m_Mutex);
+            if (m_Closed || m_Items.size() >= m_Capacity) return false;
+            m_Items.push_back(std::move(item));
+            return true;
+        }
+
+        std::vector<T> Close()
+        {
+            std::scoped_lock lock(m_Mutex);
+            m_Closed = true;
+            return std::exchange(m_Items, {});
+        }
+
+        [[nodiscard]] bool Closed() const
+        {
+            std::scoped_lock lock(m_Mutex);
+            return m_Closed;
+        }
+
+        [[nodiscard]] std::size_t Size() const
+        {
+            std::scoped_lock lock(m_Mutex);
+            return m_Items.size();
+        }
+
+    private:
+        mutable std::mutex m_Mutex;
+        std::vector<T> m_Items;
+        std::size_t m_Capacity;
+        bool m_Closed = false;
+    };
+
+    export struct SubmitState;
+    export struct SubmitRecycler;
+
+    // Completion of a SubmitAsync. Copies share the state; the last copy waits for the GPU before releasing the
+    // fence, command buffer and keep-alive resources. Invalid when the submission could not be made.
+    export class SubmitHandle
+    {
+    public:
+        SubmitHandle() = default;
+        explicit SubmitHandle(std::shared_ptr<SubmitState> state) : m_State(std::move(state)) {}
+
+        [[nodiscard]] bool Valid() const noexcept { return m_State != nullptr; }
+        // Polls without blocking; true once the GPU work finished
+        [[nodiscard]] bool Done() const;
+        void Wait() const;
+
+    private:
+        std::shared_ptr<SubmitState> m_State;
+    };
+
     export class VulkanCommandBuffer
     {
     public:
@@ -64,13 +134,25 @@ namespace GPP
                                                   bool simultaneousUse = false) const;
         VulkanCommandBuffer AllocateSingleUseCommandBuffer() const;
         vk::CommandPool GetPool() const { return m_CommandPool; }
+        [[nodiscard]] const std::shared_ptr<SubmitRecycler>& Recycler() const noexcept { return m_Recycler; }
 
     private:
+        void Release();
+
         std::shared_ptr<VulkanDevice> m_Device;
         std::shared_ptr<Logger> m_Logger = nullptr;
         vk::CommandPool m_CommandPool;
+        std::shared_ptr<SubmitRecycler> m_Recycler;
     };
 
+    // Records, submits and returns without waiting. keepAlive is released after the GPU finished (staging buffers).
+    // Fences and command buffers are recycled per pool. The pool needs external synchronisation, as in Vulkan.
+    // Handles must be completed or dropped before the pool is destroyed.
+    export [[nodiscard]] SubmitHandle SubmitAsync(const VulkanCommandPool& pool, vk::Queue queue,
+                                                  const std::function<void(vk::CommandBuffer)>& record,
+                                                  std::vector<std::shared_ptr<void>> keepAlive = {});
+
+    // SubmitAsync + Wait
     export void ImmediateSubmit(const VulkanCommandPool& pool, vk::Queue queue,
                                const std::function<void(vk::CommandBuffer)>& record);
 }

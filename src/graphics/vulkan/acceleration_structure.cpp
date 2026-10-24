@@ -1,5 +1,6 @@
 module;
 #include <vk_mem_alloc.h>
+#include <gpp/profile.h>
 module GPP.Graphics;
 
 import std;
@@ -128,44 +129,95 @@ namespace GPP
         m_Buffer.Destroy();
     }
 
+    namespace
+    {
+        struct BlasBuild
+        {
+            vk::AccelerationStructureGeometryKHR Geometry;
+            vk::AccelerationStructureBuildGeometryInfoKHR Info;
+            std::uint32_t PrimitiveCount = 0;
+        };
+
+        BlasBuild MakeBlasBuild(const BlasTriangles& triangles)
+        {
+            vk::AccelerationStructureGeometryTrianglesDataKHR data{};
+            data.vertexFormat = triangles.VertexFormat;
+            data.vertexData.deviceAddress = triangles.VertexAddress;
+            data.vertexStride = triangles.VertexStride;
+            data.maxVertex = triangles.VertexCount > 0 ? triangles.VertexCount - 1 : 0;
+            data.indexType = vk::IndexType::eUint32;
+            data.indexData.deviceAddress = triangles.IndexAddress;
+
+            BlasBuild out;
+            out.Geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+            out.Geometry.geometry.triangles = data;
+            out.Geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+            out.Info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+            out.Info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+            out.Info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+            out.Info.geometryCount = 1;
+            out.PrimitiveCount = triangles.IndexCount / 3;
+            return out;
+        }
+    }
+
+    Blas::Blas(const std::shared_ptr<VulkanDevice>& device, const BlasTriangles& triangles)
+        : m_Triangles(triangles)
+    {
+        auto build = MakeBlasBuild(triangles);
+        build.Info.pGeometries = &build.Geometry;
+        const auto sizes = device->GetDevice().getAccelerationStructureBuildSizesKHR(
+            vk::AccelerationStructureBuildTypeKHR::eDevice, build.Info, build.PrimitiveCount, device->GetDispatcher());
+        m_ScratchSize = sizes.buildScratchSize;
+        m_Structure.Create(device, vk::AccelerationStructureTypeKHR::eBottomLevel, sizes.accelerationStructureSize);
+    }
+
     Blas::Blas(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool, const vk::Queue queue,
                const BlasTriangles& triangles)
+        : Blas(device, triangles)
     {
-        vk::AccelerationStructureGeometryTrianglesDataKHR data{};
-        data.vertexFormat = triangles.VertexFormat;
-        data.vertexData.deviceAddress = triangles.VertexAddress;
-        data.vertexStride = triangles.VertexStride;
-        data.maxVertex = triangles.VertexCount > 0 ? triangles.VertexCount - 1 : 0;
-        data.indexType = vk::IndexType::eUint32;
-        data.indexData.deviceAddress = triangles.IndexAddress;
+        Blas* self = this;
+        BuildBlasBatch(device, pool, queue, std::span<Blas* const>(&self, 1));
+    }
 
-        vk::AccelerationStructureGeometryKHR geometry{};
-        geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
-        geometry.geometry.triangles = data;
-        geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
-
-        vk::AccelerationStructureBuildGeometryInfoKHR build{};
-        build.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
-        build.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
-        build.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
-        build.geometryCount = 1;
-        build.pGeometries = &geometry;
-
-        const std::uint32_t primitiveCount = triangles.IndexCount / 3;
-        const auto& dispatcher = device->GetDispatcher();
-        const auto sizes = device->GetDevice().getAccelerationStructureBuildSizesKHR(
-            vk::AccelerationStructureBuildTypeKHR::eDevice, build, primitiveCount, dispatcher);
-
-        m_Structure.Create(device, vk::AccelerationStructureTypeKHR::eBottomLevel, sizes.accelerationStructureSize);
-        VulkanBuffer scratch;
-        build.dstAccelerationStructure = m_Structure.GetHandle();
-        build.scratchData.deviceAddress = CreateScratch(device, scratch, sizes.buildScratchSize);
-
-        const vk::AccelerationStructureBuildRangeInfoKHR range{primitiveCount, 0, 0, 0};
+    void Blas::RecordBuild(const vk::CommandBuffer commandBuffer, const vk::DeviceAddress scratch) const
+    {
+        auto build = MakeBlasBuild(m_Triangles);
+        build.Info.pGeometries = &build.Geometry;
+        build.Info.dstAccelerationStructure = m_Structure.GetHandle();
+        build.Info.scratchData.deviceAddress = scratch;
+        const vk::AccelerationStructureBuildRangeInfoKHR range{build.PrimitiveCount, 0, 0, 0};
         const auto* ranges = &range;
+        commandBuffer.buildAccelerationStructuresKHR(1, &build.Info, &ranges, m_Structure.GetDevice()->GetDispatcher());
+    }
+
+    void BuildBlasBatch(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
+                        const vk::Queue queue, const std::span<Blas* const> blases)
+    {
+        if (blases.empty()) return;
+        GPP_ZONE("BuildBlasBatch");
+        vk::DeviceSize scratchSize = 0;
+        for (const auto* blas : blases) scratchSize = std::max(scratchSize, blas->ScratchSize());
+        VulkanBuffer scratch;
+        const auto address = CreateScratch(device, scratch, scratchSize);
+
+        // One scratch buffer is shared, so consecutive builds are serialised with a barrier
+        vk::MemoryBarrier barrier{vk::AccessFlagBits::eAccelerationStructureWriteKHR,
+                                  vk::AccessFlagBits::eAccelerationStructureReadKHR
+                                      | vk::AccessFlagBits::eAccelerationStructureWriteKHR};
         ImmediateSubmit(pool, queue, [&](const vk::CommandBuffer cmd)
         {
-            cmd.buildAccelerationStructuresKHR(1, &build, &ranges, dispatcher);
+            bool first = true;
+            for (const auto* blas : blases)
+            {
+                if (!first)
+                {
+                    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                                        vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR, {}, barrier, {}, {});
+                }
+                first = false;
+                blas->RecordBuild(cmd, address);
+            }
         });
     }
 

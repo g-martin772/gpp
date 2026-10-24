@@ -35,6 +35,14 @@ namespace GPP
     export [[nodiscard]] std::expected<DecodedTexture, std::string> DecodeTexture(
         const std::filesystem::path& file, TextureRole role, std::uint32_t maxSize);
 
+    // Per-Update upload budget: the next texture goes in while the total stays within the budget; the first always does
+    export inline constexpr std::uint64_t kTextureUploadBudgetBytes = 32ull << 20;
+    export [[nodiscard]] constexpr bool WithinUploadBudget(const std::uint64_t spent, const std::uint64_t next,
+                                                           const std::uint64_t budget = kTextureUploadBudgetBytes) noexcept
+    {
+        return spent == 0 || spent + next <= budget;
+    }
+
     // Loads images by path on a worker thread, uploads them in Update and reloads files that change on disk.
     // Get returns null while a texture is loading or when it failed; callers fall back to a dummy.
     export class TextureCache
@@ -88,8 +96,20 @@ namespace GPP
             int Frames = 0;
         };
 
+        // An upload on the GPU; the image is only handed out once the submit finished
+        struct InFlight
+        {
+            Key Id;
+            std::uint64_t Generation = 0;
+            std::uint64_t Bytes = 0;
+            std::unique_ptr<VulkanImage> Image;
+            SubmitHandle Submit;
+        };
+
         void Enqueue(const Key& id, Entry& entry);
-        void Upload(Entry& entry, const Key& id, DecodedTexture&& texture, VulkanCommandPool& pool, vk::Queue queue);
+        void StartUpload(const Key& id, std::uint64_t generation, DecodedTexture&& texture, VulkanCommandPool& pool,
+                         vk::Queue queue);
+        void Install(InFlight& upload);
         [[nodiscard]] std::uint32_t EffectiveMaxSize() const;
         void WorkerLoop(const std::stop_token& stop);
 
@@ -102,6 +122,8 @@ namespace GPP
         std::uint32_t m_DeviceLimit = 0;
         std::map<Key, Entry> m_Entries;
         std::vector<Retired> m_Retired;
+        std::deque<Result> m_Ready;
+        std::vector<InFlight> m_InFlight;
         std::chrono::steady_clock::time_point m_LastPoll{};
         std::atomic<std::size_t> m_Pending{0};
         std::atomic<std::uint64_t> m_GpuBytes{0};

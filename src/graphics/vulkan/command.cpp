@@ -1,3 +1,5 @@
+module;
+#include <gpp/profile.h>
 module GPP.Graphics;
 
 import vulkan;
@@ -6,6 +8,142 @@ import :Vulkan.Command;
 
 namespace GPP
 {
+    struct SubmitRecycler
+    {
+        std::shared_ptr<VulkanDevice> Device;
+        std::shared_ptr<Logger> Log;
+        vk::CommandPool Pool;
+        bool CanReset = false;
+        RecycleList<vk::Fence> Fences;
+        RecycleList<vk::CommandBuffer> Buffers;
+    };
+
+    struct SubmitState
+    {
+        std::shared_ptr<SubmitRecycler> Recycler;
+        vk::Fence Fence;
+        vk::CommandBuffer Cmd;
+        std::vector<std::shared_ptr<void>> KeepAlive;
+        std::mutex Mutex;
+        bool Submitted = false;
+        bool Finished = false;
+
+        explicit SubmitState(std::shared_ptr<SubmitRecycler> recycler) : Recycler(std::move(recycler))
+        {
+            const auto device = Recycler->Device->GetDevice();
+            if (auto fence = Recycler->Fences.Take()) Fence = *fence;
+            else Fence = device.createFence(vk::FenceCreateInfo{});
+            try
+            {
+                if (auto cmd = Recycler->Buffers.Take()) Cmd = *cmd;
+                else
+                {
+                    vk::CommandBufferAllocateInfo info{Recycler->Pool, vk::CommandBufferLevel::ePrimary, 1};
+                    Cmd = device.allocateCommandBuffers(info)[0];
+                }
+            }
+            catch (...)
+            {
+                Recycle(false);
+                throw;
+            }
+        }
+
+        ~SubmitState()
+        {
+            Wait();
+        }
+
+        SubmitState(const SubmitState&) = delete;
+        SubmitState& operator=(const SubmitState&) = delete;
+
+        bool Poll()
+        {
+            std::scoped_lock lock(Mutex);
+            if (Finished) return true;
+            if (Submitted)
+            {
+                try
+                {
+                    if (Recycler->Device->GetDevice().getFenceStatus(Fence) == vk::Result::eNotReady) return false;
+                }
+                catch (const vk::SystemError& err)
+                {
+                    Recycler->Log->Error("Fence status failed: {}", err.what());
+                }
+            }
+            Finish();
+            return true;
+        }
+
+        void Wait()
+        {
+            std::scoped_lock lock(Mutex);
+            if (Finished) return;
+            if (Submitted)
+            {
+                try
+                {
+                    [[maybe_unused]] const auto result = Recycler->Device->GetDevice().waitForFences(
+                        1, &Fence, vk::True, std::numeric_limits<std::uint64_t>::max());
+                }
+                catch (const vk::SystemError& err)
+                {
+                    Recycler->Log->Error("Failed waiting for submitted work: {}", err.what());
+                }
+            }
+            Finish();
+        }
+
+        void Finish()
+        {
+            KeepAlive.clear();
+            Recycle(Submitted);
+            Finished = true;
+        }
+
+        void Recycle(const bool wasSubmitted)
+        {
+            const auto device = Recycler->Device->GetDevice();
+            if (Fence)
+            {
+                bool reusable = true;
+                if (wasSubmitted)
+                {
+                    try { device.resetFences(1, &Fence); }
+                    catch (const vk::SystemError&) { reusable = false; }
+                }
+                if (!reusable || !Recycler->Fences.Give(Fence)) device.destroyFence(Fence);
+                Fence = nullptr;
+            }
+            if (Cmd)
+            {
+                bool kept = false;
+                if (Recycler->CanReset && !Recycler->Buffers.Closed())
+                {
+                    try
+                    {
+                        Cmd.reset();
+                        kept = Recycler->Buffers.Give(Cmd);
+                    }
+                    catch (const vk::SystemError&) {}
+                }
+                if (!kept && !Recycler->Buffers.Closed()) device.freeCommandBuffers(Recycler->Pool, 1, &Cmd);
+                Cmd = nullptr;
+            }
+        }
+    };
+
+    bool SubmitHandle::Done() const
+    {
+        return !m_State || m_State->Poll();
+    }
+
+    void SubmitHandle::Wait() const
+    {
+        if (m_State) m_State->Wait();
+    }
+
     VulkanCommandBuffer::VulkanCommandBuffer(vk::CommandPool pool,
                                              const std::shared_ptr<VulkanDevice>& device,
                                              const std::shared_ptr<Logger>& logger,
@@ -107,6 +245,12 @@ namespace GPP
             return;
         }
 
+        m_Recycler = std::make_shared<SubmitRecycler>();
+        m_Recycler->Device = m_Device;
+        m_Recycler->Log = m_Logger;
+        m_Recycler->Pool = m_CommandPool;
+        m_Recycler->CanReset = static_cast<bool>(flags & vk::CommandPoolCreateFlagBits::eResetCommandBuffer);
+
         if (m_Logger)
             m_Logger->Trace("Created vulkan command pool: successful");
     }
@@ -114,7 +258,8 @@ namespace GPP
     VulkanCommandPool::VulkanCommandPool(VulkanCommandPool&& other) noexcept
         : m_Device(std::move(other.m_Device)),
           m_Logger(std::move(other.m_Logger)),
-          m_CommandPool(other.m_CommandPool)
+          m_CommandPool(other.m_CommandPool),
+          m_Recycler(std::move(other.m_Recycler))
     {
         other.m_CommandPool = nullptr;
         other.m_Device = nullptr;
@@ -126,15 +271,12 @@ namespace GPP
         if (this == &other)
             return *this;
 
-        if (m_CommandPool != nullptr && m_Device)
-        {
-            m_Device->GetDevice().destroyCommandPool(m_CommandPool);
-            m_CommandPool = nullptr;
-        }
+        Release();
 
         m_Device = std::move(other.m_Device);
         m_Logger = std::move(other.m_Logger);
         m_CommandPool = other.m_CommandPool;
+        m_Recycler = std::move(other.m_Recycler);
 
         other.m_CommandPool = nullptr;
         other.m_Device = nullptr;
@@ -151,6 +293,20 @@ namespace GPP
 
     VulkanCommandPool::~VulkanCommandPool()
     {
+        Release();
+    }
+
+    void VulkanCommandPool::Release()
+    {
+        if (m_Recycler)
+        {
+            if (m_Device)
+            {
+                for (const auto fence : m_Recycler->Fences.Close()) m_Device->GetDevice().destroyFence(fence);
+            }
+            m_Recycler->Buffers.Close();
+            m_Recycler.reset();
+        }
         if (m_CommandPool != nullptr && m_Device)
         {
             m_Device->GetDevice().destroyCommandPool(m_CommandPool);
@@ -324,13 +480,53 @@ namespace GPP
         return VulkanCommandBuffer(m_CommandPool, m_Device, m_Logger, true, false, false);
     }
 
+    SubmitHandle SubmitAsync(const VulkanCommandPool& pool, const vk::Queue queue,
+                             const std::function<void(vk::CommandBuffer)>& record,
+                             std::vector<std::shared_ptr<void>> keepAlive)
+    {
+        GPP_ZONE("SubmitAsync");
+        const auto& recycler = pool.Recycler();
+        if (!recycler) return {};
+
+        std::shared_ptr<SubmitState> state;
+        try
+        {
+            state = std::make_shared<SubmitState>(recycler);
+        }
+        catch (const vk::SystemError& err)
+        {
+            recycler->Log->Error("Failed to prepare a submission: {}", err.what());
+            return {};
+        }
+        state->KeepAlive = std::move(keepAlive);
+
+        const auto cmd = state->Cmd;
+        cmd.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        record(cmd);
+        cmd.end();
+
+        vk::SubmitInfo submitInfo{};
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &cmd;
+        try
+        {
+            std::scoped_lock lock(recycler->Device->GetQueueMutex(queue));
+            const auto result = queue.submit(1, &submitInfo, state->Fence);
+            state->Submitted = result == vk::Result::eSuccess;
+            if (!state->Submitted) recycler->Log->Error("Failed to submit vulkan command buffer: {}", vk::to_string(result));
+        }
+        catch (const vk::SystemError& err)
+        {
+            recycler->Log->Error("Failed to submit vulkan command buffer: {}", err.what());
+        }
+        if (!state->Submitted) return {};
+        return SubmitHandle(std::move(state));
+    }
+
     void ImmediateSubmit(const VulkanCommandPool& pool, const vk::Queue queue,
                         const std::function<void(vk::CommandBuffer)>& record)
     {
-        auto commandBuffer = pool.AllocateSingleUseCommandBuffer();
-        commandBuffer.Begin();
-        record(commandBuffer.GetCommandBuffer());
-        commandBuffer.End();
-        commandBuffer.Submit(queue);
+        GPP_ZONE("ImmediateSubmit");
+        SubmitAsync(pool, queue, record).Wait();
     }
 }

@@ -346,8 +346,8 @@ namespace GPP
         for (auto& [id, entry] : m_Entries) Enqueue(id, entry);
     }
 
-    void TextureCache::Upload(Entry& entry, const Key& id, DecodedTexture&& texture, VulkanCommandPool& pool,
-                              const vk::Queue queue)
+    void TextureCache::StartUpload(const Key& id, const std::uint64_t generation, DecodedTexture&& texture,
+                                   VulkanCommandPool& pool, const vk::Queue queue)
     {
         std::vector<vk::BufferImageCopy> regions;
         std::uint64_t size = 0;
@@ -364,8 +364,8 @@ namespace GPP
         for (std::size_t level = 0; level < texture.Levels.size(); ++level)
             std::ranges::copy(texture.Levels[level], packed.begin() + static_cast<std::ptrdiff_t>(regions[level].bufferOffset));
 
-        VulkanBuffer staging(m_Device, MakeStagingBufferSpecification(size), m_Logger);
-        staging.Upload(packed.data(), size);
+        auto staging = std::make_shared<VulkanBuffer>(m_Device, MakeStagingBufferSpecification(size), m_Logger);
+        staging->Upload(packed.data(), size);
         const auto mips = static_cast<std::uint32_t>(texture.Levels.size());
         auto image = std::make_unique<VulkanImage>(
             m_Device,
@@ -382,20 +382,30 @@ namespace GPP
                 .debugName = id.first
             },
             m_Logger);
-        ImmediateSubmit(pool, queue, [&](const vk::CommandBuffer cmd)
+        auto submit = SubmitAsync(pool, queue, [&](const vk::CommandBuffer cmd)
         {
             TransitionImageLayout(cmd, image->GetImage(), texture.Format, vk::ImageLayout::eUndefined,
                                   vk::ImageLayout::eTransferDstOptimal, mips);
-            cmd.copyBufferToImage(staging.GetBuffer(), image->GetImage(), vk::ImageLayout::eTransferDstOptimal, regions);
+            cmd.copyBufferToImage(staging->GetBuffer(), image->GetImage(), vk::ImageLayout::eTransferDstOptimal, regions);
             TransitionImageLayout(cmd, image->GetImage(), texture.Format, vk::ImageLayout::eTransferDstOptimal,
                                   vk::ImageLayout::eShaderReadOnlyOptimal, mips);
-        });
+        }, {staging});
+        if (!submit.Valid()) throw std::runtime_error("upload submit failed");
+        m_InFlight.push_back({id, generation, texture.Bytes(), std::move(image), std::move(submit)});
+    }
 
+    void TextureCache::Install(InFlight& upload)
+    {
+        const auto it = m_Entries.find(upload.Id);
+        if (it == m_Entries.end() || it->second.Generation != upload.Generation) return;
+        auto& entry = it->second;
+        entry.Pending = false;
+        --m_Pending;
         if (entry.Image) m_Retired.push_back({std::move(entry.Image), RetireFrames});
-        m_GpuBytes += texture.Bytes();
+        m_GpuBytes += upload.Bytes;
         m_GpuBytes -= entry.Bytes;
-        entry.Bytes = texture.Bytes();
-        entry.Image = std::move(image);
+        entry.Bytes = upload.Bytes;
+        entry.Image = std::move(upload.Image);
     }
 
     void TextureCache::Update(VulkanCommandPool& uploadPool, const vk::Queue queue)
@@ -403,32 +413,52 @@ namespace GPP
         for (auto& retired : m_Retired) --retired.Frames;
         std::erase_if(m_Retired, [](const Retired& retired) { return retired.Frames <= 0; });
 
-        std::deque<Result> done;
+        for (auto& upload : m_InFlight)
+        {
+            if (upload.Submit.Done()) Install(upload);
+        }
+        std::erase_if(m_InFlight, [](const InFlight& upload) { return upload.Submit.Done(); });
+
         {
             std::scoped_lock lock(m_Mutex);
-            done.swap(m_Done);
+            for (auto& result : m_Done) m_Ready.push_back(std::move(result));
+            m_Done.clear();
         }
-        for (auto& result : done)
+
+        std::uint64_t spent = 0;
+        while (!m_Ready.empty())
         {
+            auto& result = m_Ready.front();
             const auto it = m_Entries.find(result.Id);
-            if (it == m_Entries.end() || it->second.Generation != result.Generation) continue;
-            auto& entry = it->second;
-            entry.Pending = false;
-            --m_Pending;
-            if (!result.Texture)
+            if (it == m_Entries.end() || it->second.Generation != result.Generation)
             {
-                m_Logger->Warn("Texture '{}' failed to load: {}{}", result.Id.first, result.Texture.error(),
-                               entry.Image ? ", keeping the previous image" : "");
+                m_Ready.pop_front();
                 continue;
             }
+            auto& entry = it->second;
+            if (!result.Texture)
+            {
+                entry.Pending = false;
+                --m_Pending;
+                m_Logger->Warn("Texture '{}' failed to load: {}{}", result.Id.first, result.Texture.error(),
+                               entry.Image ? ", keeping the previous image" : "");
+                m_Ready.pop_front();
+                continue;
+            }
+            const auto bytes = result.Texture->Bytes();
+            if (!WithinUploadBudget(spent, bytes)) break;
+            spent += bytes;
             try
             {
-                Upload(entry, result.Id, std::move(*result.Texture), uploadPool, queue);
+                StartUpload(result.Id, result.Generation, std::move(*result.Texture), uploadPool, queue);
             }
             catch (const std::exception& e)
             {
+                entry.Pending = false;
+                --m_Pending;
                 m_Logger->Error("Texture '{}' upload failed: {}", result.Id.first, e.what());
             }
+            m_Ready.pop_front();
         }
 
         const auto now = std::chrono::steady_clock::now();

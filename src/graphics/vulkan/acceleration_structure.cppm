@@ -51,6 +51,7 @@ namespace GPP
         [[nodiscard]] vk::AccelerationStructureKHR GetHandle() const noexcept { return m_Handle; }
         [[nodiscard]] vk::DeviceAddress GetDeviceAddress() const noexcept { return m_Address; }
         [[nodiscard]] vk::DeviceSize GetSize() const noexcept { return m_Buffer.GetSize(); }
+        [[nodiscard]] const std::shared_ptr<VulkanDevice>& GetDevice() const noexcept { return m_Device; }
 
     private:
         std::shared_ptr<VulkanDevice> m_Device;
@@ -62,15 +63,27 @@ namespace GPP
     export class Blas
     {
     public:
+        // Builds now and waits
         Blas(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool, vk::Queue queue,
              const BlasTriangles& triangles);
+        // Allocates only; unusable until BuildBlasBatch (or RecordBuild plus a wait) ran
+        Blas(const std::shared_ptr<VulkanDevice>& device, const BlasTriangles& triangles);
 
+        void RecordBuild(vk::CommandBuffer commandBuffer, vk::DeviceAddress scratch) const;
+
+        [[nodiscard]] vk::DeviceSize ScratchSize() const noexcept { return m_ScratchSize; }
         [[nodiscard]] vk::AccelerationStructureKHR GetHandle() const noexcept { return m_Structure.GetHandle(); }
         [[nodiscard]] vk::DeviceAddress GetDeviceAddress() const noexcept { return m_Structure.GetDeviceAddress(); }
 
     private:
+        BlasTriangles m_Triangles;
+        vk::DeviceSize m_ScratchSize = 0;
         AccelerationStructure m_Structure;
     };
+
+    // Builds all in one command buffer and one submit on a shared scratch buffer, then waits
+    export void BuildBlasBatch(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
+                               vk::Queue queue, std::span<Blas* const> blases);
 
     export class Tlas
     {
