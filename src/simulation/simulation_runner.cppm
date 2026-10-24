@@ -74,8 +74,6 @@ namespace GPP
         std::uint64_t EndTick{0};
         RunnerState State;
         std::vector<CommandRecord> Commands;
-        // State hash after the tick completes (before that tick's edits), every CheckpointInterval ticks from StartTick,
-        // plus the start state itself. FinalHash is taken once everything recorded has been applied.
         std::uint64_t CheckpointInterval{0};
         std::vector<StateCheckpoint> Checkpoints;
         std::optional<std::uint64_t> FinalHash;
@@ -105,9 +103,9 @@ namespace GPP
         struct Data
         {
             Data(Scene scene, std::uint64_t generation) : Value(std::move(scene)), Generation(generation) {}
-            std::uint64_t ContentRevision{0};
             Scene Value;
             std::uint64_t Generation;
+            std::uint64_t ContentRevision{0};
         };
 
         SceneSnapshot() = default;
@@ -116,10 +114,10 @@ namespace GPP
         const Scene* operator->() const noexcept { return &m_Data->Value; }
         const Scene& operator*() const noexcept { return m_Data->Value; }
         explicit operator bool() const noexcept { return m_Data != nullptr; }
-        // Identifies the user-visible scene content (edits, not simulation ticks); equal revisions mean equal content.
-        [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Data ? m_Data->ContentRevision : 0; }
 
         [[nodiscard]] std::uint64_t Generation() const noexcept { return m_Data ? m_Data->Generation : 0; }
+        // Identifies the user-visible scene content (edits, not simulation ticks); equal revisions mean equal content.
+        [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Data ? m_Data->ContentRevision : 0; }
 
     private:
         std::shared_ptr<const Data> m_Data;
@@ -164,10 +162,10 @@ namespace GPP
         }
         [[nodiscard]] SceneSnapshot LockRenderScene() const { return AcquireSnapshot(); }
         [[nodiscard]] SceneMetadata Metadata() const;
+        [[nodiscard]] std::vector<std::string> TakeInitErrors();
 
         template <typename T>
         [[nodiscard]] std::shared_ptr<T> GetModule() const
-        [[nodiscard]] std::vector<std::string> TakeInitErrors();
         {
             for (const auto& module : m_Modules)
             {
@@ -178,10 +176,10 @@ namespace GPP
 
         void EnqueueEdit(std::move_only_function<void(Scene&)> edit);
         void EnqueueTrackedEdit(std::move_only_function<void(Scene&)> edit);
-
-        // Applied on the sim thread through the tracked path, stamped with the tick and kept in the command log.
         // Like EnqueueTrackedEdit, but not a content change (play/stop bookkeeping, queries).
         void EnqueueSystemEdit(std::move_only_function<void(Scene&)> edit, bool tracked = true);
+
+        // Applied on the sim thread through the tracked path, stamped with the tick and kept in the command log.
         void EnqueueCommand(Command command, CommandOptions options = {});
         void EnqueueCommands(std::vector<Command> commands, CommandOptions options = {});
         [[nodiscard]] std::vector<CommandRecord> CommandLog() const;
@@ -198,13 +196,13 @@ namespace GPP
         bool Redo();
         void ClearHistory() { m_History.Clear(); }
 
-        // Ticks completed so far.
-        [[nodiscard]] std::uint64_t Tick() const noexcept { return m_Tick.load(std::memory_order_acquire); }
         [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Revision.Current(); }
         // Sim-thread only (inside an enqueued edit).
         void MarkContentChanged() noexcept { m_Revision.Changed(); }
         void RestoreContentRevision(std::uint64_t revision) noexcept { m_Revision.Restore(revision); }
 
+        // Ticks completed so far.
+        [[nodiscard]] std::uint64_t Tick() const noexcept { return m_Tick.load(std::memory_order_acquire); }
         // Advances exactly n fixed ticks regardless of pause or wall-clock; runs inline when the thread is not started.
         void Step(std::uint64_t ticks);
         // Same, but returns once the ticks ran and the resulting snapshot is published.
@@ -239,9 +237,9 @@ namespace GPP
         {
             std::move_only_function<void(Scene&)> Fn;
             bool Tracked = false;
+            bool System = false;
             std::vector<Command> Commands;
             CommandOptions Options;
-            bool System = false;
             TransactionMarker Marker = TransactionMarker::None;
         };
 
@@ -266,6 +264,7 @@ namespace GPP
         void PublishNow();
         [[nodiscard]] float StepDeltaTime() const;
         void EnsureInitialized();
+        void RecordInitError(std::string message);
         void ShutdownModules();
         void RunOnSimThread(std::function<void()> fn);
         bool Publish();
@@ -278,7 +277,6 @@ namespace GPP
 
         std::atomic<bool> m_Paused{false};
         std::atomic<bool> m_Manual{false};
-        void RecordInitError(std::string message);
         std::atomic<bool> m_Running{false};
         std::atomic<double> m_TickRate{60.0};
 
@@ -289,6 +287,8 @@ namespace GPP
         std::atomic<std::uint64_t> m_Tick{0};
         bool m_Initialized = false;
         std::mutex m_InlineMutex;
+        std::mutex m_InitErrorMutex;
+        std::vector<std::string> m_InitErrors;
         std::atomic<std::uint64_t> m_StepsRequested{0};
         std::mutex m_StepMutex;
         std::condition_variable m_StepDone;
@@ -296,13 +296,11 @@ namespace GPP
 
         std::shared_ptr<SimulationRandom> m_Random;
         CommandHistory m_History;
+        RevisionCounter m_Revision;
         std::optional<UndoEntry> m_Transaction; // sim thread only
         mutable std::mutex m_LogMutex;
         std::deque<CommandRecord> m_CommandLog;
         std::optional<SimulationRecording> m_Recording;
-        std::mutex m_InitErrorMutex;
-        RevisionCounter m_Revision;
-        std::vector<std::string> m_InitErrors;
 
         struct CheckpointLog
         {

@@ -251,11 +251,11 @@ namespace GPP
             entry.Label = std::move(edit.Options.Label);
             entry.CoalesceKey = std::move(edit.Options.CoalesceKey);
             entry.Time = Clock::now();
+            entry.Stamp = stamp;
             for (const auto& record : applied) entry.Redo.push_back(record.Applied);
             for (auto it = applied.rbegin(); it != applied.rend(); ++it) entry.Undo.push_back(*it->Inverse);
             if (m_Transaction)
             {
-            entry.Stamp = stamp;
                 if (m_Transaction->Label.empty()) m_Transaction->Label = std::move(entry.Label);
                 m_Transaction->Append(std::move(entry));
             }
@@ -370,12 +370,12 @@ namespace GPP
                                  m_SimScene.Metadata().Name);
             }
             if (!edit.Tracked) m_SimScene.MarkAllDirty();
+            if (!edit.System) m_Revision.Changed();
         }
         if (!applied) return false;
         {
             std::scoped_lock lock(m_MetadataMutex);
             m_Metadata = m_SimScene.Metadata();
-            if (!edit.System) m_Revision.Changed();
         }
         return true;
     }
@@ -472,35 +472,17 @@ namespace GPP
             catch (const std::exception& e)
             {
                 Logger::LogError("Simulation init for scene '{}' failed: {}", m_SimScene.Metadata().Name, e.what());
+                RecordInitError(e.what());
             }
             catch (...)
             {
                 Logger::LogError("Simulation init for scene '{}' failed with an unknown exception",
                                  m_SimScene.Metadata().Name);
-            }
-        }
-    }
-
-    void SimulationRunner::ShutdownModules()
-    {
-        if (!m_Initialized) return;
-        m_Initialized = false;
-        for (const auto& module : m_Modules)
-        {
-            try
-            {
-                module->OnShutdown(m_SimScene);
-                RecordInitError(e.what());
-            }
-            catch (...)
-            {
-                Logger::LogError("Simulation shutdown for scene '{}' failed", m_SimScene.Metadata().Name);
-            }
                 RecordInitError("unknown exception");
+            }
         }
     }
 
-    void SimulationRunner::RunOnSimThread(std::function<void()> fn)
     void SimulationRunner::RecordInitError(std::string message)
     {
         std::scoped_lock lock(m_InitErrorMutex);
@@ -513,6 +495,24 @@ namespace GPP
         return std::exchange(m_InitErrors, {});
     }
 
+    void SimulationRunner::ShutdownModules()
+    {
+        if (!m_Initialized) return;
+        m_Initialized = false;
+        for (const auto& module : m_Modules)
+        {
+            try
+            {
+                module->OnShutdown(m_SimScene);
+            }
+            catch (...)
+            {
+                Logger::LogError("Simulation shutdown for scene '{}' failed", m_SimScene.Metadata().Name);
+            }
+        }
+    }
+
+    void SimulationRunner::RunOnSimThread(std::function<void()> fn)
     {
         if (!m_Running.load(std::memory_order_acquire))
         {
@@ -746,6 +746,7 @@ namespace GPP
         }
 
         target->Generation = ++m_Generation;
+        target->ContentRevision = m_Revision.Current();
         m_Published.store(std::shared_ptr<const SceneSnapshot::Data>(std::move(target)),
                           std::memory_order_release);
         return true;
@@ -765,10 +766,10 @@ namespace GPP
 
         auto lastTick = Clock::now();
         auto next = lastTick;
-        target->ContentRevision = m_Revision.Current();
         auto lastPublish = lastTick - publishInterval;
         bool dirty = true;
         bool wasPaused = true;
+        auto lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
         std::uint64_t seenSignal = 0;
 
         while (!stopToken.stop_requested())
@@ -787,7 +788,6 @@ namespace GPP
             if (requested > completed)
             {
                 ExecuteSteps(requested - completed);
-        auto lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
                 {
                     std::scoped_lock lock(m_StepMutex);
                     m_StepsCompleted = requested;
@@ -811,9 +811,15 @@ namespace GPP
                     wasPaused = false;
                     next = tickNow;
                     lastTick = tickNow;
+                    lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
                 }
 
                 const auto period = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
+                if (period != lastPeriod)
+                {
+                    next += period - lastPeriod; // reschedule the pending tick under the new rate
+                    lastPeriod = period;
+                }
                 std::uint32_t ticks = 0;
                 while (!stopToken.stop_requested() && ticks < maxCatchUp &&
                        (fixedRate ? next <= tickNow : tickNow - lastTick >= publishInterval))
@@ -830,15 +836,9 @@ namespace GPP
                     tickNow = Clock::now();
                     if (!fixedRate) break;
                     next += period;
-                    lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
                 }
                 if (fixedRate && next + period * maxCatchUp < tickNow)
                 {
-                if (period != lastPeriod)
-                {
-                    next += period - lastPeriod; // reschedule the pending tick under the new rate
-                    lastPeriod = period;
-                }
                     next = tickNow;
                 }
             }
@@ -862,6 +862,7 @@ namespace GPP
             }
 
             std::optional<Clock::time_point> deadline;
+            std::optional<Clock::time_point> tickDeadline;
             if (!paused)
             {
                 tickDeadline = fixedRate ? next : lastTick + publishInterval;
@@ -896,7 +897,6 @@ namespace GPP
             }
             if (spin > Clock::duration::zero() && !signalled)
             {
-            std::optional<Clock::time_point> tickDeadline;
                 while (!stopToken.stop_requested() && Clock::now() < *deadline &&
                        m_WakeSignal.load(std::memory_order_relaxed) == seenSignal)
                 {
