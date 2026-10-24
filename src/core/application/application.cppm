@@ -23,6 +23,9 @@ namespace GPP
         void Stop();
         void ScheduleOnMainThread(MainThreadTask task);
         void ScheduleContinuousOnMainThread(MainThreadTask task);
+        // While continuous tasks exist the loop sleeps in `wait` (at most the given time) instead of spinning;
+        // `wake` must make a running `wait` return from any thread
+        void SetIdleWait(std::function<void(std::chrono::milliseconds)> wait, std::function<void()> wake);
 
         ServiceProvider& GetServiceProvider() noexcept;
         IConfiguration& GetConfiguration();
@@ -41,6 +44,8 @@ namespace GPP
         std::vector<std::shared_ptr<IHostedService>> m_HostedServices;
         std::vector<MainThreadTask> m_ContinuousTasks{};
         std::queue<MainThreadTask> m_MainThreadQueue{};
+        std::function<void(std::chrono::milliseconds)> m_IdleWait;
+        std::function<void()> m_WakeIdle;
 
         std::stop_source m_StopSource;
         std::condition_variable m_ConditionVariable;

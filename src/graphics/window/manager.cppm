@@ -53,6 +53,7 @@ namespace GPP
         std::unordered_map<WindowId, std::shared_ptr<Window>> m_Windows;
         std::unordered_map<std::string, WindowId> m_WindowNames;
         bool m_ShouldQuit{false}, m_Quitting{false}, m_IsInitialized{false};
+        std::atomic<bool> m_SdlAlive{false};
         std::shared_ptr<Logger> m_Logger;
         std::shared_ptr<EventDispatcher> m_Dispatcher;
         std::shared_ptr<WindowDefinitions> m_Definitions;

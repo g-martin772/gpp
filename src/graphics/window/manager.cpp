@@ -49,6 +49,20 @@ namespace GPP
                 throw std::runtime_error(std::string("SDL3 failed to bind system Vulkan: ") + SDL_GetError());
             }
 
+            m_SdlAlive.store(true, std::memory_order_release);
+            Application::Instance().SetIdleWait(
+                [](const std::chrono::milliseconds timeout)
+                {
+                    SDL_WaitEventTimeout(nullptr, static_cast<std::int32_t>(timeout.count()));
+                },
+                [this]
+                {
+                    if (!m_SdlAlive.load(std::memory_order_acquire)) return;
+                    SDL_Event wake{};
+                    wake.type = SDL_EVENT_USER;
+                    SDL_PushEvent(&wake);
+                });
+
             m_IsInitialized = true;
             m_Logger->Info("SDL initialized successfully");
             m_ReadyPromise.set_value();
@@ -81,6 +95,8 @@ namespace GPP
             m_WindowNames.clear();
             if (!IsHeadless())
             {
+                m_SdlAlive.store(false, std::memory_order_release);
+                Application::Instance().SetIdleWait({}, {});
                 SDL_Quit();
             }
         });

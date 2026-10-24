@@ -69,9 +69,17 @@ namespace GPP
         {
             std::scoped_lock lock(m_Mutex);
             m_MainThreadQueue.push(std::move(task));
+            if (m_WakeIdle) m_WakeIdle();
         }
 
         m_ConditionVariable.notify_one();
+    }
+
+    void Application::SetIdleWait(std::function<void(std::chrono::milliseconds)> wait, std::function<void()> wake)
+    {
+        std::scoped_lock lock(m_Mutex);
+        m_IdleWait = std::move(wait);
+        m_WakeIdle = std::move(wake);
     }
 
     void Application::ScheduleContinuousOnMainThread(MainThreadTask task)
@@ -128,9 +136,11 @@ namespace GPP
                             empty();
                     });
                 }
-                else
+                else if (m_IdleWait && m_MainThreadQueue.empty())
                 {
-                    //std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    lock.unlock();
+                    m_IdleWait(std::chrono::milliseconds(10));
+                    lock.lock();
                 }
 
                 if (!m_Running)
