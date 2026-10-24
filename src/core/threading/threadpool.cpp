@@ -1,5 +1,6 @@
 module GPP.Core;
 import :Threading.ThreadPool;
+import :Diagnostics.CrashHandler;
 
 import std;
 
@@ -11,7 +12,10 @@ namespace GPP {
 
         m_Workers.reserve(workerCount);
         for (std::size_t i = 0; i < workerCount; ++i) {
-            m_Workers.emplace_back([this](std::stop_token stopToken) { WorkerLoop(stopToken); });
+            m_Workers.emplace_back([this](std::stop_token stopToken) {
+                RegisterCrashThread();
+                WorkerLoop(stopToken);
+            });
         }
     }
 

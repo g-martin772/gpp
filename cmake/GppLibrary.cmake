@@ -25,6 +25,9 @@ target_sources(gpp
 target_include_directories(gpp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(gpp PUBLIC spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json gpp_imgui glm::glm)
 target_link_libraries(gpp PUBLIC Vulkan::Vulkan)
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_libraries(gpp PRIVATE stdc++exp)
+endif ()
 target_link_libraries(gpp PRIVATE SDL3::SDL3 Vulkan::Headers GPUOpen::VulkanMemoryAllocator
         spirv-cross-core spirv-cross-glsl)
 if (SHADERC_SHARED_LIBRARY)
