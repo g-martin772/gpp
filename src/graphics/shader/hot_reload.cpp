@@ -15,10 +15,23 @@ namespace GPP
         std::optional<CompiledShader> fragment;
         std::optional<CompiledShader> compute;
         std::uint64_t generation = 0;
+        std::shared_ptr<VulkanPipeline> pipeline;
+        ShaderReflection reflection;
+        std::vector<std::filesystem::path> dependencies;
+        std::uint64_t vertexHash = 0;
+        std::uint64_t fragmentHash = 0;
     };
 
     namespace
     {
+        // Driver pipeline compiles can take seconds; run several at once but leave pool workers for other jobs
+        std::counting_semaphore<64>& PipelineCreationGate()
+        {
+            static std::counting_semaphore<64> gate(
+                std::clamp<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(ThreadPool::Instance().WorkerCount()) / 2, 1, 64));
+            return gate;
+        }
+
         struct ShaderPipelineCompiledEvent
         {
             const ShaderPipeline* Owner = nullptr;
@@ -109,23 +122,48 @@ namespace GPP
             return m_Progress.generation + 1;
         }();
 
+        auto compiled = std::make_shared<CompiledPipeline>();
+        compiled->generation = generation;
         if (m_IsCompute)
         {
             SetProgress({ShaderCompilationState::Compiling, 0, 1, generation, "compute", "starting"});
-            auto compute = m_Compiler.Compile(*m_Description.compute, m_Description.compileOptions);
+            compiled->compute = m_Compiler.Compile(*m_Description.compute, m_Description.compileOptions);
             SetProgress({ShaderCompilationState::Compiling, 1, 1, generation, "reflection", "done"});
-            return std::make_shared<CompiledPipeline>(
-                CompiledPipeline{.compute = std::move(compute), .generation = generation});
+        }
+        else
+        {
+            SetProgress({ShaderCompilationState::Compiling, 0, 2, generation, "vertex", "starting"});
+            compiled->vertex = m_Compiler.Compile(*m_Description.vertex, m_Description.compileOptions);
+            SetProgress({ShaderCompilationState::Compiling, 1, 2, generation, "fragment", "starting"});
+            compiled->fragment = m_Compiler.Compile(*m_Description.fragment, m_Description.compileOptions);
+            SetProgress({ShaderCompilationState::Compiling, 2, 2, generation, "reflection", "merging"});
         }
 
-        SetProgress({ShaderCompilationState::Compiling, 0, 2, generation, "vertex", "starting"});
-        auto vertex = m_Compiler.Compile(*m_Description.vertex, m_Description.compileOptions);
-        SetProgress({ShaderCompilationState::Compiling, 1, 2, generation, "fragment", "starting"});
-        auto fragment = m_Compiler.Compile(*m_Description.fragment, m_Description.compileOptions);
-
-        SetProgress({ShaderCompilationState::Compiling, 2, 2, generation, "reflection", "merging"});
-        return std::make_shared<CompiledPipeline>(
-            CompiledPipeline{.vertex = std::move(vertex), .fragment = std::move(fragment), .generation = generation});
+        // The driver compile happens here, on the worker, so the render thread only swaps the finished pipeline in
+        auto& gate = PipelineCreationGate();
+        gate.acquire();
+        const auto release = std::unique_ptr<void, void (*)(void*)>(
+            &gate, [](void* semaphore) { static_cast<std::counting_semaphore<64>*>(semaphore)->release(); });
+        if (m_IsCompute)
+        {
+            compiled->reflection = compiled->compute->reflection;
+            compiled->pipeline = std::make_shared<VulkanPipeline>(m_Device, *compiled->compute);
+            compiled->dependencies = compiled->compute->dependencies;
+            compiled->vertexHash = compiled->compute->sourceHash;
+        }
+        else
+        {
+            compiled->reflection = MergeShaderReflections(compiled->vertex->reflection, compiled->fragment->reflection);
+            compiled->pipeline = std::make_shared<VulkanPipeline>(
+                m_Device, m_PipelineSpecification, *compiled->vertex, *compiled->fragment);
+            compiled->dependencies = compiled->vertex->dependencies;
+            compiled->dependencies.insert(compiled->dependencies.end(),
+                                          compiled->fragment->dependencies.begin(),
+                                          compiled->fragment->dependencies.end());
+            compiled->vertexHash = compiled->vertex->sourceHash;
+            compiled->fragmentHash = compiled->fragment->sourceHash;
+        }
+        return compiled;
     }
 
     Task<std::shared_ptr<ShaderPipeline::CompiledPipeline>> ShaderPipeline::CompileAsync()
@@ -141,30 +179,11 @@ namespace GPP
             return false;
         }
 
-        ShaderReflection reflection;
-        std::shared_ptr<VulkanPipeline> pipeline;
-        std::vector<std::filesystem::path> dependencies;
-        std::uint64_t vertexHash = 0;
-        std::uint64_t fragmentHash = 0;
-        if (m_IsCompute)
-        {
-            reflection = compiled->compute->reflection;
-            pipeline = std::make_shared<VulkanPipeline>(m_Device, *compiled->compute);
-            dependencies = compiled->compute->dependencies;
-            vertexHash = compiled->compute->sourceHash;
-        }
-        else
-        {
-            reflection = MergeShaderReflections(compiled->vertex->reflection, compiled->fragment->reflection);
-            pipeline = std::make_shared<VulkanPipeline>(
-                m_Device, m_PipelineSpecification, *compiled->vertex, *compiled->fragment);
-            dependencies = compiled->vertex->dependencies;
-            dependencies.insert(dependencies.end(),
-                                compiled->fragment->dependencies.begin(),
-                                compiled->fragment->dependencies.end());
-            vertexHash = compiled->vertex->sourceHash;
-            fragmentHash = compiled->fragment->sourceHash;
-        }
+        const auto& reflection = compiled->reflection;
+        auto pipeline = compiled->pipeline;
+        auto dependencies = compiled->dependencies;
+        const auto vertexHash = compiled->vertexHash;
+        const auto fragmentHash = compiled->fragmentHash;
 
         std::scoped_lock lock(m_Mutex);
         if (!m_Running)
