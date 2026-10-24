@@ -162,11 +162,12 @@ namespace GPP
         m_RenderQueue.push(std::move(task));
     }
 
-    void Renderer::WakeViewport()
+    void Renderer::WakeViewport(const bool dirty)
     {
         {
             std::scoped_lock lock(m_ViewportMutex);
             ++m_ViewportSignal;
+            if (dirty) ++m_ViewportDirty;
         }
         m_ViewportWake.notify_all();
     }
@@ -301,6 +302,7 @@ namespace GPP
         stats.FramesRendered = target->FrameMeter.Total();
         stats.Extent = BufferTargetResources::UnpackExtent(target->DesiredExtent.load(std::memory_order_relaxed));
         stats.Visible = target->Visible.load(std::memory_order_relaxed);
+        stats.Idle = target->Idle.load(std::memory_order_relaxed);
         if (const auto since = target->InFlightSinceNs.load(std::memory_order_acquire); since != 0)
         {
             const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1073,8 +1075,10 @@ namespace GPP
 
             if (graph.PassCount() == 0)
             {
+                target.Idle.store(true, std::memory_order_relaxed);
                 return false;
             }
+            target.Idle.store(false, std::memory_order_relaxed);
 
             const auto sliceMs = m_RenderOptions->ViewportSliceMs;
             ProfileZone executeZone("Viewport.ExecuteSliced");
@@ -1168,7 +1172,7 @@ namespace GPP
         }
         if (tookFrame)
         {
-            WakeViewport();
+            WakeViewport(false);
         }
     }
 
@@ -1312,9 +1316,11 @@ namespace GPP
         while (!stopToken.stop_requested())
         {
             std::queue<std::move_only_function<void()>> tasks;
+            std::uint64_t dirtyAtStart = 0;
             {
                 std::scoped_lock lock(m_ViewportMutex);
                 tasks.swap(m_ViewportQueue);
+                dirtyAtStart = m_ViewportDirty;
             }
             while (!tasks.empty())
             {
@@ -1330,6 +1336,7 @@ namespace GPP
             }
 
             bool rendered = false;
+            bool idle = true;
             for (const auto& target : SnapshotBufferTargets())
             {
                 if (stopToken.stop_requested())
@@ -1341,6 +1348,7 @@ namespace GPP
                 if (!target->Visible.load(std::memory_order_relaxed))
                     continue;
                 rendered |= RenderTargetFrame(*target, pool, true, stopToken);
+                idle &= target->Idle.load(std::memory_order_relaxed);
             }
 
             if (rendered)
@@ -1357,8 +1365,11 @@ namespace GPP
             else
             {
                 std::unique_lock lock(m_ViewportMutex);
-                m_ViewportWake.wait_for(lock, stopToken, std::chrono::milliseconds(50), [&]
+                const auto poll = idle ? std::chrono::milliseconds(m_RenderOptions->ViewportIdlePollMs)
+                                       : std::chrono::milliseconds(50);
+                m_ViewportWake.wait_for(lock, stopToken, poll, [&]
                 {
+                    if (idle) return m_ViewportDirty != dirtyAtStart || !m_ViewportQueue.empty();
                     return m_ViewportSignal != seenSignal || !m_ViewportQueue.empty();
                 });
                 seenSignal = m_ViewportSignal;
@@ -1593,7 +1604,7 @@ namespace GPP
             if (!m_FrameKeepAlive[frameSlot].empty())
             {
                 m_FrameKeepAlive[frameSlot].clear();
-                WakeViewport();
+                WakeViewport(false);
             }
             DrainTextureGraveyard();
 

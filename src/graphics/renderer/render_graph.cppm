@@ -102,6 +102,8 @@ namespace GPP
         [[nodiscard]] const std::string& CurrentScope() const noexcept { return m_BuildScope; }
         void SetProfiler(GpuProfiler* profiler) noexcept { m_Profiler = profiler; }
 
+        void DiscardPasses() noexcept { m_Passes.clear(); }
+
         void Compile();
         void Execute(vk::CommandBuffer commandBuffer);
 

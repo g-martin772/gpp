@@ -157,6 +157,7 @@ namespace GPP
         std::atomic<double> LastGpuMs{0.0};
         std::atomic<std::uint32_t> LastSubmissions{0};
         std::atomic<std::int64_t> InFlightSinceNs{0};
+        std::atomic<bool> Idle{false};
         mutable std::mutex PassMutex;
         std::vector<GpuScopeTiming> PassTimings;
     };
@@ -225,6 +226,8 @@ namespace GPP
         void ResizeBufferTarget(std::uint32_t bufferId, glm::uvec2 extent);
 
         void SetBufferTargetVisible(std::uint32_t bufferId, bool visible);
+        // The viewport thread sleeps while its layers add no work; call when something they draw has changed
+        void RequestViewportFrame() { WakeViewport(); }
 
         void DetachBufferTarget(std::uint32_t bufferId);
 
@@ -255,6 +258,7 @@ namespace GPP
             std::uint64_t FramesRendered = 0;
             glm::uvec2 Extent{0, 0};
             bool Visible = false;
+            bool Idle = false;
         };
 
         [[nodiscard]] std::optional<BufferTargetStats> GetBufferTargetStats(std::uint32_t bufferId) const;
@@ -311,7 +315,7 @@ namespace GPP
         [[nodiscard]] std::vector<std::shared_ptr<BufferTargetResources>> SnapshotBufferTargets() const;
 
         void PostToBufferThread(std::move_only_function<void()> task);
-        void WakeViewport();
+        void WakeViewport(bool dirty = true);
         void ViewportLoop(std::stop_token stopToken);
 
         bool RenderTargetFrame(BufferTargetResources& target, VulkanCommandPool& pool, bool paceToConsumer,
@@ -394,6 +398,7 @@ namespace GPP
         std::mutex m_ViewportMutex;
         std::condition_variable_any m_ViewportWake;
         std::uint64_t m_ViewportSignal = 0;
+        std::uint64_t m_ViewportDirty = 0;
         std::queue<std::move_only_function<void()>> m_ViewportQueue;
         std::atomic<bool> m_ViewportRunning{false};
 

@@ -37,6 +37,7 @@ namespace GPP
 
         double ViewportSliceMs = 4.0;
         int ViewportMaxFps = 0;
+        int ViewportIdlePollMs = 250;
 
         static RenderOptions FromConfig(const IConfigurationSection& config)
         {
@@ -68,6 +69,7 @@ namespace GPP
             options.ViewportSliceMs = std::clamp<double>(config.GetValue<float>("ViewportSliceMilliseconds", 4.0f),
                                                          0.25, 100.0);
             options.ViewportMaxFps = std::max(0, config.GetValue<int>("ViewportMaxFps", 0));
+            options.ViewportIdlePollMs = std::clamp(config.GetValue<int>("ViewportIdlePollMilliseconds", 250), 20, 5000);
             return options;
         }
     };
