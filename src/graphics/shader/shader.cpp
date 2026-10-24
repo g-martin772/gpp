@@ -1,5 +1,6 @@
 module;
 
+#include <gpp/profile.h>
 #include <dlfcn.h>
 #include <sys/stat.h>
 #include <shaderc/shaderc.hpp>
@@ -506,6 +507,7 @@ namespace GPP
     CompiledShader ShaderCompiler::Compile(const ShaderSource& unmerged,
                                            const ShaderCompileOptions& options) const
     {
+        GPP_ZONE("Shader.Compile");
         ShaderSource source = unmerged;
         {
             std::scoped_lock lock(GlobalDefinesMutex());
@@ -565,6 +567,7 @@ namespace GPP
                                                const std::filesystem::path& resolvedPath,
                                                const std::string& sourceText) const
     {
+        GPP_ZONE("Shader.CompileText");
         const auto hash = HashShader(sourceText, source, options);
         const auto cachePath = CacheDirectory(m_FileSystem, options) /
                                (std::format("{:016x}.spv", hash));

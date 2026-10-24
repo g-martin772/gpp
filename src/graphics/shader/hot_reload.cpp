@@ -1,3 +1,5 @@
+module;
+#include <gpp/profile.h>
 module GPP.Graphics;
 
 import vulkan;
@@ -116,6 +118,7 @@ namespace GPP
 
     std::shared_ptr<ShaderPipeline::CompiledPipeline> ShaderPipeline::Compile()
     {
+        GPP_ZONE("Pipeline.Compile");
         auto generation = [&]
         {
             std::scoped_lock lock(m_Mutex);
@@ -174,6 +177,7 @@ namespace GPP
 
     bool ShaderPipeline::Install(const std::shared_ptr<CompiledPipeline> compiled)
     {
+        GPP_ZONE("Pipeline.Install");
         if (!compiled)
         {
             return false;

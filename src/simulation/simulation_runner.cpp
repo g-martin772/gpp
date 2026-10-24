@@ -1,3 +1,6 @@
+module;
+#include <cxxabi.h>
+#include <gpp/profile.h>
 module GPP.Simulation;
 
 import :Runner;
@@ -217,6 +220,7 @@ namespace GPP
 
     void SimulationRunner::ApplyCommands(PendingEdit& edit)
     {
+        GPP_ZONE("Sim.ApplyCommands");
         const auto tick = Tick();
         std::vector<CommandRecord> applied;
         for (auto& command : edit.Commands)
@@ -308,6 +312,7 @@ namespace GPP
 
     bool SimulationRunner::DrainEdits()
     {
+        GPP_ZONE("Sim.DrainEdits");
         std::queue<PendingEdit> incoming;
         {
             std::scoped_lock lock(m_EditMutex);
@@ -447,6 +452,17 @@ namespace GPP
         if (m_Initialized) return;
         m_Initialized = true;
         m_SimScene.MarkAllDirty();
+        m_ModuleZones.clear();
+        for (const auto& module : m_Modules)
+        {
+            int status = 0;
+            std::unique_ptr<char, decltype(&std::free)> demangled(
+                abi::__cxa_demangle(typeid(*module).name(), nullptr, nullptr, &status), &std::free);
+            std::string name = status == 0 && demangled ? demangled.get() : "Module";
+            if (const auto scope = name.rfind("::"); scope != std::string::npos) name.erase(0, scope + 2);
+            if (const auto at = name.find('@'); at != std::string::npos) name.erase(at);
+            m_ModuleZones.push_back(Profiler::Intern("Sim.Module." + name));
+        }
         for (const auto& module : m_Modules)
         {
             try
@@ -653,13 +669,15 @@ namespace GPP
 
     void SimulationRunner::RunTick(const float deltaTime, const double clockDt)
     {
+        GPP_ZONE("Sim.Tick");
         const auto start = Clock::now();
         m_TickStartNs.store(ToNs(start), std::memory_order_release);
         try
         {
-            for (const auto& module : m_Modules)
+            for (std::size_t i = 0; i < m_Modules.size(); ++i)
             {
-                module->OnTick(m_SimScene, deltaTime);
+                ProfileZone moduleZone(i < m_ModuleZones.size() ? m_ModuleZones[i] : "Sim.Module");
+                m_Modules[i]->OnTick(m_SimScene, deltaTime);
             }
         }
         catch (const std::exception& e)
@@ -693,6 +711,7 @@ namespace GPP
 
     bool SimulationRunner::Publish()
     {
+        GPP_ZONE("Sim.Publish");
         const auto changes = m_SimScene.TakeChanges();
         for (auto& entry : m_Pool)
         {
@@ -734,6 +753,7 @@ namespace GPP
 
     void SimulationRunner::ThreadMain(std::stop_token stopToken)
     {
+        Profiler::SetThreadName("Simulation");
         {
             std::scoped_lock lock(m_InlineMutex);
             EnsureInitialized();

@@ -157,7 +157,11 @@ namespace GPP
 
         [[nodiscard]] SimulationStats GetStats() const noexcept;
 
-        [[nodiscard]] SceneSnapshot AcquireSnapshot() const { return SceneSnapshot(m_Published.load(std::memory_order_acquire)); }
+        [[nodiscard]] SceneSnapshot AcquireSnapshot() const
+        {
+            ProfileZone zone("Snapshot.Acquire");
+            return SceneSnapshot(m_Published.load(std::memory_order_acquire));
+        }
         [[nodiscard]] SceneSnapshot LockRenderScene() const { return AcquireSnapshot(); }
         [[nodiscard]] SceneMetadata Metadata() const;
 
@@ -268,6 +272,7 @@ namespace GPP
 
         Scene m_SimScene;
         std::vector<std::shared_ptr<ISimulationModule>> m_Modules;
+        std::vector<const char*> m_ModuleZones;
         SimulationOptions m_Options;
         std::jthread m_Thread;
 

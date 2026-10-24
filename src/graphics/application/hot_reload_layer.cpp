@@ -1,11 +1,34 @@
+module;
+#include <cxxabi.h>
 module GPP.Graphics;
 
+import GPP.Core;
 import :Application.HotReloadLayer;
 import :RenderGraph;
 import std;
 
 namespace GPP
 {
+    namespace
+    {
+        // Zone name "Layer.<hook>.<Type>"; only evaluated while the profiler is on.
+        const char* LayerZoneName(const HotReloadableLayer& layer, const char* hook)
+        {
+            static std::mutex mutex;
+            static std::map<std::pair<std::type_index, std::string_view>, const char*> cache;
+            std::scoped_lock lock(mutex);
+            const std::pair key{std::type_index(typeid(layer)), std::string_view(hook)};
+            if (const auto it = cache.find(key); it != cache.end()) return it->second;
+            int status = 0;
+            std::unique_ptr<char, decltype(&std::free)> demangled(
+                abi::__cxa_demangle(typeid(layer).name(), nullptr, nullptr, &status), &std::free);
+            std::string type = status == 0 && demangled ? demangled.get() : "Layer";
+            if (const auto scope = type.rfind("::"); scope != std::string::npos) type.erase(0, scope + 2);
+            if (const auto at = type.find('@'); at != std::string::npos) type.erase(at);
+            return cache.emplace(key, Profiler::Intern(std::format("Layer.{}.{}", hook, type))).first->second;
+        }
+    }
+
     void HotReloadLayerProxy::OnAttach()
     {
         m_StackAttached = true;
@@ -33,6 +56,8 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
+            std::optional<ProfileZone> zone;
+            if (Profiler::IsEnabled()) zone.emplace(LayerZoneName(*m_Active, "OnUpdate"));
             Guarded("OnUpdate", [&] { m_Active->OnUpdate(deltaTime); });
         }
     }
@@ -42,6 +67,8 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
+            std::optional<ProfileZone> zone;
+            if (Profiler::IsEnabled()) zone.emplace(LayerZoneName(*m_Active, "OnRender"));
             Guarded("OnRender", [&] { m_Active->OnRender(); });
         }
     }
@@ -51,6 +78,8 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
+            std::optional<ProfileZone> zone;
+            if (Profiler::IsEnabled()) zone.emplace(LayerZoneName(*m_Active, "OnRenderGraph"));
             Guarded("OnRenderGraph", [&] { m_Active->OnRenderGraph(graph); });
         }
     }
@@ -60,6 +89,8 @@ namespace GPP
         std::shared_lock lock(m_CallMutex);
         if (m_Active)
         {
+            std::optional<ProfileZone> zone;
+            if (Profiler::IsEnabled()) zone.emplace(LayerZoneName(*m_Active, "OnUiRender"));
             Guarded("OnUiRender", [&] { m_Active->OnUiRender(); });
         }
     }

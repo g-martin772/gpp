@@ -1,4 +1,5 @@
 module;
+#include <gpp/profile.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 module GPP.Graphics;
@@ -907,6 +908,7 @@ namespace GPP
         {
             if (!m_Cmd)
                 return 0.0;
+            GPP_ZONE("Viewport.SubmitWait");
             m_Cmd->End();
             const auto raw = m_Cmd->GetCommandBuffer();
             vk::SubmitInfo info{};
@@ -1013,6 +1015,7 @@ namespace GPP
     bool Renderer::RenderTargetFrame(BufferTargetResources& target, VulkanCommandPool& pool,
                                      const bool paceToConsumer, std::stop_token stopToken)
     {
+        GPP_ZONE("Viewport.RenderTargetFrame");
         if (!target.LayerStack || !target.Attached.load(std::memory_order_acquire))
             return false;
         if (paceToConsumer)
@@ -1049,6 +1052,7 @@ namespace GPP
         ViewportChunkSink sink(*m_Device, pool, std::move(stopToken));
         try
         {
+            ProfileZone prepareZone("Viewport.Prepare");
             target.LayerStack->OnRender();
 
             if (!target.Graph)
@@ -1065,6 +1069,7 @@ namespace GPP
             graph.SetPrimaryDepthTarget(depthHandle);
             target.LayerStack->OnRenderGraph(graph);
             graph.Compile();
+            prepareZone.End();
 
             if (graph.PassCount() == 0)
             {
@@ -1072,6 +1077,7 @@ namespace GPP
             }
 
             const auto sliceMs = m_RenderOptions->ViewportSliceMs;
+            ProfileZone executeZone("Viewport.ExecuteSliced");
             const auto cmd = graph.ExecuteSliced(sink, [&](const std::string& passName) -> AdaptiveSlicer&
             {
                 auto [it, inserted] = target.Slicers.try_emplace(passName);
@@ -1095,6 +1101,7 @@ namespace GPP
 
             TransitionImageLayout(cmd, image->Color.GetImage(), image->Color.GetSpecification().format,
                                   graph.GetCurrentLayout(colorHandle), vk::ImageLayout::eShaderReadOnlyOptimal);
+            executeZone.End();
             sink.SubmitChunkAndWait();
             if (target.Profiler && target.Profiler->Collect(0))
             {
@@ -1297,6 +1304,7 @@ namespace GPP
 
     void Renderer::ViewportLoop(std::stop_token stopToken)
     {
+        Profiler::SetThreadName("Viewport");
         VulkanCommandPool pool(m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
         std::uint64_t seenSignal = 0;
         auto lastFrameEnd = std::chrono::steady_clock::now();
@@ -1439,6 +1447,7 @@ namespace GPP
 
     void Renderer::RenderLoop(std::stop_token stopToken)
     {
+        Profiler::SetThreadName("UI/Render");
         InitializeRenderSystem();
         const bool headless = m_WindowManager->IsHeadless();
         if (!headless)
@@ -1468,6 +1477,7 @@ namespace GPP
 
         while (m_Running && !stopToken.stop_requested())
         {
+            GPP_ZONE("Ui.Frame");
             std::queue<std::move_only_function<void()>> pendingTasks;
             {
                 std::scoped_lock lock(m_RenderQueueMutex);
@@ -1563,6 +1573,7 @@ namespace GPP
             FrameResources& frame = m_FrameResources[frameSlot];
 
             {
+                GPP_ZONE("Ui.WaitFence");
                 const auto fence = frame.InFlightFence.GetFence();
                 try
                 {
@@ -1588,6 +1599,7 @@ namespace GPP
 
             std::vector<WindowResources*> framed;
             framed.reserve(activeWindows.size());
+            ProfileZone acquireZone("Ui.Acquire");
             for (auto* resources : activeWindows)
             {
                 const auto result = resources->SwapChain->AcquireNextImage(
@@ -1597,6 +1609,7 @@ namespace GPP
                     framed.push_back(resources);
                 }
             }
+            acquireZone.End();
             if (framed.empty())
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -1608,6 +1621,7 @@ namespace GPP
             iterations++;
 
             auto& commandBuffer = frame.CommandBuffer;
+            ProfileZone recordZone("Ui.Record");
             commandBuffer.Begin();
             const auto frameNow = std::chrono::steady_clock::now();
             const float elapsed = static_cast<float>(
@@ -1626,6 +1640,7 @@ namespace GPP
                     TakeFrontImages(frameSlot);
                     ImGui_ImplVulkan_NewFrame();
                 }
+                GPP_ZONE("Ui.ImGuiFrame");
                 ImGui_ImplSDL3_NewFrame();
                 ImGui::NewFrame();
                 if (m_MainWindowResources.EnableDockSpace &&
@@ -1676,6 +1691,7 @@ namespace GPP
                 RenderWindow(*resources, rawCommandBuffer, frameSlot);
             }
             commandBuffer.End();
+            recordZone.End();
 
             std::vector<vk::Semaphore> waitSemaphores;
             std::vector<vk::PipelineStageFlags> waitStages;
@@ -1701,6 +1717,7 @@ namespace GPP
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &rawSubmitBuffer;
             const auto graphicsQueue = m_Device->GetGraphicsQueue();
+            ProfileZone submitZone("Ui.Submit");
             vk::Result submitResult;
             try
             {
@@ -1718,11 +1735,14 @@ namespace GPP
                 break;
             }
 
+            submitZone.End();
+            ProfileZone presentZone("Ui.Present");
             for (std::size_t index = 0; index < framed.size(); ++index)
             {
                 framed[index]->SwapChain->Present(m_Device->GetPresentQueue(), signalSemaphores[index]);
             }
 
+            presentZone.End();
             const auto frameEnd = std::chrono::steady_clock::now();
             m_UiFrameMeter.Tick(std::chrono::duration<double, std::milli>(frameEnd - lastUiFrame).count(), frameEnd);
             lastUiFrame = frameEnd;
