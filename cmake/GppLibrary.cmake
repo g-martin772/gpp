@@ -43,3 +43,10 @@ target_link_libraries(gpp PRIVATE nfd::nfd unofficial::luau::Luau.VM unofficial:
 target_link_libraries(gpp PRIVATE lunasvg::lunasvg)
 
 include(cmake/GppHotReload.cmake)
+
+option(GPP_TRACY "Forward GPP_ZONE zones to Tracy (needs a Tracy package; off by default)" OFF)
+if (GPP_TRACY)
+    find_package(Tracy CONFIG REQUIRED)
+    target_link_libraries(gpp PUBLIC Tracy::TracyClient)
+    target_compile_definitions(gpp PUBLIC GPP_TRACY)
+endif ()

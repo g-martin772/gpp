@@ -4,6 +4,7 @@ export import :Diagnostics.LogFiles;
 export import :Diagnostics.CrashReport;
 export import :Diagnostics.CrashHandler;
 export import :Threading;
+export import :Profiling;
 export import :Types;
 export import :DI;
 export import :Application;
