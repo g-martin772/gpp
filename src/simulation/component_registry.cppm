@@ -127,6 +127,7 @@ namespace GPP
             }
             m_ByName.insert_or_assign(info.Name, typeId);
             m_Infos.insert_or_assign(typeId, std::move(info));
+            m_Snapshot.reset();
         }
 
         [[nodiscard]] const ComponentTypeInfo* FindByName(const std::string& name) const
@@ -138,21 +139,48 @@ namespace GPP
             return infoIt != m_Infos.end() ? &infoIt->second : nullptr;
         }
 
+        using SyncEntityFn = decltype(ComponentTypeInfo::SyncEntity);
+
+        [[nodiscard]] std::shared_ptr<const std::vector<SyncEntityFn>> SyncEntityFunctions() const
+        {
+            const auto snapshot = Current();
+            return {snapshot, &snapshot->SyncEntity};
+        }
+
         template <typename Fn>
         void ForEach(Fn&& fn) const
         {
-            std::vector<ComponentTypeInfo> snapshot;
-            {
-                std::scoped_lock lock(m_Mutex);
-                snapshot.reserve(m_Order.size());
-                for (const auto& typeId : m_Order) snapshot.push_back(m_Infos.at(typeId));
-            }
-            for (const auto& info : snapshot) fn(info);
+            const auto snapshot = Current();
+            for (const auto& info : snapshot->Infos) fn(info);
         }
 
     private:
+        struct Snapshot
+        {
+            std::vector<ComponentTypeInfo> Infos;
+            std::vector<SyncEntityFn> SyncEntity;
+        };
+
         ComponentRegistry() = default;
 
+        std::shared_ptr<const Snapshot> Current() const
+        {
+            std::scoped_lock lock(m_Mutex);
+            if (!m_Snapshot)
+            {
+                auto snapshot = std::make_shared<Snapshot>();
+                snapshot->Infos.reserve(m_Order.size());
+                for (const auto& typeId : m_Order)
+                {
+                    const auto& info = snapshot->Infos.emplace_back(m_Infos.at(typeId));
+                    if (info.SyncToRenderState && info.SyncEntity) snapshot->SyncEntity.push_back(info.SyncEntity);
+                }
+                m_Snapshot = std::move(snapshot);
+            }
+            return m_Snapshot;
+        }
+
+        mutable std::shared_ptr<const Snapshot> m_Snapshot;
         mutable std::mutex m_Mutex;
         std::vector<std::type_index> m_Order;
         std::unordered_map<std::type_index, ComponentTypeInfo> m_Infos;

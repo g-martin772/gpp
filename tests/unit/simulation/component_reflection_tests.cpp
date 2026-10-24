@@ -116,3 +116,36 @@ TEST_CASE ("Base components are described", "[simulation][reflection]")
     const auto euler = std::get<glm::vec3>(transform->Fields[1].Get(scene.Registry(), entity));
     CHECK(euler.y == Catch::Approx(90.0f).margin(0.1));
 }
+
+namespace
+{
+    struct LateComponent
+    {
+        int Value{0};
+    };
+
+    std::vector<const ComponentTypeInfo*> VisitedInfos()
+    {
+        std::vector<const ComponentTypeInfo*> visited;
+        ComponentRegistry::Instance().ForEach([&](const ComponentTypeInfo& info) { visited.push_back(&info); });
+        return visited;
+    }
+}
+
+TEST_CASE ("Registry iteration reuses its snapshot until a registration", "[simulation][reflection]")
+{
+    RegisterBaseComponents();
+
+    const auto before = VisitedInfos();
+    const auto syncBefore = ComponentRegistry::Instance().SyncEntityFunctions();
+    CHECK(VisitedInfos() == before);
+    CHECK(ComponentRegistry::Instance().SyncEntityFunctions() == syncBefore);
+
+    RegisterComponent<LateComponent>("LateSnapshotProbe", ComponentDescription<LateComponent>{
+        .Fields = {Field("Value", &LateComponent::Value)}});
+
+    const auto after = VisitedInfos();
+    REQUIRE(after.size() == before.size() + 1);
+    CHECK(after.back()->Name == "LateSnapshotProbe");
+    CHECK(ComponentRegistry::Instance().SyncEntityFunctions()->size() == syncBefore->size() + 1);
+}

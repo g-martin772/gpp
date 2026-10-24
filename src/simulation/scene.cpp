@@ -226,12 +226,7 @@ namespace GPP
         }
         if (target.m_ExtensionRevision != source.m_ExtensionRevision) target.CopyExtensionsFrom(source);
 
-        using SyncFn = decltype(ComponentTypeInfo::SyncEntity);
-        std::vector<SyncFn> types;
-        ComponentRegistry::Instance().ForEach([&](const ComponentTypeInfo& info)
-        {
-            if (info.SyncToRenderState && info.SyncEntity) types.push_back(info.SyncEntity);
-        });
+        const auto types = ComponentRegistry::Instance().SyncEntityFunctions();
 
         for (const auto guid : changes.Guids)
         {
@@ -248,7 +243,7 @@ namespace GPP
             }
 
             const auto entity = target.m_GuidIndex.GetOrCreate(target.m_Registry, guid);
-            for (const auto& sync : types)
+            for (const auto& sync : *types)
             {
                 sync(source.m_Registry, srcEntity, target.m_Registry, entity);
             }
