@@ -430,6 +430,7 @@ namespace GPP
     void CommandHistory::Record(UndoEntry entry, const std::chrono::milliseconds coalesceWindow)
     {
         std::scoped_lock lock(m_Mutex);
+        m_Version.fetch_add(1, std::memory_order_release);
         m_Redo.clear();
         if (!m_Undo.empty() && !entry.CoalesceKey.empty())
         {
@@ -442,13 +443,14 @@ namespace GPP
             }
         }
         m_Undo.push_back(std::move(entry));
-        if (m_Undo.size() > kCapacity) m_Undo.pop_front();
+        while (m_Undo.size() > m_Capacity) m_Undo.pop_front();
     }
 
     std::optional<UndoEntry> CommandHistory::TakeUndo()
     {
         std::scoped_lock lock(m_Mutex);
         if (m_Undo.empty()) return std::nullopt;
+        m_Version.fetch_add(1, std::memory_order_release);
         auto entry = std::move(m_Undo.back());
         m_Undo.pop_back();
         return entry;
@@ -458,6 +460,7 @@ namespace GPP
     {
         std::scoped_lock lock(m_Mutex);
         if (m_Redo.empty()) return std::nullopt;
+        m_Version.fetch_add(1, std::memory_order_release);
         auto entry = std::move(m_Redo.back());
         m_Redo.pop_back();
         return entry;
@@ -467,21 +470,52 @@ namespace GPP
     {
         entry.CoalesceKey.clear();
         std::scoped_lock lock(m_Mutex);
+        m_Version.fetch_add(1, std::memory_order_release);
         m_Undo.push_back(std::move(entry));
-        if (m_Undo.size() > kCapacity) m_Undo.pop_front();
+        while (m_Undo.size() > m_Capacity) m_Undo.pop_front();
     }
 
     void CommandHistory::PushRedo(UndoEntry entry)
     {
         std::scoped_lock lock(m_Mutex);
+        m_Version.fetch_add(1, std::memory_order_release);
         m_Redo.push_back(std::move(entry));
     }
 
     void CommandHistory::Clear()
     {
         std::scoped_lock lock(m_Mutex);
+        m_Version.fetch_add(1, std::memory_order_release);
         m_Undo.clear();
         m_Redo.clear();
+    }
+
+    void CommandHistory::SetCapacity(const std::size_t capacity)
+    {
+        std::scoped_lock lock(m_Mutex);
+        m_Capacity = std::max<std::size_t>(capacity, 1);
+        m_Version.fetch_add(1, std::memory_order_release);
+        while (m_Undo.size() > m_Capacity) m_Undo.pop_front();
+    }
+
+    std::size_t CommandHistory::Capacity() const
+    {
+        std::scoped_lock lock(m_Mutex);
+        return m_Capacity;
+    }
+
+    HistoryView CommandHistory::View(const std::size_t limit) const
+    {
+        std::scoped_lock lock(m_Mutex);
+        HistoryView view;
+        view.Version = m_Version.load(std::memory_order_acquire);
+        view.UndoCount = m_Undo.size();
+        view.RedoCount = m_Redo.size();
+        for (auto it = m_Undo.rbegin(); it != m_Undo.rend() && view.Undo.size() < limit; ++it)
+            view.Undo.push_back({it->Label, it->Time});
+        for (auto it = m_Redo.rbegin(); it != m_Redo.rend() && view.Redo.size() < limit; ++it)
+            view.Redo.push_back({it->Label, it->Time});
+        return view;
     }
 
     bool CommandHistory::CanUndo() const

@@ -191,7 +191,15 @@ namespace GPP
         [[nodiscard]] std::string RedoLabel() const { return m_History.RedoLabel(); }
         bool Undo();
         bool Redo();
+        std::size_t UndoSteps(std::size_t count);
+        std::size_t RedoSteps(std::size_t count);
         void ClearHistory() { m_History.Clear(); }
+        void SetHistoryCapacity(const std::size_t capacity) { m_History.SetCapacity(capacity); }
+        [[nodiscard]] std::uint64_t HistoryVersion() const { return m_History.Version(); }
+        [[nodiscard]] HistoryView History(const std::size_t limit = std::numeric_limits<std::size_t>::max()) const
+        {
+            return m_History.View(limit);
+        }
 
         [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Revision.Current(); }
 

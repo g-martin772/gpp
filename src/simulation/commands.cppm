@@ -138,10 +138,25 @@ namespace GPP
         void Compact();
     };
 
+    export struct HistoryItem
+    {
+        std::string Label;
+        std::chrono::steady_clock::time_point Time{};
+    };
+
+    export struct HistoryView
+    {
+        std::vector<HistoryItem> Undo; // newest first
+        std::vector<HistoryItem> Redo; // next redo first
+        std::size_t UndoCount{0};
+        std::size_t RedoCount{0};
+        std::uint64_t Version{0};
+    };
+
     export class CommandHistory
     {
     public:
-        static constexpr std::size_t kCapacity = 256;
+        static constexpr std::size_t kDefaultCapacity = 1024;
 
         void Record(UndoEntry entry, std::chrono::milliseconds coalesceWindow = std::chrono::milliseconds(600));
         std::optional<UndoEntry> TakeUndo();
@@ -149,7 +164,11 @@ namespace GPP
         void PushUndo(UndoEntry entry);
         void PushRedo(UndoEntry entry);
         void Clear();
+        void SetCapacity(std::size_t capacity);
 
+        [[nodiscard]] std::size_t Capacity() const;
+        [[nodiscard]] std::uint64_t Version() const { return m_Version.load(std::memory_order_acquire); }
+        [[nodiscard]] HistoryView View(std::size_t limit = std::numeric_limits<std::size_t>::max()) const;
         [[nodiscard]] bool CanUndo() const;
         [[nodiscard]] bool CanRedo() const;
         [[nodiscard]] std::string UndoLabel() const;
@@ -159,5 +178,7 @@ namespace GPP
         mutable std::mutex m_Mutex;
         std::deque<UndoEntry> m_Undo;
         std::vector<UndoEntry> m_Redo;
+        std::size_t m_Capacity{kDefaultCapacity};
+        std::atomic<std::uint64_t> m_Version{0};
     };
 }

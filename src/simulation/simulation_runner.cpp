@@ -218,6 +218,20 @@ namespace GPP
         return true;
     }
 
+    std::size_t SimulationRunner::UndoSteps(const std::size_t count)
+    {
+        std::size_t done = 0;
+        while (done < count && Undo()) ++done;
+        return done;
+    }
+
+    std::size_t SimulationRunner::RedoSteps(const std::size_t count)
+    {
+        std::size_t done = 0;
+        while (done < count && Redo()) ++done;
+        return done;
+    }
+
     void SimulationRunner::ApplyCommands(PendingEdit& edit)
     {
         GPP_ZONE("Sim.ApplyCommands");

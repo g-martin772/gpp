@@ -161,6 +161,112 @@ TEST_CASE("History coalesces drags into one undo step", "[commands][history]")
     CHECK(history.TakeUndo().has_value());
 }
 
+TEST_CASE("History view lists entries newest first and tracks redo", "[commands][history]")
+{
+    CommandHistory history;
+    const auto field = [](float v) { return Command{SetFieldCommand{1, "Transform", "Position", glm::vec3(v)}}; };
+    const auto now = std::chrono::steady_clock::now();
+    const auto before = history.Version();
+    for (int i = 0; i < 4; ++i)
+    {
+        history.Record({{field(float(i))}, {field(float(i + 1))}, "step" + std::to_string(i), "",
+                        now + std::chrono::seconds(i)});
+    }
+    CHECK(history.Version() > before);
+
+    auto view = history.View();
+    REQUIRE(view.Undo.size() == 4);
+    CHECK(view.UndoCount == 4);
+    CHECK(view.RedoCount == 0);
+    CHECK(view.Undo[0].Label == "step3");
+    CHECK(view.Undo[3].Label == "step0");
+    CHECK(view.Undo[0].Time == now + std::chrono::seconds(3));
+    CHECK(history.View(2).Undo.size() == 2);
+    CHECK(history.View(2).UndoCount == 4);
+
+    history.PushRedo(*history.TakeUndo());
+    history.PushRedo(*history.TakeUndo());
+    view = history.View();
+    CHECK(view.UndoCount == 2);
+    REQUIRE(view.Redo.size() == 2);
+    CHECK(view.Redo[0].Label == "step2");
+    CHECK(view.Redo[1].Label == "step3");
+    CHECK(history.RedoLabel() == "step2");
+}
+
+TEST_CASE("History version changes on every mutation", "[commands][history]")
+{
+    CommandHistory history;
+    const auto field = Command{SetFieldCommand{1, "Transform", "Position", glm::vec3(1)}};
+    std::uint64_t last = history.Version();
+    const auto advanced = [&]
+    {
+        const bool moved = history.Version() != last;
+        last = history.Version();
+        return moved;
+    };
+    history.Record({{field}, {field}, "a", "", std::chrono::steady_clock::now()});
+    CHECK(advanced());
+    history.PushRedo(*history.TakeUndo());
+    CHECK(advanced());
+    CHECK_FALSE(history.View().Redo.empty());
+    CHECK_FALSE(advanced());
+    history.Clear();
+    CHECK(advanced());
+    history.SetCapacity(8);
+    CHECK(advanced());
+}
+
+TEST_CASE("History capacity is configurable and trims the oldest", "[commands][history]")
+{
+    CommandHistory history;
+    CHECK(history.Capacity() == CommandHistory::kDefaultCapacity);
+    CHECK(CommandHistory::kDefaultCapacity >= 1024);
+    const auto field = Command{SetFieldCommand{1, "Transform", "Position", glm::vec3(1)}};
+    const auto now = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10; ++i) history.Record({{field}, {field}, "e" + std::to_string(i), "", now});
+    history.SetCapacity(4);
+    auto view = history.View();
+    REQUIRE(view.UndoCount == 4);
+    CHECK(view.Undo.front().Label == "e9");
+    CHECK(view.Undo.back().Label == "e6");
+    history.Record({{field}, {field}, "e10", "", now});
+    CHECK(history.View().UndoCount == 4);
+    CHECK(history.View().Undo.back().Label == "e7");
+    history.SetCapacity(0);
+    CHECK(history.Capacity() == 1);
+}
+
+TEST_CASE("Runner undoes and redoes several steps at once", "[commands][runner]")
+{
+    Scene scene("S");
+    const auto guid = MakeBox(scene, "A");
+    SimulationRunner runner(std::move(scene), std::make_shared<NoopModule>());
+    runner.Start();
+    runner.SetPaused(true);
+
+    for (int i = 1; i <= 3; ++i)
+    {
+        CommandOptions options;
+        options.Undoable = true;
+        options.Label = "Move " + std::to_string(i);
+        runner.EnqueueCommand(SetFieldCommand{guid, "Transform", "Position", glm::vec3(float(i), 0, 0)}, options);
+    }
+    REQUIRE(WaitFor([&] { return runner.History().UndoCount == 3; }));
+    REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 3.0f; }));
+
+    CHECK(runner.UndoSteps(2) == 2);
+    REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 1.0f; }));
+    CHECK(runner.History().RedoCount == 2);
+    CHECK(runner.RedoLabel() == "Move 2");
+
+    CHECK(runner.RedoSteps(5) == 2);
+    REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 3.0f; }));
+    CHECK(runner.UndoSteps(9) == 3);
+    REQUIRE(WaitFor([&] { return PositionOf(*runner.AcquireSnapshot(), guid).x == 0.0f; }));
+    runner.Stop();
+}
+
 TEST_CASE("Runner undo and redo go through the command queue", "[commands][runner]")
 {
     Scene scene("S");
