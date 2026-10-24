@@ -11,7 +11,6 @@ namespace GPP
 {
     namespace
     {
-        // Zone name "Layer.<hook>.<Type>"; only evaluated while the profiler is on.
         const char* LayerZoneName(const HotReloadableLayer& layer, const char* hook)
         {
             static std::mutex mutex;

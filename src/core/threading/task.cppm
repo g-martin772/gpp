@@ -39,7 +39,6 @@ export namespace GPP
                 return completed;
             }
 
-            // False when the task already finished: the caller continues without suspending.
             [[nodiscard]] bool TrySetContinuation(std::coroutine_handle<> awaiting)
             {
                 std::scoped_lock lock(mutex);

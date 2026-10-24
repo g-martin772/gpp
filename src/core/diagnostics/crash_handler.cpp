@@ -262,7 +262,6 @@ namespace GPP
                 WriteAll(2, "\n", 1);
             }
 
-            // Second phase allocates and takes locks; the alarm keeps a deadlock from hanging the process.
             struct sigaction alarm{};
             alarm.sa_handler = AlarmHandler;
             sigemptyset(&alarm.sa_mask);
@@ -370,7 +369,6 @@ namespace GPP
 
     bool CrashHandlerDisabled()
     {
-        // Lets debuggers and core dumps see the original signal.
         const char* value = std::getenv("GPP_NO_CRASH_HANDLER");
         return value && *value && std::string_view(value) != "0";
     }

@@ -99,6 +99,7 @@ namespace GPP
 
         void BeginScope(std::string name) { m_BuildScope = std::move(name); }
         void EndScope() { m_BuildScope.clear(); }
+        [[nodiscard]] const std::string& CurrentScope() const noexcept { return m_BuildScope; }
         void SetProfiler(GpuProfiler* profiler) noexcept { m_Profiler = profiler; }
 
         void Compile();

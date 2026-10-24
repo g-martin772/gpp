@@ -4,7 +4,6 @@ import std;
 
 namespace GPP
 {
-    // Epoch 0 means the stamp cannot be trusted to restore a revision.
     export struct RevisionStamp
     {
         std::uint64_t Before{0};
@@ -19,8 +18,6 @@ namespace GPP
         std::uint64_t Epoch{0};
     };
 
-    // Identifies the scene content. A revision is never reused for different content, except that
-    // undoing or redoing back to a known state restores that state's revision.
     export class RevisionCounter
     {
     public:

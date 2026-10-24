@@ -46,12 +46,12 @@ namespace GPP
 
     export struct CommandOptions
     {
-        std::optional<std::uint64_t> TargetTick; // applied once this many ticks have run (replay)
+        std::optional<std::uint64_t> TargetTick;
         bool Undoable = false;
         std::string Label;
         std::string CoalesceKey;
-        bool OnlyWhilePlaying = false; // dropped if the runner is paused when it would be applied
-        std::optional<RevisionMove> Move; // set by Undo/Redo: the content revision the history step restores
+        bool OnlyWhilePlaying = false;
+        std::optional<RevisionMove> Move;
     };
 
     export struct RunnerState
@@ -176,15 +176,12 @@ namespace GPP
 
         void EnqueueEdit(std::move_only_function<void(Scene&)> edit);
         void EnqueueTrackedEdit(std::move_only_function<void(Scene&)> edit);
-        // Like EnqueueTrackedEdit, but not a content change (play/stop bookkeeping, queries).
         void EnqueueSystemEdit(std::move_only_function<void(Scene&)> edit, bool tracked = true);
 
-        // Applied on the sim thread through the tracked path, stamped with the tick and kept in the command log.
         void EnqueueCommand(Command command, CommandOptions options = {});
         void EnqueueCommands(std::vector<Command> commands, CommandOptions options = {});
         [[nodiscard]] std::vector<CommandRecord> CommandLog() const;
 
-        // Undoable commands applied between Begin and End merge into one undo step (a nested Begin ends the open one).
         void BeginTransaction(std::string label = {}, std::string coalesceKey = {});
         void EndTransaction();
 
@@ -197,35 +194,27 @@ namespace GPP
         void ClearHistory() { m_History.Clear(); }
 
         [[nodiscard]] std::uint64_t ContentRevision() const noexcept { return m_Revision.Current(); }
-        // Sim-thread only (inside an enqueued edit).
+
+        // Sim-thread only
         void MarkContentChanged() noexcept { m_Revision.Changed(); }
         void RestoreContentRevision(std::uint64_t revision) noexcept { m_Revision.Restore(revision); }
 
-        // Ticks completed so far.
         [[nodiscard]] std::uint64_t Tick() const noexcept { return m_Tick.load(std::memory_order_acquire); }
-        // Advances exactly n fixed ticks regardless of pause or wall-clock; runs inline when the thread is not started.
         void Step(std::uint64_t ticks);
-        // Same, but returns once the ticks ran and the resulting snapshot is published.
         void StepAndWait(std::uint64_t ticks);
 
-        // Sets Scene::Clock().Time on the sim thread and returns once a snapshot carrying it is published.
         void SetSimTime(double seconds);
 
         [[nodiscard]] std::shared_ptr<SimulationRandom> Random() const noexcept { return m_Random; }
 
-        // Sim-thread only (call from inside an enqueued edit) or while the thread is not running.
         [[nodiscard]] RunnerState CaptureState() const;
         void RestoreState(const RunnerState& state);
 
-        // Scene, runner random state and module state hashed together; marshals onto the sim thread and waits.
         [[nodiscard]] std::uint64_t StateHash();
-        // Checkpoints taken since PrepareReplay.
         [[nodiscard]] std::vector<StateCheckpoint> ReplayCheckpoints();
 
-        // Both marshal onto the sim thread and wait. checkpointInterval 0 records no hashes.
         void BeginRecording(std::uint64_t checkpointInterval = 60);
         [[nodiscard]] SimulationRecording EndRecording();
-        // Loads the recording into this fresh, not yet started runner; then StepAndWait(recording.Ticks()).
         void PrepareReplay(const SimulationRecording& recording);
 
     private:

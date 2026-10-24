@@ -100,7 +100,7 @@ namespace GPP
         [[nodiscard]] Task<void> SetSize(int width, int height) noexcept;
         [[nodiscard]] Task<std::string> GetTitle() const noexcept;
         [[nodiscard]] Task<void> SetTitle(const std::string& title) noexcept;
-        // Main thread only.
+        // Main thread only
         void SetTitleNow(const std::string& title) noexcept;
         [[nodiscard]] Task<bool> CreateVulkanSurface(VkInstance instance, vk::SurfaceKHR* outSurface) const noexcept;
     private:

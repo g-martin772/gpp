@@ -36,6 +36,5 @@ namespace GPP
     // Renames crash-*.txt to crash-*.seen.txt; returns the new path.
     export std::filesystem::path MarkCrashReportSeen(const std::filesystem::path& report);
 
-    // Async-signal-safe: no allocation, only pure arithmetic.
     export CivilTime UnixToCivil(std::int64_t unixTime) noexcept;
 }

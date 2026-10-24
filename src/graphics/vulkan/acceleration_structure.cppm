@@ -63,15 +63,16 @@ namespace GPP
     export class Blas
     {
     public:
-        // Builds now and waits
         Blas(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool, vk::Queue queue,
              const BlasTriangles& triangles);
-        // Allocates only; unusable until BuildBlasBatch (or RecordBuild plus a wait) ran
         Blas(const std::shared_ptr<VulkanDevice>& device, const BlasTriangles& triangles);
 
         void RecordBuild(vk::CommandBuffer commandBuffer, vk::DeviceAddress scratch) const;
+        void RecordCompact(vk::CommandBuffer commandBuffer, vk::DeviceSize compactedSize);
+        void FinishCompact();
 
         [[nodiscard]] vk::DeviceSize ScratchSize() const noexcept { return m_ScratchSize; }
+        [[nodiscard]] vk::DeviceSize GetSize() const noexcept { return m_Structure.GetSize(); }
         [[nodiscard]] vk::AccelerationStructureKHR GetHandle() const noexcept { return m_Structure.GetHandle(); }
         [[nodiscard]] vk::DeviceAddress GetDeviceAddress() const noexcept { return m_Structure.GetDeviceAddress(); }
 
@@ -79,9 +80,9 @@ namespace GPP
         BlasTriangles m_Triangles;
         vk::DeviceSize m_ScratchSize = 0;
         AccelerationStructure m_Structure;
+        AccelerationStructure m_Compact;
     };
 
-    // Builds all in one command buffer and one submit on a shared scratch buffer, then waits
     export void BuildBlasBatch(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
                                vk::Queue queue, std::span<Blas* const> blases);
 
@@ -91,7 +92,10 @@ namespace GPP
         explicit Tlas(std::shared_ptr<VulkanDevice> device);
 
         void SetInstances(std::span<const TlasInstance> instances);
-        void RecordBuild(vk::CommandBuffer commandBuffer) const;
+        void RecordBuild(vk::CommandBuffer commandBuffer);
+        [[nodiscard]] bool WillRefit() const noexcept { return m_Refit; }
+        [[nodiscard]] std::uint32_t RefitCount() const noexcept { return m_Refits; }
+        static constexpr std::uint32_t kMaxRefits = 1024;
 
         [[nodiscard]] vk::AccelerationStructureKHR GetHandle() const noexcept { return m_Structure.GetHandle(); }
         [[nodiscard]] std::uint32_t InstanceCount() const noexcept { return m_Count; }
@@ -100,9 +104,23 @@ namespace GPP
         void Reserve(std::uint32_t capacity);
         [[nodiscard]] vk::AccelerationStructureGeometryKHR Geometry() const;
 
+        struct InstanceKey
+        {
+            std::uint32_t CustomIndex = 0;
+            std::uint32_t MaskAndFlags = 0;
+            vk::DeviceAddress Blas = 0;
+            bool operator==(const InstanceKey&) const = default;
+        };
+
         std::shared_ptr<VulkanDevice> m_Device;
         VulkanBuffer m_Instances;
         VulkanBuffer m_Scratch;
+        std::vector<vk::AccelerationStructureInstanceKHR> m_Packed;
+        std::vector<InstanceKey> m_Keys;
+        std::vector<InstanceKey> m_BuiltKeys;
+        bool m_Built = false;
+        bool m_Refit = false;
+        std::uint32_t m_Refits = 0;
         vk::DeviceAddress m_ScratchAddress = 0;
         AccelerationStructure m_Structure;
         std::uint32_t m_Capacity = 0;

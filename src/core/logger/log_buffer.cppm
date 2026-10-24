@@ -41,7 +41,6 @@ namespace GPP
             return m_Entries.back().Id;
         }
 
-        // Never blocks: for crash reports, where the lock may be held by the crashed thread.
         bool TryCopyTail(const std::size_t count, std::vector<LogEntry>& out) const {
             std::unique_lock lock(m_Mutex, std::try_to_lock);
             if (!lock.owns_lock()) return false;

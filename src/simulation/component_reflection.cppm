@@ -143,6 +143,8 @@ namespace GPP
 
     export enum class FieldKind { Plain, Color, Direction, Angle, AssetPath, EntityRef, Multiline };
 
+    export enum class AssetFieldKind { Any, Texture, Mesh, Script, Audio };
+
     export struct FieldMeta
     {
         std::string Label;
@@ -151,6 +153,7 @@ namespace GPP
         double Max = 0.0;
         double Speed = 0.0;
         FieldKind Kind = FieldKind::Plain;
+        AssetFieldKind Asset = AssetFieldKind::Any;
         bool ReadOnly = false;
         std::vector<std::string> Options;
         std::string Format;

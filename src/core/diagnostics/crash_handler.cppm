@@ -18,7 +18,6 @@ namespace GPP
     // Returns false when disabled (GPP_NO_CRASH_HANDLER=1) or unsupported on this platform.
     export bool InstallCrashHandler(CrashHandlerOptions options);
 
-    // Per-thread alternate signal stack so stack overflows on that thread are still reported.
     export void RegisterCrashThread();
 
     export [[nodiscard]] bool CrashHandlerDisabled();

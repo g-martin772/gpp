@@ -16,6 +16,5 @@ namespace GPP
 
     export [[nodiscard]] std::optional<long> ParseLogFileRun(std::string_view fileName, std::string_view name);
 
-    // Keeps the newest runs (by last write) and the newest crash reports; returns the removed file count.
     export std::size_t PruneLogFiles(const std::filesystem::path& directory, std::string_view name, const LogRetention& retention = {});
 }

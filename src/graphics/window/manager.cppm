@@ -38,9 +38,7 @@ namespace GPP
 
         void TriggerWindowClose(WindowId id);
 
-        // Runs on the main thread when the main window is asked to close; returning false keeps the app open.
         void SetCloseGuard(std::function<bool()> guard);
-        // Safe from any thread.
         void SetMainWindowTitle(std::string title);
 
         void PollEvents();

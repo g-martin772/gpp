@@ -202,9 +202,10 @@ namespace GPP
             if (ImGui::Button("Quit", ImVec2(width, 0.0f))) action.Kind = LauncherAction::Quit;
         }
 
-        void DrawNotice(const LauncherNotice& notice, LauncherAction& action)
+        void DrawNotice(const LauncherNotice& notice, LauncherAction& action, const int index = 0)
         {
             if (notice.Text.empty()) return;
+            ImGui::PushID(index);
             const auto& style = ImGui::GetStyle();
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.45f, 0.18f, 0.12f, 0.55f));
             const float height = ImGui::GetFrameHeight() * 2.0f + style.WindowPadding.y * 2.0f + style.ItemSpacing.y;
@@ -221,12 +222,14 @@ namespace GPP
                 if (!notice.DismissId.empty())
                 {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("Dismiss")) action = {LauncherAction::Custom, notice.DismissId};
+                    if (ImGui::SmallButton(notice.DismissLabel.empty() ? "Dismiss" : notice.DismissLabel.c_str()))
+                        action = {LauncherAction::Custom, notice.DismissId};
                 }
             }
             ImGui::EndChild();
             ImGui::PopStyleColor();
             ImGui::Spacing();
+            ImGui::PopID();
         }
 
         void DrawFilterBox(LauncherData& data)
@@ -620,6 +623,7 @@ namespace GPP
         if (ImGui::BeginChild("##launcher_page", ImVec2(0.0f, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding))
         {
             DrawNotice(data.Notice, action);
+            for (std::size_t i = 0; i < data.Notices.size(); ++i) DrawNotice(data.Notices[i], action, static_cast<int>(i) + 1);
             switch (data.Page)
             {
                 case LauncherPage::Recent: DrawRecentPage(data, action); break;

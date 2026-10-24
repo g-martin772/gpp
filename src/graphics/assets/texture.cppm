@@ -35,7 +35,6 @@ namespace GPP
     export [[nodiscard]] std::expected<DecodedTexture, std::string> DecodeTexture(
         const std::filesystem::path& file, TextureRole role, std::uint32_t maxSize);
 
-    // Per-Update upload budget: the next texture goes in while the total stays within the budget; the first always does
     export inline constexpr std::uint64_t kTextureUploadBudgetBytes = 32ull << 20;
     export [[nodiscard]] constexpr bool WithinUploadBudget(const std::uint64_t spent, const std::uint64_t next,
                                                            const std::uint64_t budget = kTextureUploadBudgetBytes) noexcept
@@ -43,8 +42,6 @@ namespace GPP
         return spent == 0 || spent + next <= budget;
     }
 
-    // Loads images by path on a worker thread, uploads them in Update and reloads files that change on disk.
-    // Get returns null while a texture is loading or when it failed; callers fall back to a dummy.
     export class TextureCache
     {
     public:
@@ -96,7 +93,6 @@ namespace GPP
             int Frames = 0;
         };
 
-        // An upload on the GPU; the image is only handed out once the submit finished
         struct InFlight
         {
             Key Id;

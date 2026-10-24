@@ -26,7 +26,6 @@ namespace GPP
 
     namespace
     {
-        // Driver pipeline compiles can take seconds; run several at once but leave pool workers for other jobs
         std::counting_semaphore<64>& PipelineCreationGate()
         {
             static std::counting_semaphore<64> gate(
@@ -142,7 +141,6 @@ namespace GPP
             SetProgress({ShaderCompilationState::Compiling, 2, 2, generation, "reflection", "merging"});
         }
 
-        // The driver compile happens here, on the worker, so the render thread only swaps the finished pipeline in
         auto& gate = PipelineCreationGate();
         gate.acquire();
         const auto release = std::unique_ptr<void, void (*)(void*)>(

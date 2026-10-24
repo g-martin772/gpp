@@ -4,7 +4,6 @@ import std;
 
 namespace GPP
 {
-    // One zone occurrence. Name points at static or interned storage.
     export struct ProfileRecord
     {
         const char* Name{nullptr};
@@ -13,7 +12,6 @@ namespace GPP
         std::uint16_t Depth{0};
     };
 
-    // Single writer (the owning thread), any number of readers. Fixed capacity, no allocation, no locks.
     export class ProfileRing
     {
     public:
@@ -33,7 +31,6 @@ namespace GPP
 
         [[nodiscard]] std::uint64_t Head() const noexcept { return m_Head.load(std::memory_order_acquire); }
 
-        // Appends records with index in [from, Head()) that were not overwritten meanwhile; returns the new cursor.
         std::uint64_t Read(std::uint64_t from, std::vector<ProfileRecord>& out) const
         {
             const auto head = m_Head.load(std::memory_order_acquire);
@@ -93,14 +90,12 @@ namespace GPP
         std::array<Slot, kCapacity> m_Slots{};
     };
 
-    // Runtime switch plus the per-thread rings. Disabled zones cost one call and one relaxed load.
     export class Profiler
     {
     public:
         static void SetEnabled(bool enabled) noexcept;
         [[nodiscard]] static bool IsEnabled() noexcept;
         static void SetThreadName(std::string_view name);
-        // Stable pointer for names built at runtime.
         [[nodiscard]] static const char* Intern(std::string_view name);
         [[nodiscard]] static std::uint64_t NowNs() noexcept;
         [[nodiscard]] static std::vector<std::shared_ptr<ProfileRing>> Rings();
@@ -111,7 +106,7 @@ namespace GPP
     public:
         explicit ProfileZone(const char* name) noexcept;
         ~ProfileZone();
-        void End() noexcept; // ends the zone early; the destructor then does nothing
+        void End() noexcept;
         ProfileZone(const ProfileZone&) = delete;
         ProfileZone& operator=(const ProfileZone&) = delete;
 
@@ -131,7 +126,6 @@ namespace GPP
         std::uint16_t MinDepth{0};
     };
 
-    // Per-zone count, total and max over the records, ordered by first appearance.
     export [[nodiscard]] std::vector<ZoneStat> AggregateZones(std::span<const ProfileRecord> records);
 
     export struct ZoneRow
@@ -152,14 +146,12 @@ namespace GPP
         std::vector<ProfileRecord> Timeline;  // the window, ordered by start
     };
 
-    // Drains the rings on Update() (call once per UI frame) and keeps a rolling window of records per thread.
     export class ProfileCollector
     {
     public:
         explicit ProfileCollector(double windowSeconds = 2.0) : m_WindowNs(static_cast<std::uint64_t>(windowSeconds * 1e9)) {}
 
         void Update();
-        // Feeds records directly (tests, replay of captured data).
         void Update(std::uint32_t threadId, const std::string& name, std::span<const ProfileRecord> fresh, std::uint64_t nowNs);
 
         [[nodiscard]] const std::vector<ThreadProfile>& Threads() const noexcept { return m_Profiles; }

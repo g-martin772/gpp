@@ -25,8 +25,6 @@ namespace GPP
 
         glm::dvec3 FromPhysXVector(const physx::PxVec3& v) { return {v.x, v.y, v.z}; }
 
-        // PhysX allows one foundation per process, but a scene switch builds the next module while the
-        // previous one is still being torn down on a worker.
         struct SharedPhysX
         {
             physx::PxDefaultAllocator Allocator;

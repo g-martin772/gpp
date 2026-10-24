@@ -315,3 +315,30 @@ TEST_CASE("DrawLauncher runs a frame without a backend", "[launcher]")
     CHECK(settingsDrawn);
     ImGui::DestroyContext(context);
 }
+
+TEST_CASE("DrawLauncher draws several notices with custom dismiss labels", "[launcher]")
+{
+    ImGuiContext* context = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(760.0f, 480.0f);
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    io.IniFilename = nullptr;
+
+    LauncherData data;
+    data.Notices = {{"Recover unsaved changes: A (just now)", "Restore", "recover:restore:a", "recover:discard:a", "Discard"},
+                    {"Recover unsaved changes: B (1 minute ago)", "Restore", "recover:restore:b", "recover:discard:b", "Discard"},
+                    {}};
+
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::Begin("launcher", nullptr, ImGuiWindowFlags_NoDecoration);
+        const auto action = DrawLauncher(data);
+        ImGui::End();
+        ImGui::Render();
+        CHECK(action.Kind == LauncherAction::None);
+    }
+    ImGui::DestroyContext(context);
+}

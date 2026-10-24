@@ -190,7 +190,7 @@ namespace GPP
 
             RegisterComponent<MeshComponent>("Mesh", ComponentDescription<MeshComponent>{
                 .Fields = {
-                    Field("AssetPath", &MeshComponent::AssetPath, {.Label = "Asset Path", .Kind = FieldKind::AssetPath}),
+                    Field("AssetPath", &MeshComponent::AssetPath, {.Label = "Asset Path", .Kind = FieldKind::AssetPath, .Asset = AssetFieldKind::Mesh}),
                     Field("CenterOfMassOffset", &MeshComponent::CenterOfMassOffset,
                           {.Label = "Center Of Mass Offset", .Speed = 0.01, .Dim = Units::Dimension::Length,
                            .LegacyScale = Units::Legacy::kLengthM}),

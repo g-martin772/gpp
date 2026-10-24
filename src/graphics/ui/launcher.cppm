@@ -63,6 +63,7 @@ namespace GPP
         std::string ActionLabel;
         std::string ActionId;
         std::string DismissId;
+        std::string DismissLabel;
     };
 
     export struct LauncherData
@@ -72,6 +73,7 @@ namespace GPP
         std::vector<LauncherRecent> Recents;
         std::vector<LauncherTemplate> Templates;
         LauncherNotice Notice;
+        std::vector<LauncherNotice> Notices;
         bool ShowOnStartup = true;
         std::string NewLabel = "New Scene";
         std::string OpenLabel = "Open...";

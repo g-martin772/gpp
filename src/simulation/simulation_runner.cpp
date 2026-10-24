@@ -874,7 +874,6 @@ namespace GPP
                 deadline = deadline ? std::min(*deadline, publishAt) : publishAt;
             }
 
-            // Sleep to just before a tick, then spin the last stretch for pacing; wake-ups cut both short.
             const auto spin = tickDeadline && deadline == tickDeadline
                                   ? std::min(kFinalSpin, std::chrono::duration_cast<Clock::duration>((*tickDeadline - lastTick) / 8))
                                   : Clock::duration::zero();
