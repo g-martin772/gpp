@@ -178,6 +178,7 @@ namespace GPP
         // Unique GPU images of the scene; role-specific formats, full mip chains.
         std::vector<std::shared_ptr<VulkanImage>> Textures;
         GltfGeometry Geometry;
+        std::vector<std::filesystem::path> Sources;
     };
 
     export GltfSceneData LoadGltfScene(const std::shared_ptr<VulkanDevice>& device,

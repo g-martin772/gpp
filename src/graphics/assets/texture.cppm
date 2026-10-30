@@ -4,6 +4,7 @@ import std;
 import vulkan;
 import GPP.Core;
 import :Vulkan;
+import :Assets.Watch;
 
 namespace GPP
 {
@@ -68,8 +69,8 @@ namespace GPP
             std::unique_ptr<VulkanImage> Image;
             std::uint64_t Bytes = 0;
             std::uint64_t Generation = 0;
-            std::filesystem::file_time_type Mtime{};
             bool Pending = false;
+            bool FromDisk = false;
         };
 
         struct Job
@@ -85,12 +86,6 @@ namespace GPP
             Key Id;
             std::uint64_t Generation = 0;
             std::expected<DecodedTexture, std::string> Texture;
-        };
-
-        struct Retired
-        {
-            std::unique_ptr<VulkanImage> Image;
-            int Frames = 0;
         };
 
         struct InFlight
@@ -109,18 +104,18 @@ namespace GPP
         [[nodiscard]] std::uint32_t EffectiveMaxSize() const;
         void WorkerLoop(const std::stop_token& stop);
 
-        static constexpr int RetireFrames = 4;
-
         std::shared_ptr<VulkanDevice> m_Device;
         std::shared_ptr<IFileSystem> m_FileSystem;
         std::shared_ptr<Logger> m_Logger;
         std::uint32_t m_MaxSize = 0;
         std::uint32_t m_DeviceLimit = 0;
         std::map<Key, Entry> m_Entries;
-        std::vector<Retired> m_Retired;
+        RetiredObjects m_Retired;
+        AssetFileWatch m_Watch;
+        AssetPathIndex<Key> m_Paths;
+        std::set<Key> m_Stale;
         std::deque<Result> m_Ready;
         std::vector<InFlight> m_InFlight;
-        std::chrono::steady_clock::time_point m_LastPoll{};
         std::atomic<std::size_t> m_Pending{0};
         std::atomic<std::uint64_t> m_GpuBytes{0};
 

@@ -6,12 +6,12 @@ import GPP.Core;
 import :Vulkan;
 import :Assets.Image;
 import :Assets.Texture;
+import :Assets.Watch;
 
 namespace GPP
 {
     namespace
     {
-        constexpr auto kPollInterval = std::chrono::milliseconds(500);
         constexpr std::size_t kSrgbEncodeSteps = 1 << 14;
 
         struct SrgbTables
@@ -235,13 +235,6 @@ namespace GPP
             return texture;
         }
 
-        std::filesystem::file_time_type LastWrite(const std::filesystem::path& file)
-        {
-            std::error_code ec;
-            const auto time = std::filesystem::last_write_time(file, ec);
-            return ec ? std::filesystem::file_time_type::min() : time;
-        }
-
         constexpr std::uint64_t Align4(const std::uint64_t value) { return (value + 3) & ~std::uint64_t{3}; }
     }
 
@@ -279,7 +272,8 @@ namespace GPP
 
     TextureCache::TextureCache(std::shared_ptr<VulkanDevice> device, std::shared_ptr<IFileSystem> fileSystem,
                                std::shared_ptr<Logger> logger)
-        : m_Device(std::move(device)), m_FileSystem(std::move(fileSystem)), m_Logger(std::move(logger))
+        : m_Device(std::move(device)), m_FileSystem(std::move(fileSystem)), m_Logger(std::move(logger)),
+          m_Retired(m_Device), m_Watch(m_FileSystem, m_Logger)
     {
         m_DeviceLimit = m_Device->GetPhysicalDevice().getProperties().limits.maxImageDimension2D;
         m_Worker = std::jthread([this](const std::stop_token& stop) { WorkerLoop(stop); });
@@ -317,7 +311,6 @@ namespace GPP
     {
         if (!entry.Pending) ++m_Pending;
         entry.Pending = true;
-        entry.Mtime = LastWrite(entry.File);
         ++entry.Generation;
         {
             std::scoped_lock lock(m_Mutex);
@@ -334,6 +327,7 @@ namespace GPP
         if (it == m_Entries.end())
         {
             it = m_Entries.emplace(id, Entry{.File = m_FileSystem->ResolvePath(path), .Role = role}).first;
+            m_Paths.Add(m_Watch.Watch(it->second.File), id);
             Enqueue(id, it->second);
         }
         return it->second.Image.get();
@@ -401,17 +395,21 @@ namespace GPP
         auto& entry = it->second;
         entry.Pending = false;
         --m_Pending;
-        if (entry.Image) m_Retired.push_back({std::move(entry.Image), RetireFrames});
+        if (entry.Image) m_Retired.Retire(std::move(entry.Image));
         m_GpuBytes += upload.Bytes;
         m_GpuBytes -= entry.Bytes;
         entry.Bytes = upload.Bytes;
         entry.Image = std::move(upload.Image);
+        if (std::exchange(entry.FromDisk, false))
+        {
+            m_Logger->Notifications()->Post(NotificationKind::Info, "Texture reloaded", upload.Id.first, 2.0f,
+                                            "texture:" + upload.Id.first);
+        }
     }
 
     void TextureCache::Update(VulkanCommandPool& uploadPool, const vk::Queue queue)
     {
-        for (auto& retired : m_Retired) --retired.Frames;
-        std::erase_if(m_Retired, [](const Retired& retired) { return retired.Frames <= 0; });
+        if (m_Retired.Pending() > 0) m_Retired.Collect();
 
         for (auto& upload : m_InFlight)
         {
@@ -442,6 +440,12 @@ namespace GPP
                 --m_Pending;
                 m_Logger->Warn("Texture '{}' failed to load: {}{}", result.Id.first, result.Texture.error(),
                                entry.Image ? ", keeping the previous image" : "");
+                if (std::exchange(entry.FromDisk, false))
+                {
+                    m_Logger->Notifications()->Post(NotificationKind::Error, "Texture reload failed",
+                                                    result.Id.first + "\n" + result.Texture.error(), 0.0f,
+                                                    "texture:" + result.Id.first);
+                }
                 m_Ready.pop_front();
                 continue;
             }
@@ -461,12 +465,21 @@ namespace GPP
             m_Ready.pop_front();
         }
 
-        const auto now = std::chrono::steady_clock::now();
-        if (now - m_LastPoll < kPollInterval) return;
-        m_LastPoll = now;
-        for (auto& [id, entry] : m_Entries)
+        for (const auto& path : m_Watch.TakeChanged())
         {
-            if (!entry.Pending && LastWrite(entry.File) != entry.Mtime) Enqueue(id, entry);
+            for (const auto& key : m_Paths.Find(path)) m_Stale.insert(key);
+        }
+        for (auto it = m_Stale.begin(); it != m_Stale.end();)
+        {
+            auto& entry = m_Entries.at(*it);
+            if (entry.Pending)
+            {
+                ++it;
+                continue;
+            }
+            entry.FromDisk = true;
+            Enqueue(*it, entry);
+            it = m_Stale.erase(it);
         }
     }
 }

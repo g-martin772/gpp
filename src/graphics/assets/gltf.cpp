@@ -16,6 +16,38 @@ namespace GPP
 {
     namespace
     {
+        std::string DecodeUri(const std::string& uri)
+        {
+            std::string out;
+            for (std::size_t i = 0; i < uri.size(); ++i)
+            {
+                if (uri[i] == '%' && i + 2 < uri.size() && std::isxdigit(static_cast<unsigned char>(uri[i + 1])) &&
+                    std::isxdigit(static_cast<unsigned char>(uri[i + 2])))
+                {
+                    out.push_back(static_cast<char>(std::stoi(uri.substr(i + 1, 2), nullptr, 16)));
+                    i += 2;
+                }
+                else
+                {
+                    out.push_back(uri[i]);
+                }
+            }
+            return out;
+        }
+
+        std::vector<std::filesystem::path> ExternalSources(const tinygltf::Model& model,
+                                                           const std::filesystem::path& directory)
+        {
+            std::vector<std::filesystem::path> sources;
+            const auto add = [&](const std::string& uri)
+            {
+                if (!uri.empty() && !uri.starts_with("data:")) sources.push_back(directory / DecodeUri(uri));
+            };
+            for (const auto& buffer : model.buffers) add(buffer.uri);
+            for (const auto& image : model.images) add(image.uri);
+            return sources;
+        }
+
         constexpr std::size_t kDecodeWorkers = 8;
         constexpr int kComponentTypeByte = 5120;
         constexpr int kComponentTypeUnsignedByte = 5121;
@@ -980,6 +1012,7 @@ namespace GPP
         const auto constrained = std::chrono::steady_clock::now();
 
         GltfSceneData scene;
+        scene.Sources = ExternalSources(model, resolvedPath.parent_path());
         VulkanCommandPool uploadPool(device, logger, device->GetQueueIndices().Graphics);
         const auto queue = device->GetGraphicsQueue();
 
