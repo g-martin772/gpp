@@ -125,3 +125,76 @@ TEST_CASE("ParallelFor can nest inside pool tasks without deadlocking", "[thread
     });
     CHECK(total.load() == 256);
 }
+
+TEST_CASE("ThreadPool benchmark", "[.bench][threadpool]") {
+    using Clock = std::chrono::steady_clock;
+    const auto hw = std::max<std::size_t>(std::thread::hardware_concurrency(), 1);
+    auto millis = [](Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
+
+    for (const std::size_t threads : {std::size_t{1}, std::size_t{4}, std::size_t{8}, hw}) {
+        ThreadPool pool(threads);
+
+        for (const std::size_t producers : {std::size_t{1}, std::size_t{4}}) {
+            constexpr std::size_t kTasks = 400000;
+            std::atomic<std::size_t> done{0};
+            std::atomic<std::size_t> sink{0};
+            const auto start = Clock::now();
+            std::vector<std::thread> threadsOut;
+            for (std::size_t p = 0; p < producers; ++p) {
+                threadsOut.emplace_back([&] {
+                    for (std::size_t i = 0; i < kTasks / producers; ++i) {
+                        pool.Submit([&] {
+                            sink.fetch_add(1, std::memory_order_relaxed);
+                            done.fetch_add(1, std::memory_order_release);
+                        });
+                    }
+                });
+            }
+            for (auto& t : threadsOut) t.join();
+            while (done.load(std::memory_order_acquire) < kTasks) std::this_thread::yield();
+            const double ms = millis(Clock::now() - start);
+            std::println("BENCH workers={} producers={} tiny tasks={} {:.1f} ms {:.2f} Mtask/s", threads, producers, kTasks, ms, kTasks / ms / 1000.0);
+        }
+
+        {
+            constexpr std::size_t kTasks = 400000;
+            std::atomic<std::size_t> done{0};
+            const auto start = Clock::now();
+            for (std::size_t i = 0; i < kTasks; ++i) {
+                pool.Submit([&] {
+                    volatile double x = 1.0;
+                    for (int k = 0; k < 2000; ++k) x = x * 1.0000001 + 0.1;
+                    done.fetch_add(1, std::memory_order_release);
+                });
+            }
+            while (done.load(std::memory_order_acquire) < kTasks) std::this_thread::yield();
+            const double ms = millis(Clock::now() - start);
+            std::println("BENCH workers={} medium (~2us) tasks={} {:.1f} ms {:.2f} Mtask/s", threads, kTasks, ms, kTasks / ms / 1000.0);
+        }
+    }
+
+    {
+        std::atomic<std::size_t> sum{0};
+        constexpr int kReps = 2000;
+        const auto start = Clock::now();
+        for (int r = 0; r < kReps; ++r) {
+            ParallelFor(1000, hw, [&](std::size_t i) { sum.fetch_add(i, std::memory_order_relaxed); });
+        }
+        const double ms = millis(Clock::now() - start);
+        std::println("BENCH ParallelFor count=1000 tiny body maxWorkers={} {:.1f} us per call", hw, ms * 1000.0 / kReps);
+    }
+    {
+        std::atomic<std::size_t> sum{0};
+        constexpr int kReps = 200;
+        const auto start = Clock::now();
+        for (int r = 0; r < kReps; ++r) {
+            ParallelFor(8, hw, [&](std::size_t i) {
+                volatile double x = 1.0;
+                for (int k = 0; k < 2000000; ++k) x = x * 1.0000001 + 0.1;
+                sum.fetch_add(i, std::memory_order_relaxed);
+            });
+        }
+        const double ms = millis(Clock::now() - start);
+        std::println("BENCH ParallelFor count=8 large body maxWorkers={} {:.2f} ms per call", hw, ms / kReps);
+    }
+}
