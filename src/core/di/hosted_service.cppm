@@ -9,5 +9,6 @@ namespace GPP
 
         virtual Task<void> StartAsync(std::stop_token stopToken) = 0;
         virtual Task<void> StopAsync() = 0;
+        virtual int StopOrder() const noexcept { return 0; }
     };
 }

@@ -24,6 +24,7 @@ namespace GPP
 
         Task<void> StartAsync(std::stop_token stopToken) override;
         Task<void> StopAsync() override;
+        int StopOrder() const noexcept override { return 1; }
         Task<void> AwaitReady();
 
         Task<std::shared_ptr<Window>> CreateWindow(const WindowOptions& options,

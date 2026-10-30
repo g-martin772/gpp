@@ -178,18 +178,25 @@ namespace GPP
         logger->Info("Shutdown signal received! Stopping application...");
         OnStop();
         m_StopSource.request_stop();
-        std::vector<Task<void>> stopTasks;
-        for (auto service : m_HostedServices)
-        {
-            stopTasks.push_back(service->StopAsync());
-        }
         std::atomic<bool> stopped{false};
         std::exception_ptr stopError;
         std::thread stopWaiter([&]
         {
             try
             {
-                WhenAll(std::move(stopTasks)).get();
+                auto ordered = m_HostedServices;
+                std::ranges::stable_sort(ordered, {}, [](const auto& service) { return service->StopOrder(); });
+                for (std::size_t begin = 0; begin < ordered.size();)
+                {
+                    std::size_t end = begin;
+                    std::vector<Task<void>> stopTasks;
+                    while (end < ordered.size() && ordered[end]->StopOrder() == ordered[begin]->StopOrder())
+                    {
+                        stopTasks.push_back(ordered[end++]->StopAsync());
+                    }
+                    WhenAll(std::move(stopTasks)).get();
+                    begin = end;
+                }
             }
             catch (...)
             {
