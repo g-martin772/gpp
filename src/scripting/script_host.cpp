@@ -66,6 +66,7 @@ gpp.instance = instance
         {
             int Ref{0};
             std::size_t Hash{0};
+            std::shared_ptr<LuauModuleTrace> Trace;
         };
 
         struct Instance
@@ -77,6 +78,7 @@ gpp.instance = instance
             bool Started{false};
             bool Seen{false};
             std::string LastError;
+            ScriptProfile Profile;
         };
 
         LuauVm& Vm;
@@ -98,6 +100,7 @@ gpp.instance = instance
             : Vm(vm), Context(std::move(context)), TaskErrors(std::move(taskErrors)), Assets(assets),
               Catalog(assets, std::chrono::milliseconds(0))
         {
+            Vm.SetModuleLoader(MakeScriptModuleLoader(assets));
             if (auto helper = Vm.Load("return gpp.instance", "=instance")) Helper = *helper;
         }
 
@@ -123,6 +126,23 @@ gpp.instance = instance
             Context->Props = ResolveProps(*descriptor, entry);
         }
 
+        void Record(Instance& instance, const std::chrono::steady_clock::time_point began, const LuauAllocStats before)
+        {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+            const auto after = Vm.AllocStats();
+            auto& profile = instance.Profile;
+            profile.LastAllocs = after.Allocations - before.Allocations;
+            profile.LastBytes = after.Bytes - before.Bytes;
+            profile.LastMs = ms;
+            profile.MaxMs = std::max(profile.MaxMs, ms);
+            constexpr double kBlend = 0.1;
+            const bool first = profile.Ticks++ == 0;
+            profile.AvgMs = first ? ms : profile.AvgMs + (ms - profile.AvgMs) * kBlend;
+            profile.AvgBytes = first ? static_cast<double>(profile.LastBytes)
+                                     : profile.AvgBytes + (static_cast<double>(profile.LastBytes) - profile.AvgBytes) * kBlend;
+            profile.VmBytes = Vm.BytesUsed();
+        }
+
         bool Invoke(Instance& instance, const std::string_view function, const std::span<const LuauValue> args)
         {
             const std::array<int, 2> refs{Modules.at(instance.Script).Ref, instance.Self};
@@ -142,8 +162,10 @@ gpp.instance = instance
             for (auto& [name, module] : Modules)
             {
                 const auto source = Assets.Read(kScriptAssetKind, name);
-                if (!source || std::hash<std::string>{}(*source) == module.Hash) continue;
-                auto handle = Vm.Load(*source, "=" + name);
+                if (!source) continue;
+                if (std::hash<std::string>{}(*source) == module.Hash && !Vm.ModulesStale(*module.Trace)) continue;
+                auto trace = std::make_shared<LuauModuleTrace>();
+                auto handle = Vm.Load(*source, "=" + name, trace);
                 if (!handle)
                 {
                     ModuleErrors[name] = handle.error().Message;
@@ -151,10 +173,11 @@ gpp.instance = instance
                 }
                 ModuleErrors.erase(name);
                 Vm.Release(module.Ref);
-                module = Module{*handle, std::hash<std::string>{}(*source)};
+                module = Module{*handle, std::hash<std::string>{}(*source), std::move(trace)};
                 for (auto& [key, instance] : Instances)
                 {
                     if (instance.Script != name) continue;
+                    instance.Profile = {};
                     const std::array<int, 1> self{instance.Self};
                     (void)Vm.CallWith(Helper, "stop", self);
                     instance.Started = false;
@@ -172,13 +195,14 @@ gpp.instance = instance
                 error = "script '" + name + "' not found";
                 return false;
             }
-            auto handle = Vm.Load(*source, "=" + name);
+            auto trace = std::make_shared<LuauModuleTrace>();
+            auto handle = Vm.Load(*source, "=" + name, trace);
             if (!handle)
             {
                 error = handle.error().Message;
                 return false;
             }
-            Modules[name] = Module{*handle, std::hash<std::string>{}(*source)};
+            Modules[name] = Module{*handle, std::hash<std::string>{}(*source), std::move(trace)};
             return true;
         }
 
@@ -269,7 +293,10 @@ gpp.instance = instance
                 if (tick && healthy)
                 {
                     const std::array<LuauValue, 1> args{static_cast<float>(deltaTime)};
+                    const auto allocsBefore = Vm.AllocStats();
+                    const auto began = std::chrono::steady_clock::now();
                     healthy = Invoke(instance, "tick", args);
+                    Record(instance, began, allocsBefore);
                 }
                 if (healthy && !ModuleErrors.contains(instance.Script)) instance.LastError.clear();
             }
@@ -296,7 +323,7 @@ gpp.instance = instance
         std::vector<ScriptStatus> result;
         for (const auto& [key, instance] : m_Impl->Instances)
         {
-            result.push_back({instance.Entity, instance.Index, instance.Script, instance.LastError});
+            result.push_back({instance.Entity, instance.Index, instance.Script, instance.LastError, instance.Profile});
         }
         return result;
     }

@@ -322,6 +322,7 @@ gpp.script = script
         {
             std::size_t Hash{0};
             std::shared_ptr<const ScriptDescriptor> Descriptor;
+            std::shared_ptr<LuauModuleTrace> Trace;
             std::chrono::steady_clock::time_point CheckedAt{};
         };
 
@@ -335,6 +336,7 @@ gpp.script = script
 
         explicit Impl(const AssetDirectories& assets) : Assets(assets)
         {
+            Vm.SetModuleLoader(MakeScriptModuleLoader(assets));
             try
             {
                 RegisterMathBindings(Vm);
@@ -354,13 +356,14 @@ gpp.script = script
             }
         }
 
-        std::shared_ptr<const ScriptDescriptor> Build(const std::string& name, const std::optional<std::string>& source)
+        std::shared_ptr<const ScriptDescriptor> Build(const std::string& name, const std::optional<std::string>& source,
+                                                      const std::shared_ptr<LuauModuleTrace>& trace)
         {
             auto descriptor = std::make_shared<ScriptDescriptor>();
             descriptor->Name = name;
             if (!SetupError.empty()) { descriptor->Error = SetupError; return descriptor; }
             if (!source) { descriptor->Error = "script '" + name + "' not found"; return descriptor; }
-            auto module = Vm.Load(*source, "=" + name);
+            auto module = Vm.Load(*source, "=" + name, trace);
             if (!module) { descriptor->Error = module.error().Message; return descriptor; }
             *Sink = ScriptDescriptor{};
             const std::array<int, 1> refs{*module};
@@ -387,9 +390,10 @@ gpp.script = script
         entry.CheckedAt = now;
         const auto source = m_Impl->Assets.Read(kScriptAssetKind, name);
         const std::size_t hash = source ? std::hash<std::string>{}(*source) : 0;
-        if (!entry.Descriptor || entry.Hash != hash)
+        if (!entry.Descriptor || entry.Hash != hash || (entry.Trace && m_Impl->Vm.ModulesStale(*entry.Trace)))
         {
-            entry.Descriptor = m_Impl->Build(name, source);
+            entry.Trace = std::make_shared<LuauModuleTrace>();
+            entry.Descriptor = m_Impl->Build(name, source, entry.Trace);
             entry.Hash = hash;
         }
         return entry.Descriptor;

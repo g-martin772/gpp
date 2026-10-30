@@ -310,6 +310,65 @@ gpp.vecmeta(M2, M4)
 
     std::vector<std::string> ListScripts(const AssetDirectories& assets)
     {
-        return assets.List(kScriptAssetKind);
+        auto names = assets.List(kScriptAssetKind);
+        std::erase_if(names, [](const std::string& name) { return name.starts_with(kScriptLibraryPrefix); });
+        return names;
+    }
+
+    namespace
+    {
+        std::optional<std::string> ValidateModuleName(const std::string_view name)
+        {
+            if (name.empty()) return "module name is empty";
+            if (name.front() == '/' || name.find('\\') != std::string_view::npos || name.find(':') != std::string_view::npos)
+                return "absolute paths are not allowed";
+            if (name.find("..") != std::string_view::npos) return "'..' is not allowed";
+            if (name.find('.') != std::string_view::npos) return "file extensions are not allowed";
+            if (!name.starts_with(kScriptLibraryPrefix)) return "modules live under 'lib/'";
+            std::size_t segment = 0;
+            for (const char c : name)
+            {
+                if (c == '/')
+                {
+                    if (segment == 0) return "empty path segment";
+                    segment = 0;
+                    continue;
+                }
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-')
+                    return "module names may only use letters, digits, '_', '-' and '/'";
+                ++segment;
+            }
+            if (segment == 0) return "empty path segment";
+            return std::nullopt;
+        }
+
+        bool Within(const std::filesystem::path& root, const std::filesystem::path& file)
+        {
+            const auto relative = file.lexically_relative(root);
+            return !relative.empty() && *relative.begin() != "..";
+        }
+    }
+
+    LuauModuleLoader MakeScriptModuleLoader(const AssetDirectories& assets)
+    {
+        return [&assets](const std::string_view name) -> std::expected<std::string, std::string>
+        {
+            if (auto invalid = ValidateModuleName(name)) return std::unexpected(std::move(*invalid));
+            std::error_code ec;
+            for (const auto& root : assets.Directories(kScriptAssetKind))
+            {
+                const auto file = root / (std::string(name) + ".luau");
+                if (!std::filesystem::is_regular_file(file, ec)) continue;
+                const auto library = std::filesystem::canonical(root / "lib", ec);
+                const auto real = std::filesystem::canonical(file, ec);
+                if (ec || !Within(library, real)) return std::unexpected("module resolves outside the scripts library");
+                std::ifstream stream(real, std::ios::binary);
+                if (!stream) break;
+                std::ostringstream buffer;
+                buffer << stream.rdbuf();
+                return buffer.str();
+            }
+            return std::unexpected("module not found");
+        };
     }
 }

@@ -37,5 +37,7 @@ export namespace GPP
     // makes math.randomseed a no-op, so script randomness follows the runner's seed.
     void RegisterRandomBindings(LuauVm& vm, std::function<SimulationRandom*()> source);
     [[nodiscard]] std::expected<int, LuauError> LoadScript(LuauVm& vm, const AssetDirectories& assets, const std::string& name);
+    constexpr const char* kScriptLibraryPrefix = "lib/";
+    [[nodiscard]] LuauModuleLoader MakeScriptModuleLoader(const AssetDirectories& assets);
     [[nodiscard]] std::vector<std::string> ListScripts(const AssetDirectories& assets);
 }

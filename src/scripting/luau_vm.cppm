@@ -46,6 +46,24 @@ export namespace GPP
 
     using LuauNative = std::function<int(LuauNativeCall&)>;
 
+    using LuauModuleLoader = std::function<std::expected<std::string, std::string>(std::string_view name)>;
+
+    class LuauModuleTrace
+    {
+    public:
+        void Record(const std::string& name, std::size_t hash) { m_Used[name] = hash; }
+        [[nodiscard]] const std::map<std::string, std::size_t>& Used() const { return m_Used; }
+
+    private:
+        std::map<std::string, std::size_t> m_Used;
+    };
+
+    struct LuauAllocStats
+    {
+        std::uint64_t Allocations{0};
+        std::uint64_t Bytes{0};
+    };
+
     struct LuauLimits
     {
         std::int64_t MaxSafepoints{20'000'000};
@@ -98,8 +116,12 @@ export namespace GPP
         // Freezes the standard library and globals; removes os/debug.
         void Seal();
 
+        void SetModuleLoader(LuauModuleLoader loader);
+        [[nodiscard]] bool ModulesStale(const LuauModuleTrace& trace) const;
+
         // Compiles and runs the chunk in its own sandboxed environment; the table it returns is kept under the handle.
-        [[nodiscard]] std::expected<int, LuauError> Load(std::string_view source, std::string_view chunkName);
+        [[nodiscard]] std::expected<int, LuauError> Load(std::string_view source, std::string_view chunkName,
+                                                         std::shared_ptr<LuauModuleTrace> modules = nullptr);
         [[nodiscard]] std::expected<void, LuauError> Call(int handle, std::string_view function,
                                                           std::span<const double> args = {});
         // Calls function with the referenced tables first, then args; yields the first result (monostate when nil).
@@ -111,6 +133,7 @@ export namespace GPP
         void Release(int handle);
 
         [[nodiscard]] std::size_t BytesUsed() const;
+        [[nodiscard]] LuauAllocStats AllocStats() const;
 
     private:
         friend class LuauNativeCall;

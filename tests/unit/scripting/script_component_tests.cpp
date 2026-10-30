@@ -29,6 +29,7 @@ namespace
         void Write(const std::string& script, const std::string& source, const int bumpSeconds = 0) const
         {
             const auto path = Root / (script + ".luau");
+            fs::create_directories(path.parent_path());
             std::ofstream(path, std::ios::trunc) << source;
             if (bumpSeconds != 0) fs::last_write_time(path, fs::file_time_type::clock::now() + std::chrono::seconds(bumpSeconds));
         }
@@ -419,4 +420,228 @@ TEST_CASE("SetComponent edits and undoes a Scripts component", "[scripting][comp
 
     REQUIRE(ApplyCommand(scene, undoAdd));
     CHECK_FALSE(scene.Registry().all_of<ScriptsComponent>(scene.FindByGuid(guid)));
+}
+
+namespace
+{
+    struct RequireRig
+    {
+        ScriptDir Dir;
+        AssetDirectories Assets;
+        LuauVm Vm;
+        std::shared_ptr<LuauModuleTrace> Trace = std::make_shared<LuauModuleTrace>();
+
+        explicit RequireRig(const std::string& name) : Dir(name), Assets(Dir.Options)
+        {
+            Vm.SetModuleLoader(MakeScriptModuleLoader(Assets));
+            Vm.Seal();
+        }
+
+        std::expected<int, LuauError> Load(const std::string& source) { return Vm.Load(source, "=main", Trace); }
+
+        std::string Error(const std::string& source)
+        {
+            auto handle = Load(source);
+            return handle ? std::string{} : handle.error().Message;
+        }
+    };
+}
+
+TEST_CASE("require resolves lib modules, runs each once per environment and shares the result", "[scripting][require]")
+{
+    RequireRig rig("require_basic");
+    rig.Dir.Write("lib/counter", "runs = (runs or 0) + 1\nreturn { value = 7, runs = function() return runs end }");
+    rig.Dir.Write("lib/sub/deep", "return { name = 'deep' }");
+    const auto handle = rig.Load(R"(
+        local a = require("lib/counter")
+        local b = require("lib/counter")
+        local deep = require("lib/sub/deep")
+        assert(a == b and a.value == 7 and a.runs() == 1 and deep.name == 'deep')
+        return { check = function() end })");
+    INFO((handle ? "" : handle.error().Message));
+    REQUIRE(handle.has_value());
+    CHECK(rig.Trace->Used().size() == 2);
+    CHECK(rig.Trace->Used().contains("lib/counter"));
+}
+
+TEST_CASE("A module without a return value requires as true, and environments do not share modules", "[scripting][require]")
+{
+    RequireRig rig("require_env");
+    rig.Dir.Write("lib/effect", "count = (count or 0) + 1");
+    rig.Dir.Write("lib/state", "return { n = 0 }");
+    CHECK(rig.Error("assert(require('lib/effect') == true)") == "");
+    const auto first = rig.Load("local s = require('lib/state') s.n += 1 return { n = function() return s.n end }");
+    const auto second = rig.Load("local s = require('lib/state') return { n = function() return s.n end }");
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+    CHECK(rig.Vm.CallWith(*first, "n", {}).value() == LuauValue{1.0f});
+    CHECK(rig.Vm.CallWith(*second, "n", {}).value() == LuauValue{0.0f});
+}
+
+TEST_CASE("Cyclic requires fail with the chain", "[scripting][require]")
+{
+    RequireRig rig("require_cycle");
+    rig.Dir.Write("lib/a", "return require('lib/b')");
+    rig.Dir.Write("lib/b", "return require('lib/a')");
+    rig.Dir.Write("lib/self", "return require('lib/self')");
+    const auto message = rig.Error("require('lib/a')");
+    CHECK(message.find("cyclic require: lib/a -> lib/b -> lib/a") != std::string::npos);
+    CHECK(rig.Error("require('lib/self')").find("cyclic require: lib/self -> lib/self") != std::string::npos);
+}
+
+TEST_CASE("require rejects anything that is not a plain lib module name", "[scripting][require][sandbox]")
+{
+    RequireRig rig("require_reject");
+    rig.Dir.Write("lib/ok", "return 1");
+    rig.Dir.Write("outside", "return 1");
+    for (const char* bad : {"../outside", "lib/../outside", "/etc/passwd", "lib/ok.luau", "lib/ok.lua", "outside",
+                            "lib//ok", "lib/ok/", "lib\\\\ok", "", "lib/", "C:/x"})
+    {
+        const auto message = rig.Error(std::string("require('") + bad + "')");
+        INFO(bad);
+        CHECK(message.find("require(") != std::string::npos);
+    }
+    CHECK(rig.Error("require(nil)").find("module name string") != std::string::npos);
+    CHECK(rig.Error("require(5)").find("module name string") != std::string::npos);
+    CHECK(rig.Error("require('lib/missing')").find("not found") != std::string::npos);
+    CHECK(rig.Error("require('lib/ok')") == "");
+}
+
+TEST_CASE("require refuses a symlink that leaves the lib directory", "[scripting][require][sandbox]")
+{
+    RequireRig rig("require_symlink");
+    rig.Dir.Write("secret", "return 'secret'");
+    rig.Dir.Write("lib/real", "return 'real'");
+    fs::create_symlink(rig.Dir.Root / "secret.luau", rig.Dir.Root / "lib" / "leak.luau");
+    fs::create_symlink(rig.Dir.Root / "lib" / "real.luau", rig.Dir.Root / "lib" / "alias.luau");
+    CHECK(rig.Error("require('lib/leak')").find("outside") != std::string::npos);
+    CHECK(rig.Error("require('lib/alias')") == "");
+}
+
+TEST_CASE("Modules run in the script sandbox and cannot reach loading functions", "[scripting][require][sandbox]")
+{
+    RequireRig rig("require_sandbox");
+    rig.Dir.Write("lib/probe", "return { io = io, os = os, load = loadstring, debug = debug, dofile = dofile }");
+    rig.Dir.Write("lib/mutate", "return pcall(function() math.sqrt = nil end)");
+    CHECK(rig.Error(R"(
+        local p = require('lib/probe')
+        assert(p.io == nil and p.os == nil and p.load == nil and p.debug == nil and p.dofile == nil)
+        assert(require('lib/mutate') == false))") == "");
+}
+
+TEST_CASE("A module syntax or runtime error is reported with the module name", "[scripting][require]")
+{
+    RequireRig rig("require_errors");
+    rig.Dir.Write("lib/syntax", "return {");
+    rig.Dir.Write("lib/boom", "error('boom')");
+    CHECK(rig.Error("require('lib/syntax')").find("lib/syntax") != std::string::npos);
+    const auto message = rig.Error("require('lib/boom')");
+    CHECK(message.find("lib/boom") != std::string::npos);
+    CHECK(message.find("boom") != std::string::npos);
+}
+
+TEST_CASE("The trace goes stale when a required module changes or disappears", "[scripting][require]")
+{
+    RequireRig rig("require_stale");
+    rig.Dir.Write("lib/a", "return require('lib/b')");
+    rig.Dir.Write("lib/b", "return 1");
+    REQUIRE(rig.Error("require('lib/a')") == "");
+    CHECK(rig.Trace->Used().size() == 2);
+    CHECK_FALSE(rig.Vm.ModulesStale(*rig.Trace));
+    rig.Dir.Write("lib/b", "return 2");
+    CHECK(rig.Vm.ModulesStale(*rig.Trace));
+    rig.Dir.Write("lib/b", "return 1");
+    CHECK_FALSE(rig.Vm.ModulesStale(*rig.Trace));
+    fs::remove(rig.Dir.Root / "lib" / "b.luau");
+    CHECK(rig.Vm.ModulesStale(*rig.Trace));
+}
+
+TEST_CASE("Library modules are not offered as attachable scripts", "[scripting][require]")
+{
+    ScriptDir dir("require_list");
+    dir.Write("top", "return {}");
+    dir.Write("lib/helper", "return {}");
+    AssetDirectories assets(dir.Options);
+    CHECK(ListScripts(assets) == std::vector<std::string>{"top"});
+}
+
+TEST_CASE("A script can require a lib and the catalog describes it", "[scripting][require][components]")
+{
+    ScriptDir dir("require_catalog");
+    dir.Write("lib/defaults", "return { speed = 4 }");
+    dir.Write("s", "local d = require('lib/defaults')\nreturn { properties = { { name = 'Speed', type = 'float', default = d.speed } } }");
+    AssetDirectories assets(dir.Options);
+    ScriptCatalog catalog(assets, std::chrono::milliseconds(0));
+    auto descriptor = catalog.Describe("s");
+    INFO(descriptor->Error);
+    REQUIRE(descriptor->Ok());
+    CHECK(std::get<float>(descriptor->Find("Speed")->Default) == 4.0f);
+    dir.Write("lib/defaults", "return { speed = 9 }", 5);
+    CHECK(std::get<float>(catalog.Describe("s")->Find("Speed")->Default) == 9.0f);
+}
+
+TEST_CASE("Editing a required module hot-reloads the scripts that use it", "[scripting][host][require][hotreload]")
+{
+    ScriptDir dir("require_reload");
+    dir.Write("lib/gain", "return { factor = 2 }");
+    dir.Write("s", R"(local gain = require('lib/gain')
+        return {
+            OnStart = function(self) self.starts = (self.starts or 0) + 1 end,
+            OnTick = function(self, dt) scene.set(self.entity, "Transform", "Position", vector.create(gain.factor, self.starts, 0)) end,
+        })");
+    dir.Write("other", "return { OnTick = function(self, dt) end }");
+    HostRig rig(dir);
+    const auto entity = rig.Spawn("R", {ScriptEntry{"s", {}}, ScriptEntry{"other", {}}});
+    rig.Host->Start(rig.World);
+    rig.Tick(0.1f);
+    CHECK(rig.PositionOf(entity) == glm::vec3(2.0f, 1.0f, 0.0f));
+
+    dir.Write("lib/gain", "return { factor = 5 }", 5);
+    rig.Assets->Poll();
+    rig.Tick(0.1f);
+    CHECK(rig.PositionOf(entity) == glm::vec3(5.0f, 2.0f, 0.0f));
+
+    dir.Write("lib/gain", "return {", 10);
+    rig.Assets->Poll();
+    rig.Tick(0.1f);
+    CHECK(rig.PositionOf(entity) == glm::vec3(5.0f, 2.0f, 0.0f));
+    CHECK_FALSE(rig.Host->TakeErrors().empty());
+
+    dir.Write("lib/gain", "return { factor = 8 }", 15);
+    rig.Assets->Poll();
+    rig.Tick(0.1f);
+    CHECK(rig.PositionOf(entity) == glm::vec3(8.0f, 3.0f, 0.0f));
+}
+
+TEST_CASE("Ticking scripts report time and allocation counters", "[scripting][host][profiler]")
+{
+    ScriptDir dir("profiler");
+    dir.Write("busy", R"(return { OnTick = function(self, dt)
+        local t = {}
+        for i = 1, 20000 do t[i] = { i } end
+    end })");
+    dir.Write("idle", "return { OnTick = function(self, dt) end }");
+    HostRig rig(dir);
+    rig.Spawn("R", {ScriptEntry{"busy", {}}, ScriptEntry{"idle", {}}});
+    rig.Host->Start(rig.World);
+    for (int i = 0; i < 3; ++i) rig.Tick(0.1f);
+
+    const auto statuses = rig.Host->Statuses();
+    REQUIRE(statuses.size() == 2);
+    const auto find = [&](const std::string& name) -> const ScriptProfile&
+    {
+        return std::ranges::find(statuses, name, &ScriptStatus::Script)->Profile;
+    };
+    const auto& busy = find("busy");
+    const auto& idle = find("idle");
+    CHECK(busy.Ticks == 3);
+    CHECK(busy.LastMs > 0.0);
+    CHECK(busy.AvgMs > 0.0);
+    CHECK(busy.MaxMs >= busy.LastMs);
+    CHECK(busy.LastAllocs > idle.LastAllocs);
+    CHECK(busy.LastBytes > 20000 * 16);
+    CHECK(busy.AvgBytes > 0.0);
+    CHECK(busy.VmBytes > 0);
+    CHECK(busy.LastMs > idle.LastMs);
+    CHECK(busy.LastBytes > idle.LastBytes * 10);
 }

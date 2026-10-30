@@ -150,6 +150,12 @@ namespace GPP
             return ResolveIn(options, name);
         }
 
+        [[nodiscard]] std::vector<std::filesystem::path> Directories(const std::string& kind) const
+        {
+            AssetKindOptions options;
+            return CopyKind(kind, options) ? options.Directories : std::vector<std::filesystem::path>{};
+        }
+
         [[nodiscard]] std::vector<std::string> List(const std::string& kind) const
         {
             AssetKindOptions options;

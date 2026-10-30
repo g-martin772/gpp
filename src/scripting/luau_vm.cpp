@@ -40,6 +40,8 @@ namespace GPP
         lua_State* L{nullptr};
         LuauLimits Limits;
         std::size_t Used{0};
+        LuauAllocStats Allocs;
+        LuauModuleLoader Loader;
         std::vector<LuauNative> Natives;
         std::int64_t Safepoints{0};
         double Deadline{0.0};
@@ -59,7 +61,15 @@ namespace GPP
             }
             if (self->Used - oldSize + newSize > self->Limits.MaxBytes) return nullptr;
             void* result = std::realloc(ptr, newSize);
-            if (result) self->Used += newSize - oldSize;
+            if (result)
+            {
+                self->Used += newSize - oldSize;
+                if (newSize > oldSize)
+                {
+                    ++self->Allocs.Allocations;
+                    self->Allocs.Bytes += newSize - oldSize;
+                }
+            }
             return result;
         }
 
@@ -121,18 +131,93 @@ namespace GPP
             return error;
         }
 
-        std::expected<void, LuauError> Execute(lua_State* state, std::string_view source, std::string_view chunkName,
-                                               int results)
+        static int Compile(lua_State* state, std::string_view source, const std::string& name)
         {
             lua_CompileOptions options{};
             options.optimizationLevel = 1;
             options.debugLevel = 1;
             std::size_t size = 0;
             char* bytecode = luau_compile(source.data(), source.size(), &options, &size);
-            const std::string name(chunkName);
             const int status = luau_load(state, name.c_str(), bytecode, size, 0);
             std::free(bytecode);
-            if (status != 0) return std::unexpected(Pop(state, name));
+            return status;
+        }
+
+        struct RequireState
+        {
+            std::shared_ptr<LuauModuleTrace> Trace;
+            std::vector<std::string> Stack;
+        };
+
+        static void DestroyRequireState(lua_State*, void* data) { static_cast<RequireState*>(data)->~RequireState(); }
+
+        static void InstallRequire(lua_State* thread, std::shared_ptr<LuauModuleTrace> trace)
+        {
+            void* memory = lua_newuserdatadtor(thread, sizeof(RequireState), &DestroyRequireState);
+            new (memory) RequireState{std::move(trace), {}};
+            lua_pushvalue(thread, LUA_GLOBALSINDEX);
+            lua_newtable(thread);
+            lua_pushcclosurek(thread, &Require, "require", 3, nullptr);
+            lua_setfield(thread, LUA_GLOBALSINDEX, "require");
+        }
+
+        static int Require(lua_State* state)
+        {
+            auto* self = static_cast<Impl*>(lua_callbacks(state)->userdata);
+            auto* require = static_cast<RequireState*>(lua_touserdata(state, lua_upvalueindex(1)));
+            if (lua_type(state, 1) != LUA_TSTRING) luaL_error(state, "require expects a module name string");
+            const std::string name = lua_tostring(state, 1);
+
+            lua_pushvalue(state, 1);
+            lua_rawget(state, lua_upvalueindex(3));
+            if (!lua_isnil(state, -1)) return 1;
+            lua_pop(state, 1);
+
+            if (const auto it = std::ranges::find(require->Stack, name); it != require->Stack.end())
+            {
+                std::string chain;
+                for (auto step = it; step != require->Stack.end(); ++step) chain += *step + " -> ";
+                luaL_error(state, "cyclic require: %s%s", chain.c_str(), name.c_str());
+            }
+            if (!self->Loader) luaL_error(state, "require is not available");
+            auto source = self->Loader(name);
+            if (!source) luaL_error(state, "require('%s'): %s", name.c_str(), source.error().c_str());
+            require->Trace->Record(name, std::hash<std::string>{}(*source));
+
+            lua_State* loader = lua_newthread(state);
+            lua_pushvalue(state, lua_upvalueindex(2));
+            lua_xmove(state, loader, 1);
+            lua_replace(loader, LUA_GLOBALSINDEX);
+            const std::string chunk = "=" + name;
+            const int status = Compile(loader, *source, chunk);
+            if (status != 0)
+            {
+                lua_xmove(loader, state, 1);
+                luaL_error(state, "require('%s'): %s", name.c_str(), lua_tostring(state, -1));
+            }
+            lua_xmove(loader, state, 1);
+            lua_remove(state, -2);
+
+            require->Stack.push_back(name);
+            const int result = lua_pcall(state, 0, 1, 0);
+            require->Stack.pop_back();
+            if (result != 0) luaL_error(state, "require('%s'): %s", name.c_str(), lua_tostring(state, -1));
+            if (lua_isnil(state, -1))
+            {
+                lua_pop(state, 1);
+                lua_pushboolean(state, 1);
+            }
+            lua_pushvalue(state, 1);
+            lua_pushvalue(state, -2);
+            lua_rawset(state, lua_upvalueindex(3));
+            return 1;
+        }
+
+        std::expected<void, LuauError> Execute(lua_State* state, std::string_view source, std::string_view chunkName,
+                                               int results)
+        {
+            const std::string name(chunkName);
+            if (Compile(state, source, name) != 0) return std::unexpected(Pop(state, name));
             ResetBudget();
             if (lua_pcall(state, 0, results, 0) != 0) return std::unexpected(Pop(state, name));
             return {};
@@ -156,6 +241,18 @@ namespace GPP
     const LuauLimits& LuauVm::Limits() const { return m_Impl->Limits; }
     void LuauVm::ResetBudget() { m_Impl->ResetBudget(); }
     std::size_t LuauVm::BytesUsed() const { return m_Impl->Used; }
+    LuauAllocStats LuauVm::AllocStats() const { return m_Impl->Allocs; }
+    void LuauVm::SetModuleLoader(LuauModuleLoader loader) { m_Impl->Loader = std::move(loader); }
+
+    bool LuauVm::ModulesStale(const LuauModuleTrace& trace) const
+    {
+        if (!m_Impl->Loader) return false;
+        return std::ranges::any_of(trace.Used(), [this](const auto& used)
+        {
+            const auto source = m_Impl->Loader(used.first);
+            return !source || std::hash<std::string>{}(*source) != used.second;
+        });
+    }
 
     void LuauVm::Register(const std::string_view table, const std::string_view name, LuauNative function)
     {
@@ -195,11 +292,13 @@ namespace GPP
         m_Impl->Sealed = true;
     }
 
-    std::expected<int, LuauError> LuauVm::Load(const std::string_view source, const std::string_view chunkName)
+    std::expected<int, LuauError> LuauVm::Load(const std::string_view source, const std::string_view chunkName,
+                                               std::shared_ptr<LuauModuleTrace> modules)
     {
         lua_State* L = m_Impl->L;
         lua_State* thread = lua_newthread(L);
         luaL_sandboxthread(thread);
+        if (modules && m_Impl->Loader) Impl::InstallRequire(thread, std::move(modules));
         const int threadRef = lua_ref(L, -1);
         lua_pop(L, 1);
         auto result = m_Impl->Execute(thread, source, chunkName, 1);

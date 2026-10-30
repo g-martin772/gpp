@@ -26,6 +26,18 @@ export namespace GPP
         int Line{0};
     };
 
+    struct ScriptProfile
+    {
+        std::uint64_t Ticks{0};
+        double LastMs{0.0};
+        double AvgMs{0.0};
+        double MaxMs{0.0};
+        std::uint64_t LastAllocs{0};
+        std::uint64_t LastBytes{0};
+        double AvgBytes{0.0};
+        std::size_t VmBytes{0};
+    };
+
     // Message is empty while the instance is healthy.
     struct ScriptStatus
     {
@@ -33,6 +45,7 @@ export namespace GPP
         std::size_t Index{0};
         std::string Script;
         std::string Message;
+        ScriptProfile Profile;
     };
 
     // Needs RegisterTaskBindings first; call before LuauVm::Seal().
