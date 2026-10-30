@@ -13,6 +13,7 @@ export import :SceneValidation;
 export import :Lights;
 export import :ContentRevision;
 export import :Commands;
+export import :Clipboard;
 export import :Random;
 export import :StateHash;
 export import :Runner;
