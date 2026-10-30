@@ -183,7 +183,45 @@ namespace GPP
         {
             stopTasks.push_back(service->StopAsync());
         }
-        WhenAll(std::move(stopTasks)).get();
+        std::atomic<bool> stopped{false};
+        std::exception_ptr stopError;
+        std::thread stopWaiter([&]
+        {
+            try
+            {
+                WhenAll(std::move(stopTasks)).get();
+            }
+            catch (...)
+            {
+                stopError = std::current_exception();
+            }
+            stopped = true;
+            std::scoped_lock lock(m_Mutex);
+            m_ConditionVariable.notify_all();
+        });
+        while (!stopped)
+        {
+            std::queue<MainThreadTask> pendingTasks;
+            {
+                std::unique_lock lock(m_Mutex);
+                m_ConditionVariable.wait(lock, [&] { return stopped || !m_MainThreadQueue.empty(); });
+                pendingTasks.swap(m_MainThreadQueue);
+            }
+            while (!pendingTasks.empty())
+            {
+                auto task = std::move(pendingTasks.front());
+                pendingTasks.pop();
+                if (task)
+                {
+                    task();
+                }
+            }
+        }
+        stopWaiter.join();
+        if (stopError)
+        {
+            std::rethrow_exception(stopError);
+        }
 
         logger->Info("Application terminated successfully");
         return 0;
