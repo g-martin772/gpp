@@ -18,6 +18,7 @@ export import :Random;
 export import :StateHash;
 export import :Runner;
 export import :Replay;
+export import :Headless;
 export import :SceneManager;
 export import :PhysicsModule;
 export import :Particles.Types;
