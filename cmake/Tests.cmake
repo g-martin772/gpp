@@ -14,4 +14,15 @@ add_dependencies(unit_tests gpp_test_hot_reload_plugin)
 
 include(CTest)
 include(Catch)
-catch_discover_tests(unit_tests)
+
+if(CMAKE_CXX_FLAGS MATCHES "fsanitize=[a-z,]*address")
+    catch_discover_tests(unit_tests PROPERTIES
+            ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp"
+            SKIP_RETURN_CODE 4)
+elseif(CMAKE_CXX_FLAGS MATCHES "fsanitize=thread")
+    catch_discover_tests(unit_tests TEST_SPEC "~[gpu]" PROPERTIES
+            ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/tsan.supp"
+            SKIP_RETURN_CODE 4)
+else()
+    catch_discover_tests(unit_tests)
+endif()

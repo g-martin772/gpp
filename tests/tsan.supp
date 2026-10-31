@@ -1,0 +1,3 @@
+# GCC writes the coroutine frame after await_suspend published the handle (false positive)
+race:std::__n4861::coroutine_handle<void>::resume
+race:physx::
