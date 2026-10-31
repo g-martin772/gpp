@@ -128,7 +128,7 @@ namespace GPP
                     return;
                 }
 
-                auto resumeAction = [h, state = this->state](bool cancelled)
+                auto resumeAction = [h](const std::shared_ptr<DelayState>& state, bool cancelled)
                 {
                     if (!state->resumed.exchange(true))
                     {
@@ -142,15 +142,21 @@ namespace GPP
 
                 if (stopToken.stop_possible())
                 {
-                    state->stopCb.emplace(stopToken, [resumeAction]
+                    state->stopCb.emplace(stopToken, [resumeAction, weak = std::weak_ptr<DelayState>(state)]
                     {
-                        ThreadPool::Instance().Submit([resumeAction] { resumeAction(true); });
+                        ThreadPool::Instance().Submit([resumeAction, weak]
+                        {
+                            if (auto locked = weak.lock())
+                            {
+                                resumeAction(locked, true);
+                            }
+                        });
                     });
                 }
 
-                TimerSystem::Instance().Schedule(ms, stopToken, [resumeAction]
+                TimerSystem::Instance().Schedule(ms, stopToken, [resumeAction, state = this->state]
                 {
-                    resumeAction(false);
+                    resumeAction(state, false);
                 });
             }
 
