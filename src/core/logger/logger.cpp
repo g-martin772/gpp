@@ -61,9 +61,8 @@ namespace GPP
     }
 
     Logger *Logger::GetInstance() {
-        if (!s_instance) {
-            s_instance = std::unique_ptr<Logger>(new Logger());
-        }
+        static std::once_flag once;
+        std::call_once(once, [] { s_instance = std::unique_ptr<Logger>(new Logger()); });
         return s_instance.get();
     }
 
