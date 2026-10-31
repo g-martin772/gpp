@@ -10,6 +10,11 @@ import :IO.AppPaths;
 
 namespace GPP
 {
+    namespace
+    {
+        std::atomic_ref<bool> RunningFlag(bool& flag) { return std::atomic_ref<bool>(flag); }
+    }
+
     Application* Application::s_Instance = nullptr;
 
     void Application::HandleSignal(int signal)
@@ -53,7 +58,7 @@ namespace GPP
 
     Application::~Application()
     {
-        if (m_Running)
+        if (RunningFlag(m_Running).load())
         {
             Stop();
         }
@@ -101,8 +106,8 @@ namespace GPP
     {
         {
             std::scoped_lock lock(m_Mutex);
-            if (m_Running) return 0;
-            m_Running = true;
+            if (RunningFlag(m_Running).load()) return 0;
+            RunningFlag(m_Running).store(true);
         }
 
         const auto logger = m_ServiceProvider.GetRequiredService<Logger>();
@@ -122,7 +127,7 @@ namespace GPP
 
         auto lastUpdateTime = std::chrono::high_resolution_clock::now();
 
-        while (m_Running)
+        while (RunningFlag(m_Running).load())
         {
             std::queue<MainThreadTask> pendingTasks;
 
@@ -132,7 +137,7 @@ namespace GPP
                 {
                     m_ConditionVariable.wait(lock, [this]
                     {
-                        return !m_Running || !m_MainThreadQueue.empty() || !m_ContinuousTasks.
+                        return !RunningFlag(m_Running).load() || !m_MainThreadQueue.empty() || !m_ContinuousTasks.
                             empty();
                     });
                 }
@@ -143,7 +148,7 @@ namespace GPP
                     lock.lock();
                 }
 
-                if (!m_Running)
+                if (!RunningFlag(m_Running).load())
                 {
                     break;
                 }
@@ -236,7 +241,7 @@ namespace GPP
 
     void Application::Stop()
     {
-        m_Running = false;
+        RunningFlag(m_Running).store(false);
         m_ConditionVariable.notify_all();
     }
 
