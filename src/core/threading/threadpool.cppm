@@ -23,11 +23,11 @@ namespace GPP {
     private:
         void WorkerLoop(std::stop_token stopToken);
 
-        std::vector<std::jthread> m_Workers{};
         std::queue<std::move_only_function<void()>> m_Tasks{};
         mutable std::mutex m_QueueMutex{};
         std::condition_variable_any m_QueueCondition{};
         bool m_Stopping{false};
+        std::vector<std::jthread> m_Workers{};
     };
 
     // Runs body(0..count-1) on the calling thread plus up to maxWorkers-1 pool helpers
