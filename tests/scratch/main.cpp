@@ -348,7 +348,7 @@ struct SlowMoverModule : public ISimulationModule
     {
         for (auto [entity, transform, velocity] : scene.Registry().view<TransformComponent, VelocityComponent>().each())
         {
-            transform.Position += velocity.Linear * deltaTime;
+            transform.Position += velocity.Linear * static_cast<double>(deltaTime);
         }
     }
 };
