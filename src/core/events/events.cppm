@@ -76,12 +76,18 @@ namespace GPP
         {
             const auto key = std::type_index(typeid(T));
             const auto id = m_NextId++;
-            auto cancel = std::make_shared<std::function<void()>>([this, key, id]
+            auto state = std::make_shared<SubscriptionState>();
+            auto cancel = std::make_shared<std::function<void()>>([this, key, id, state]
             {
-                std::scoped_lock lock(m_Mutex);
-                auto it = m_Subscribers.find(key);
-                if (it == m_Subscribers.end()) return;
-                std::erase_if(it->second, [id](const Subscriber& subscriber) { return subscriber.Id == id; });
+                {
+                    std::scoped_lock lock(m_Mutex);
+                    if (auto it = m_Subscribers.find(key); it != m_Subscribers.end())
+                    {
+                        std::erase_if(it->second, [id](const Subscriber& subscriber) { return subscriber.Id == id; });
+                    }
+                }
+                std::scoped_lock lock(state->Mutex);
+                state->Cancelled = true;
             });
             {
                 std::scoped_lock lock(m_Mutex);
@@ -89,8 +95,10 @@ namespace GPP
                     .Id = id,
                     .Delivery = delivery,
                     .Target = target,
-                    .Callback = [callback = std::move(callback)](const void* event)
+                    .Callback = [callback = std::move(callback), state](const void* event)
                     {
+                        std::scoped_lock lock(state->Mutex);
+                        if (state->Cancelled) return;
                         callback(*static_cast<const T*>(event));
                     }
                 });
@@ -124,6 +132,12 @@ namespace GPP
         void Pump(EventTarget target);
 
     private:
+        struct SubscriptionState
+        {
+            std::recursive_mutex Mutex;
+            bool Cancelled{false};
+        };
+
         struct Subscriber
         {
             std::size_t Id{};

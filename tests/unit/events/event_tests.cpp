@@ -48,6 +48,39 @@ TEST_CASE("Event dispatcher routes async work to the thread pool", "[events][thr
     REQUIRE(future.get() != caller);
 }
 
+TEST_CASE("Event dispatcher drops queued events after a subscription is reset", "[events]")
+{
+    EventDispatcher dispatcher;
+    int calls = 0;
+    auto subscription = dispatcher.Subscribe<KeyEvent>(
+        [&](const KeyEvent&) { ++calls; }, EventDelivery::Deferred, EventTarget::Main);
+
+    dispatcher.Publish(KeyEvent{});
+    subscription.Reset();
+    dispatcher.Pump(EventTarget::Main);
+    REQUIRE(calls == 0);
+}
+
+TEST_CASE("Resetting a subscription waits for a running handler", "[events][threadpool]")
+{
+    EventDispatcher dispatcher;
+    std::promise<void> started;
+    std::atomic<bool> finished{false};
+    auto subscription = dispatcher.Subscribe<KeyEvent>(
+        [&](const KeyEvent&)
+        {
+            started.set_value();
+            std::this_thread::sleep_for(100ms);
+            finished = true;
+        },
+        EventDelivery::Async, EventTarget::ThreadPool);
+
+    dispatcher.Publish(KeyEvent{});
+    REQUIRE(started.get_future().wait_for(2s) == std::future_status::ready);
+    subscription.Reset();
+    REQUIRE(finished.load());
+}
+
 TEST_CASE("Input state tracks key transitions", "[input]")
 {
     auto d = std::make_shared<EventDispatcher>();
