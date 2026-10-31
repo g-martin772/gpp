@@ -14,10 +14,8 @@ TEST_CASE("ThreadPool resumes coroutines through ResumeOn", "[threadpool][resume
 
     auto task = [&]() -> AsyncVoid {
         co_await ResumeOn(pool);
-        {
-            std::scoped_lock lock(mutex);
-            resumed = true;
-        }
+        std::scoped_lock lock(mutex);
+        resumed = true;
         condition.notify_one();
     };
 

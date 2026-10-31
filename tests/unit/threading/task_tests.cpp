@@ -1,7 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "../../../build/vcpkg_installed/x64-linux/include/catch2/catch_test_macros.hpp"
-
 import GPP;
 import std;
 
@@ -104,19 +102,20 @@ TEST_CASE("Task<void> then -> value", "[task][continuation]")
 
 TEST_CASE("Task then -> Task<void> continuation", "[task][continuation]")
 {
-    bool ran = false;
+    std::atomic<bool> ran = false;
     auto base = []() -> Task<int>
     {
         co_await DelayAsync(std::chrono::milliseconds(10));
         co_return 2;
     }();
 
-    auto cont = base.then([&](int x) -> Task<void>
+    const auto step = [&](int x) -> Task<void>
     {
         co_await DelayAsync(std::chrono::milliseconds(5));
         ran = (x == 2);
         co_return;
-    });
+    };
+    auto cont = base.then(step);
 
     cont.get();
     REQUIRE(ran);

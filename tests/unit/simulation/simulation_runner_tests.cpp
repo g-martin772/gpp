@@ -31,7 +31,7 @@ TEST_CASE("EnqueueEdit reaches the render scene while running", "[simulation_run
     SimulationRunner runner(std::move(scene), std::make_shared<NoopModule>());
     runner.Start();
 
-    std::uint64_t createdGuid = 0;
+    std::atomic<std::uint64_t> createdGuid = 0;
     runner.EnqueueEdit([&createdGuid](Scene& s)
     {
         const auto entity = s.CreateEntity("New", "Thing");
@@ -58,7 +58,7 @@ TEST_CASE("EnqueueEdit reaches the render scene while paused", "[simulation_runn
     runner.Start();
     runner.SetPaused(true);
 
-    std::uint64_t createdGuid = 0;
+    std::atomic<std::uint64_t> createdGuid = 0;
     runner.EnqueueEdit([&createdGuid](Scene& s)
     {
         const auto entity = s.CreateEntity("New", "Thing");

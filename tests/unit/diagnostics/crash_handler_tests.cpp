@@ -45,6 +45,9 @@ namespace
 TEST_CASE("A crashing child writes a report and still dies from the original signal", "[diagnostics][crash][fork]")
 {
     if (CrashHandlerDisabled()) SKIP("crash handler disabled by environment");
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    SKIP("sanitizers own the fatal signal handlers");
+#endif
     const auto dir = fs::temp_directory_path() / std::format("gpp_crash_child_{}", std::chrono::steady_clock::now().time_since_epoch().count());
     fs::create_directories(dir);
 

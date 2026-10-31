@@ -126,7 +126,7 @@ TEST_CASE("Shader watcher sees a file replaced by rename", "[graphics][shader][w
     watcher.StopAsync().get();
 }
 
-TEST_CASE("Retired objects outlive their grace period and then release", "[graphics][shader][retire]")
+TEST_CASE("Retired objects outlive their grace period and then release", "[graphics][shader][retire][gpu]")
 {
     const auto device = CreateHeadlessDevice(std::make_shared<Logger>());
     if (!device)
@@ -152,7 +152,7 @@ TEST_CASE("Retired objects outlive their grace period and then release", "[graph
     CHECK(retired.Pending() == 0);
 }
 
-TEST_CASE("Retired objects are held while queue work is outstanding", "[graphics][shader][retire]")
+TEST_CASE("Retired objects are held while queue work is outstanding", "[graphics][shader][retire][gpu]")
 {
     const auto device = CreateHeadlessDevice(std::make_shared<Logger>());
     if (!device)

@@ -50,11 +50,12 @@ TEST_CASE("Task<T> Promise and Future Semantics", "[GPP::Task]") {
     }
 
     SECTION("Task<void> executes and completes successfully") {
-        bool completed = false;
-        Task<void> task = [&]() -> Task<void> {
+        std::atomic<bool> completed = false;
+        const auto body = [&]() -> Task<void> {
             completed = true;
             co_return;
-        }();
+        };
+        Task<void> task = body();
 
         task.get();
         REQUIRE(completed == true);
@@ -95,19 +96,21 @@ TEST_CASE("WaitAsync Timeout and Detached Cancellation", "[GPP::WaitAsync]") {
 
         Task<int> timedTask = WaitAsync(std::move(slowTask), 50ms);
         REQUIRE_THROWS_AS(timedTask.get(), std::runtime_error);
+        std::this_thread::sleep_for(300ms);
     }
 }
 
 TEST_CASE("Spawn Fire-And-Forget Protection", "[GPP::Spawn]") {
     SECTION("Spawn protects temporary tasks from RAII double-destruction segfaults") {
-        bool completed = false;
+        std::atomic<bool> completed = false;
 
         // Directly spawning a lambda. This would segfault if discarded raw,
         // but GPP::Spawn safely captures and manages its lifetime on the heap.
-        Spawn([&completed]() -> Task<void> {
+        const auto body = [&completed]() -> Task<void> {
             co_await DelayAsync(50ms);
             completed = true;
-        }());
+        };
+        Spawn(body());
 
         std::this_thread::sleep_for(100ms); // Wait for background detached task to execute
         REQUIRE(completed == true);
@@ -151,5 +154,6 @@ TEST_CASE("Task Combinators: WhenAll and WhenAny", "[GPP::Combinators]") {
 
         REQUIRE(winner.index == 1);
         REQUIRE(winner.value == 200);
+        std::this_thread::sleep_for(250ms);
     }
 }
