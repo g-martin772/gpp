@@ -39,6 +39,8 @@ endif()
 target_include_directories(gpp PRIVATE ${Stb_INCLUDE_DIR})
 target_link_libraries(gpp PUBLIC yaml-cpp::yaml-cpp gpp_imguizmo gpp_node_editor)
 target_link_libraries(gpp PUBLIC unofficial::omniverse-physx-sdk::sdk EnTT::EnTT)
+# GCC names module types differently per TU in optimised builds, so entt name hashes disagree and pools go missing
+target_compile_definitions(gpp PUBLIC $<$<NOT:$<CONFIG:Debug>>:ENTT_STANDARD_CPP>)
 target_link_libraries(gpp PRIVATE nfd::nfd unofficial::luau::Luau.VM unofficial::luau::Luau.Compiler)
 target_link_libraries(gpp PRIVATE lunasvg::lunasvg)
 
