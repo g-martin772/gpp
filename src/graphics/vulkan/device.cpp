@@ -582,10 +582,11 @@ namespace GPP
             m_Logger->Warn("Pipeline cache unavailable: {}", err.what());
             return;
         }
+        m_SavedCacheBytes = m_Device.getPipelineCacheData(m_PipelineCache).size();
         m_Logger->Info("Pipeline cache: {} bytes loaded", initial.size());
     }
 
-    void VulkanDevice::SavePipelineCache() const
+    void VulkanDevice::SavePipelineCacheIfChanged()
     {
         if (!m_PipelineCache || m_PipelineCachePath.empty())
         {
@@ -593,14 +594,33 @@ namespace GPP
         }
         try
         {
-            if (const auto onDisk = ReadPipelineCacheFile(); !onDisk.empty())
+            if (m_Device.getPipelineCacheData(m_PipelineCache).size() == m_SavedCacheBytes)
             {
-                const vk::PipelineCacheCreateInfo createInfo({}, onDisk.size(), onDisk.data());
-                const auto other = m_Device.createPipelineCache(createInfo);
-                m_Device.mergePipelineCaches(m_PipelineCache, other);
-                m_Device.destroyPipelineCache(other);
+                return;
             }
-            const auto data = m_Device.getPipelineCacheData(m_PipelineCache);
+        }
+        catch (const vk::SystemError&)
+        {
+            return;
+        }
+        SavePipelineCache();
+    }
+
+    void VulkanDevice::SavePipelineCache()
+    {
+        if (!m_PipelineCache || m_PipelineCachePath.empty())
+        {
+            return;
+        }
+        try
+        {
+            const auto ownBytes = m_Device.getPipelineCacheData(m_PipelineCache).size();
+            const auto onDisk = ReadPipelineCacheFile();
+            const vk::PipelineCacheCreateInfo createInfo({}, onDisk.size(), onDisk.data());
+            const auto merged = m_Device.createPipelineCache(createInfo);
+            m_Device.mergePipelineCaches(merged, m_PipelineCache);
+            const auto data = m_Device.getPipelineCacheData(merged);
+            m_Device.destroyPipelineCache(merged);
             if (data.empty())
             {
                 return;
@@ -616,6 +636,7 @@ namespace GPP
             }
             else
             {
+                m_SavedCacheBytes = ownBytes;
                 m_Logger->Info("Pipeline cache: {} bytes saved", data.size());
             }
         }

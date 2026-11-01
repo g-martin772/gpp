@@ -1314,6 +1314,7 @@ namespace GPP
     void Renderer::ViewportLoop(std::stop_token stopToken)
     {
         Profiler::SetThreadName("Viewport");
+        RegisterCrashThread();
         VulkanCommandPool pool(m_Device, m_Logger, m_Device->GetQueueIndices().Graphics);
         std::uint64_t seenSignal = 0;
         auto lastFrameEnd = std::chrono::steady_clock::now();
@@ -1464,6 +1465,7 @@ namespace GPP
     void Renderer::RenderLoop(std::stop_token stopToken)
     {
         Profiler::SetThreadName("UI/Render");
+        RegisterCrashThread();
         InitializeRenderSystem();
         const bool headless = m_WindowManager->IsHeadless();
         if (!headless)
@@ -1483,6 +1485,7 @@ namespace GPP
         const auto start = std::chrono::high_resolution_clock::now();
         auto lastUiFrame = std::chrono::steady_clock::now();
         auto lastStatsLog = lastUiFrame;
+        PeriodicSchedule cacheSaveSchedule(lastUiFrame, std::chrono::seconds(10), std::chrono::seconds(60));
 
         const auto guardImGuiQueue = [this]() -> std::unique_lock<std::mutex>
         {
@@ -1512,6 +1515,8 @@ namespace GPP
                     m_Logger->Error("Render queue task failed: {}", error.what());
                 }
             }
+            if (cacheSaveSchedule.Due(std::chrono::steady_clock::now()))
+                m_Device->SavePipelineCacheIfChanged();
             if (headless)
             {
                 const float elapsed = static_cast<float>(

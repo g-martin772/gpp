@@ -21,8 +21,11 @@ namespace GPP
     {
         switch (signal)
         {
-        case SIGINT:
         case SIGTERM:
+        case SIGHUP:
+            s_Terminated.store(true);
+            [[fallthrough]];
+        case SIGINT:
             if (s_Instance)
             {
                 std::cout << std::endl;
@@ -44,6 +47,7 @@ namespace GPP
         s_Instance = this;
         std::signal(SIGINT, HandleSignal);
         std::signal(SIGTERM, HandleSignal);
+        std::signal(SIGHUP, HandleSignal);
     }
 
     Application& Application::Instance()
@@ -62,6 +66,11 @@ namespace GPP
         {
             Stop();
         }
+    }
+
+    void Application::SetTerminationHook(std::function<void()> hook)
+    {
+        m_TerminationHook = std::move(hook);
     }
 
     void Application::ScheduleOnMainThread(MainThreadTask task)
@@ -109,6 +118,7 @@ namespace GPP
             if (RunningFlag(m_Running).load()) return 0;
             RunningFlag(m_Running).store(true);
         }
+        s_Terminated.store(false);
 
         const auto logger = m_ServiceProvider.GetRequiredService<Logger>();
         logger->Info("Starting application...");
@@ -181,6 +191,17 @@ namespace GPP
         }
 
         logger->Info("Shutdown signal received! Stopping application...");
+        if (s_Terminated.load() && m_TerminationHook)
+        {
+            try
+            {
+                m_TerminationHook();
+            }
+            catch (const std::exception& error)
+            {
+                logger->Error("Termination hook failed: {}", error.what());
+            }
+        }
         OnStop();
         m_StopSource.request_stop();
         std::atomic<bool> stopped{false};

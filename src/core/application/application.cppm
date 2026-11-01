@@ -22,6 +22,8 @@ namespace GPP
         int Run();
         void Stop();
         void ScheduleOnMainThread(MainThreadTask task);
+        // Runs on the main thread, services still alive, when SIGTERM/SIGHUP ended the run (not for SIGINT or Stop())
+        void SetTerminationHook(std::function<void()> hook);
         void ScheduleContinuousOnMainThread(MainThreadTask task);
         // While continuous tasks exist the loop sleeps in `wait` (at most the given time) instead of spinning;
         // `wake` must make a running `wait` return from any thread
@@ -38,6 +40,8 @@ namespace GPP
 
         static Application* s_Instance;
         static void HandleSignal(int signal);
+        static inline std::atomic<bool> s_Terminated{false};
+        std::function<void()> m_TerminationHook;
 
         ServiceProvider m_ServiceProvider;
         std::unique_ptr<IConfiguration> m_Configuration;

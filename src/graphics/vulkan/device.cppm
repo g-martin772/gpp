@@ -32,6 +32,28 @@ namespace GPP
     export [[nodiscard]] bool IsPipelineCacheDataCompatible(
         std::span<const std::byte> data, const vk::PhysicalDeviceProperties& properties);
 
+    export class PeriodicSchedule
+    {
+    public:
+        using Clock = std::chrono::steady_clock;
+
+        PeriodicSchedule(const Clock::time_point start, const Clock::duration first, const Clock::duration interval) noexcept
+            : m_Next(start + first), m_Interval(interval)
+        {
+        }
+
+        [[nodiscard]] bool Due(const Clock::time_point now) noexcept
+        {
+            if (now < m_Next) return false;
+            m_Next = now + m_Interval;
+            return true;
+        }
+
+    private:
+        Clock::time_point m_Next;
+        Clock::duration m_Interval;
+    };
+
     export class VulkanDevice
     {
     public:
@@ -56,7 +78,8 @@ namespace GPP
         [[nodiscard]] const GpuCapabilities& GetCapabilities() const noexcept { return m_Capabilities; }
         VmaAllocator GetAllocator() const noexcept { return m_Allocator; }
         vk::PipelineCache GetPipelineCache() const noexcept { return m_PipelineCache; }
-        void SavePipelineCache() const;
+        void SavePipelineCache();
+        void SavePipelineCacheIfChanged();
         VulkanMemoryStats GetMemoryStats() const;
         void DumpMemoryStats() const;
 
@@ -100,6 +123,7 @@ namespace GPP
         VmaAllocator m_Allocator = nullptr;
         vk::PipelineCache m_PipelineCache;
         std::filesystem::path m_PipelineCachePath;
+        std::size_t m_SavedCacheBytes = 0;
         GpuCapabilities m_Capabilities;
     };
 

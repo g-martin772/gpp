@@ -276,7 +276,11 @@ namespace GPP
           m_Retired(m_Device), m_Watch(m_FileSystem, m_Logger)
     {
         m_DeviceLimit = m_Device->GetPhysicalDevice().getProperties().limits.maxImageDimension2D;
-        m_Worker = std::jthread([this](const std::stop_token& stop) { WorkerLoop(stop); });
+        m_Worker = std::jthread([this](const std::stop_token& stop)
+        {
+            RegisterCrashThread();
+            WorkerLoop(stop);
+        });
     }
 
     TextureCache::~TextureCache()

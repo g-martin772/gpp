@@ -72,3 +72,16 @@ TEST_CASE("Truncated or malformed pipeline cache data is rejected", "[graphics][
     hugeHeader[0] = std::byte{0xff};
     CHECK_FALSE(IsPipelineCacheDataCompatible(hugeHeader, properties));
 }
+
+TEST_CASE("Periodic schedule fires after the first delay and then once per interval", "[graphics][pipeline-cache]")
+{
+    using namespace std::chrono_literals;
+    const auto start = PeriodicSchedule::Clock::now();
+    PeriodicSchedule schedule(start, 10s, 60s);
+    CHECK_FALSE(schedule.Due(start));
+    CHECK_FALSE(schedule.Due(start + 9s));
+    CHECK(schedule.Due(start + 10s));
+    CHECK_FALSE(schedule.Due(start + 10s));
+    CHECK_FALSE(schedule.Due(start + 69s));
+    CHECK(schedule.Due(start + 70s));
+}

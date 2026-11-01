@@ -769,6 +769,7 @@ namespace GPP
     void SimulationRunner::ThreadMain(std::stop_token stopToken)
     {
         Profiler::SetThreadName("Simulation");
+        RegisterCrashThread();
         {
             std::scoped_lock lock(m_InlineMutex);
             EnsureInitialized();
