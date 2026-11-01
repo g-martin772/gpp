@@ -499,7 +499,15 @@ end
                             const glm::dvec3& velocity, const PhysicsContactEvent& event, const int material, const int otherMaterial)
         {
             if (!scene.IsValid(scene.FindByGuid(self))) return;
-            const std::array<LuauValue, 7> args{other, event.Point, normal, event.Impulse, velocity, material, otherMaterial};
+            const std::array<LuauValue, 9> args{other,
+                                                glm::vec3(event.Point),
+                                                glm::vec3(normal),
+                                                event.Impulse,
+                                                glm::vec3(velocity),
+                                                material,
+                                                otherMaterial,
+                                                event.Point,
+                                                velocity};
             ForInstancesOf(self, kHasContact, [&](Instance& instance) { (void)Invoke(instance, "contact", args); });
         }
 

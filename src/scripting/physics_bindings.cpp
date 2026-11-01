@@ -17,11 +17,11 @@ namespace GPP
         constexpr std::string_view kPrelude = R"lua(
 local function xyz(fn, name, value)
     local kind = typeof(value)
-    if kind == "vector" or kind == "table" then
+    if kind == "vector" or kind == "table" or kind == "dvec3" then
         local x, y, z = value.x, value.y, value.z
         if type(x) == "number" and type(y) == "number" and type(z) == "number" then return x, y, z end
     end
-    error(`physics.{fn}: {name} must be a vector or \{x, y, z\}`, 3)
+    error(`physics.{fn}: {name} must be a vector or \{x, y, z\} (a dvec3 works too)`, 3)
 end
 
 local function layer_mask(fn, mask)
@@ -41,7 +41,7 @@ function physics.raycast(origin, direction, max_dist, layer_mask_bits)
         point = vector.create(px, py, pz),
         normal = vector.create(nx, ny, nz),
         distance = distance,
-        point64 = { x = px, y = py, z = pz },
+        point64 = dvec3.new(px, py, pz),
     }
 end
 
@@ -56,7 +56,7 @@ function physics.spherecast(origin, radius, direction, max_dist, layer_mask_bits
         point = vector.create(px, py, pz),
         normal = vector.create(nx, ny, nz),
         distance = distance,
-        point64 = { x = px, y = py, z = pz },
+        point64 = dvec3.new(px, py, pz),
     }
 end
 
@@ -99,6 +99,8 @@ function physics.set_kinematic_target(entity, position, rotation)
     local x, y, z = xyz("set_kinematic_target", "position", position)
     if rotation == nil then
         physics.__kinematic(entity, x, y, z)
+    elseif typeof(rotation) == "dquat" then
+        physics.__kinematic(entity, x, y, z, nil, nil, nil, rotation.x, rotation.y, rotation.z, rotation.w)
     else
         local rx, ry, rz = xyz("set_kinematic_target", "rotation", rotation)
         physics.__kinematic(entity, x, y, z, rx, ry, rz)
@@ -284,6 +286,15 @@ end
             {
                 const auto degrees = Api::Vector(call, 5, "set_kinematic_target");
                 command.Rotation = glm::quat(glm::radians(glm::vec3(degrees)));
+            }
+            else if (!call.IsNil(8))
+            {
+                const glm::dquat rotation(call.Number(11), call.Number(8), call.Number(9), call.Number(10));
+                if (!(glm::length(rotation) > 0.0) || !std::isfinite(glm::length(rotation)))
+                {
+                    throw std::runtime_error("physics.set_kinematic_target: rotation must be a finite non-zero dquat");
+                }
+                command.Rotation = glm::quat(glm::normalize(rotation));
             }
             module.QueueCommand(std::move(command));
             return 0;

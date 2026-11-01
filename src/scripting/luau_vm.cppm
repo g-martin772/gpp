@@ -27,6 +27,11 @@ export namespace GPP
         [[nodiscard]] LuauValue ToValue(int index, LuauType type) const;
         // Infers the value from the Lua type (numbers become floats, or ints when integers is set).
         [[nodiscard]] LuauValue ToValueAuto(int index, bool integers = false) const;
+        [[nodiscard]] std::optional<glm::dvec3> ToDVec3(int index) const;
+        [[nodiscard]] std::optional<glm::dquat> ToDQuat(int index) const;
+        [[nodiscard]] bool IsDVec3(int index) const;
+        [[nodiscard]] bool IsDQuat(int index) const;
+        [[nodiscard]] std::string TypeName(int index) const;
 
         void PushNil();
         void PushBoolean(bool value);
@@ -34,6 +39,10 @@ export namespace GPP
         void PushString(std::string_view value);
         void PushEntity(std::uint64_t guid);
         void PushValue(const LuauValue& value);
+        void PushDVec3(const glm::dvec3& value);
+        void PushDQuat(const glm::dquat& value);
+        // dvec3 as userdata (PushValue: float32 vector)
+        void PushValueWide(const LuauValue& value);
         void PushValues(std::span<const LuauValue> values);
         // Pushes a table keyed by name; nil (monostate) values are left out.
         void PushMap(std::span<const std::pair<std::string, LuauValue>> entries);
@@ -131,6 +140,7 @@ export namespace GPP
         // A fresh empty table kept alive under the returned handle.
         [[nodiscard]] int NewTable();
         void Release(int handle);
+        [[nodiscard]] void* NativeState() const;
 
         [[nodiscard]] std::size_t BytesUsed() const;
         [[nodiscard]] LuauAllocStats AllocStats() const;

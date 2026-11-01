@@ -17,8 +17,8 @@ return {
     OnFixedTick = function(self) events.emit("log", "fixed") end,
     OnTick = function(self) events.emit("log", "tick") end,
     OnLateTick = function(self) events.emit("log", "late") end,
-    OnContact = function(self, other, point, normal, impulse, velocity, material, otherMaterial)
-        events.emit("contact", self.entity, other, point, normal, impulse, velocity, material, otherMaterial)
+    OnContact = function(self, other, point, normal, impulse, velocity, material, otherMaterial, point64, velocity64)
+        events.emit("contact", self.entity, other, point, normal, impulse, velocity, material, otherMaterial, point64, velocity64)
     end,
     OnTrigger = function(self, other, entered) events.emit("trigger", self.entity, other, entered) end,
     OnStop = function(self) events.emit("log", "stop") end,
@@ -127,7 +127,7 @@ TEST_CASE("Physics contacts reach both scripts through the simulation module", "
     REQUIRE(contacts.size() == 2);
     const auto& first = contacts[0]->Args;
     const auto& second = contacts[1]->Args;
-    REQUIRE(first.size() == 8);
+    REQUIRE(first.size() == 10);
     CHECK(std::get<std::uint64_t>(first[0]) == 1);
     CHECK(std::get<std::uint64_t>(first[1]) == 2);
     CHECK(std::get<std::uint64_t>(second[0]) == 2);
@@ -138,6 +138,11 @@ TEST_CASE("Physics contacts reach both scripts through the simulation module", "
     CHECK(std::get<double>(first[6]) == 7);
     CHECK(std::get<double>(first[7]) == 9);
     CHECK(std::get<double>(second[6]) == 9);
+    const auto point64 = std::get<glm::dvec3>(first[8]);
+    const auto velocity64 = std::get<glm::dvec3>(first[9]);
+    CHECK(glm::vec3(point64) == std::get<glm::vec3>(first[2]));
+    CHECK(glm::vec3(velocity64) == std::get<glm::vec3>(first[5]));
+    CHECK(std::get<glm::dvec3>(second[9]).y == Approx(3.0).margin(0.05));
 }
 
 TEST_CASE("Contact delivery and callbacks are deterministic", "[scripting][lifecycle][headless][physics][determinism]")

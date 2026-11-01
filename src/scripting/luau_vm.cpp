@@ -355,7 +355,7 @@ namespace GPP
         }
         LuauNativeCall call(L);
         for (const int ref : refs) lua_getref(L, ref);
-        for (const auto& arg : args) call.PushValue(arg);
+        for (const auto& arg : args) call.PushValueWide(arg);
         m_Impl->ResetBudget();
         if (lua_pcall(L, static_cast<int>(refs.size() + args.size()), 1, 0) != 0)
         {
@@ -381,6 +381,8 @@ namespace GPP
     {
         lua_unref(m_Impl->L, handle);
     }
+
+    void* LuauVm::NativeState() const { return m_Impl->L; }
 
     int LuauNativeCall::Count() const { return lua_gettop(Lua(m_State)); }
     bool LuauNativeCall::IsNil(const int index) const { return lua_isnoneornil(Lua(m_State), index); }
@@ -436,6 +438,10 @@ namespace GPP
                 const float* v = lua_tovector(L, index);
                 return glm::dvec3(v[0], v[1], v[2]);
             }
+            if (t == LUA_TUSERDATA)
+            {
+                if (const auto wide = ToDVec3(index)) return *wide;
+            }
             break;
         case LuauType::String:
             if (t == LUA_TSTRING) return String(index);
@@ -448,6 +454,10 @@ namespace GPP
             {
                 const float* v = lua_tovector(L, index);
                 return glm::vec3(v[0], v[1], v[2]);
+            }
+            if (t == LUA_TUSERDATA)
+            {
+                if (const auto wide = ToDVec3(index)) return glm::vec3(*wide);
             }
             break;
         case LuauType::Vec2:
@@ -478,6 +488,10 @@ namespace GPP
         case LUA_TSTRING: return ToValue(index, LuauType::String);
         case LUA_TLIGHTUSERDATA: return ToValue(index, LuauType::Entity);
         case LUA_TVECTOR: return ToValue(index, LuauType::Vec3);
+        case LUA_TUSERDATA:
+            if (const auto wide = ToDVec3(index)) return *wide;
+            if (const auto rotation = ToDQuat(index)) return glm::vec4(rotation->x, rotation->y, rotation->z, rotation->w);
+            return std::monostate{};
         case LUA_TTABLE:
         {
             lua_getfield(L, index, "w");
@@ -547,6 +561,12 @@ namespace GPP
         }, value);
     }
 
+    void LuauNativeCall::PushValueWide(const LuauValue& value)
+    {
+        if (const auto* wide = std::get_if<glm::dvec3>(&value)) PushDVec3(*wide);
+        else PushValue(value);
+    }
+
     void LuauNativeCall::PushMap(const std::span<const std::pair<std::string, LuauValue>> entries)
     {
         lua_State* L = Lua(m_State);
@@ -565,7 +585,7 @@ namespace GPP
         lua_createtable(L, static_cast<int>(values.size()), 0);
         for (std::size_t i = 0; i < values.size(); ++i)
         {
-            PushValue(values[i]);
+            PushValueWide(values[i]);
             lua_rawseti(L, -2, static_cast<int>(i) + 1);
         }
     }

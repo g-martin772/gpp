@@ -168,6 +168,50 @@ TEST_CASE("physics.raycast is correct 1e11 m from the origin", "[scripting][phys
     CHECK(outcome.Named("overlap")[0].Num(0) == 1);
 }
 
+TEST_CASE("physics queries and forces take dvec3 and report hits as dvec3", "[scripting][physics-api][precision][dmath]")
+{
+    const auto entities = Box(1, "Target", "[1.0e11, 5.0e10, 10]", "Static") + Box(2, "Body", "[1.0e11, 5.0e10, 40]", "Dynamic") +
+                          Box(3, "Other", "[1.0e11, 5.0e10, 60]", "Dynamic");
+    const auto outcome = Execute(entities, OnFirstTick(R"lua(
+        local origin = dvec3.new(1e11, 5e10, 0)
+        local hit = physics.raycast(origin, dvec3.new(0, 0, 1), 100)
+        events.emit("hit", hit.entity, hit.point64, hit.distance, typeof(hit.point64), typeof(hit.point))
+        local sweep = physics.spherecast(origin, 0.5, dvec3.new(0, 0, 1), 100)
+        events.emit("sweep", sweep.point64, sweep.distance)
+        events.emit("overlap", #physics.overlap(dvec3.new(1e11, 5e10, 10), 0.25))
+        physics.add_impulse(scene.find("Body"), dvec3.new(0, 0, 4), dvec3.new(1e11, 5e10, 40))
+        physics.set_velocity(scene.find("Other"), dvec3.new(0, 0, 3))
+    )lua"), 3);
+    REQUIRE(outcome.Errors.empty());
+    const auto hit = outcome.Named("hit");
+    REQUIRE(hit.size() == 1);
+    const auto point = std::get<glm::dvec3>(hit[0].Args[1]);
+    CHECK(point.x == Approx(1.0e11).margin(1e-3));
+    CHECK(point.y == Approx(5.0e10).margin(1e-3));
+    CHECK(point.z == Approx(9.0).margin(1e-3));
+    CHECK(hit[0].Num(2) == Approx(9.0).margin(1e-3));
+    CHECK(hit[0].Text(3) == "dvec3");
+    CHECK(hit[0].Text(4) == "vector");
+    const auto sweep = outcome.Named("sweep");
+    REQUIRE(sweep.size() == 1);
+    CHECK(std::get<glm::dvec3>(sweep[0].Args[0]).z == Approx(9.0).margin(1e-3));
+    CHECK(outcome.Named("overlap")[0].Num(0) == 1);
+    CHECK(outcome.Velocity(2).z == Approx(2.0).margin(1e-3));
+    CHECK(outcome.Velocity(3).z == Approx(3.0).margin(1e-3));
+}
+
+TEST_CASE("physics.set_kinematic_target accepts a dquat rotation", "[scripting][physics-api][dmath]")
+{
+    const auto outcome = Execute(Box(1, "Mover", "[0, 0, 0]", "Kinematic"), OnFirstTick(R"lua(
+        physics.set_kinematic_target(scene.find("Mover"), dvec3.new(1e11 + 0.5, 0, 0), dquat.from_axis_angle(dvec3.new(0, 1, 0), math.pi / 2))
+    )lua"), 3);
+    REQUIRE(outcome.Errors.empty());
+    CHECK(outcome.Position(1).x == 1.0e11 + 0.5);
+    const auto rotation = outcome.Final.Registry().get<TransformComponent>(outcome.Final.FindByGuid(1)).Rotation;
+    CHECK(std::abs(rotation.y) == Approx(std::sin(glm::radians(45.0f))).margin(1e-4));
+    CHECK(std::abs(rotation.w) == Approx(std::cos(glm::radians(45.0f))).margin(1e-4));
+}
+
 TEST_CASE("physics.spherecast sweeps a sphere and physics.overlap lists entities sorted by guid", "[scripting][physics-api]")
 {
     const auto entities = Box(7, "C", "[2, 0, 0]", "Static") + Box(3, "A", "[0, 0, 0]", "Static") +

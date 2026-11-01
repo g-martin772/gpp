@@ -36,9 +36,10 @@ local function same(a, b)
 end
 
 local function parts(v)
-    local t = type(v)
+    local t = typeof(v)
     if t == "number" then return {v} end
-    if t == "vector" then return {v.x, v.y, v.z} end
+    if t == "vector" or t == "dvec3" then return {v.x, v.y, v.z} end
+    if t == "dquat" then return {v.x, v.y, v.z, v.w} end
     if t == "table" then return {v.x, v.y, v.z, v.w} end
     return nil
 end

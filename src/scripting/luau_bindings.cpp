@@ -1,5 +1,7 @@
 module;
 #include <entt/entt.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 module GPP.Scripting;
 
 import std;
@@ -59,6 +61,25 @@ namespace GPP
             info->Set(scene.Registry(), entity, value);
             if (info->Meta.Exclusive) EnforceExclusiveFlags(scene, guid);
         };
+    }
+
+    namespace
+    {
+        bool QueueFieldWrite(const SceneBindings& context, const LuauNativeCall& call, const FieldInfo* info, LuauValue value)
+        {
+            const bool ok = info && info->Set && (context.WriteCommand || context.Write) &&
+                            !std::holds_alternative<std::monostate>(value);
+            if (!ok) return false;
+            if (context.WriteCommand)
+            {
+                context.WriteCommand(SetFieldCommand{call.Entity(1), call.String(2), call.String(3), std::move(value)});
+            }
+            else
+            {
+                context.Write(MakeComponentFieldWrite(call.Entity(1), call.String(2), call.String(3), std::move(value)));
+            }
+            return true;
+        }
     }
 
     // Installs scene.exists/get/set(entity, component, field[, value]) natives; entities are guid userdata.
@@ -162,34 +183,68 @@ namespace GPP
             LuauValue value;
             if (info && info->Type == FieldType::DVec3) value = v;
             else if (info && info->Type == FieldType::Vec3) value = glm::vec3(v);
-            const bool ok = info && info->Set && (context->WriteCommand || context->Write) &&
-                            !std::holds_alternative<std::monostate>(value);
-            if (ok && context->WriteCommand)
-            {
-                context->WriteCommand(SetFieldCommand{call.Entity(1), call.String(2), call.String(3), std::move(value)});
-            }
-            else if (ok)
-            {
-                context->Write(MakeComponentFieldWrite(call.Entity(1), call.String(2), call.String(3), std::move(value)));
-            }
-            call.PushBoolean(ok);
+            call.PushBoolean(QueueFieldWrite(*context, call, info, std::move(value)));
             return 1;
         });
         vm.Register("scene", "set", [context](LuauNativeCall& call)
         {
             const auto* info = FindComponentField(call.String(2), call.String(3));
             LuauValue value = info ? call.ToValue(4, ToLuauType(info->Type)) : LuauValue{};
-            const bool ok = info && info->Set && (context->WriteCommand || context->Write) &&
-                            !std::holds_alternative<std::monostate>(value);
-            if (ok && context->WriteCommand)
+            call.PushBoolean(QueueFieldWrite(*context, call, info, std::move(value)));
+            return 1;
+        });
+        vm.Register("scene", "get64", [context](LuauNativeCall& call)
+        {
+            if (!context->Read) return 0;
+            const auto* info = FindComponentField(call.String(2), call.String(3));
+            const auto value = ReadComponentField(*context->Read, call.Entity(1), call.String(2), call.String(3));
+            if (!info || std::holds_alternative<std::monostate>(value)) return 0;
+            if (const auto* vector = std::get_if<glm::dvec3>(&value)) call.PushDVec3(*vector);
+            else if (const auto* narrow = std::get_if<glm::vec3>(&value))
             {
-                context->WriteCommand(SetFieldCommand{call.Entity(1), call.String(2), call.String(3), std::move(value)});
+                if (info->Meta.Kind == FieldKind::Angle) call.PushDQuat(glm::dquat(glm::radians(glm::dvec3(*narrow))));
+                else call.PushDVec3(glm::dvec3(*narrow));
             }
-            else if (ok)
+            else call.PushValue(value);
+            return 1;
+        });
+        vm.Register("scene", "set64", [context](LuauNativeCall& call)
+        {
+            const std::string component = call.String(2);
+            const std::string field = call.String(3);
+            const auto* info = FindComponentField(component, field);
+            if (!info)
             {
-                context->Write(MakeComponentFieldWrite(call.Entity(1), call.String(2), call.String(3), std::move(value)));
+                call.PushBoolean(false);
+                return 1;
             }
-            call.PushBoolean(ok);
+            LuauValue value;
+            const bool rotation = info->Type == FieldType::Vec3 && info->Meta.Kind == FieldKind::Angle;
+            if (info->Type == FieldType::DVec3 || info->Type == FieldType::Vec3)
+            {
+                if (const auto quat = rotation ? call.ToDQuat(4) : std::nullopt)
+                {
+                    value = glm::vec3(glm::degrees(glm::eulerAngles(glm::normalize(*quat))));
+                }
+                else if (const auto wide = call.ToDVec3(4))
+                {
+                    if (info->Type == FieldType::DVec3) value = *wide;
+                    else value = glm::vec3(*wide);
+                }
+            }
+            else
+            {
+                value = call.ToValue(4, ToLuauType(info->Type));
+            }
+            if (std::holds_alternative<std::monostate>(value))
+            {
+                const char* expected = info->Type == FieldType::DVec3 || info->Type == FieldType::Vec3
+                                           ? (rotation ? "a dquat or dvec3" : "a dvec3 or vector")
+                                           : "a value of the field's type";
+                throw std::runtime_error(std::format("scene.set64: {}.{} needs {}, got {}", component, field, expected,
+                                                     call.TypeName(4)));
+            }
+            call.PushBoolean(QueueFieldWrite(*context, call, info, std::move(value)));
             return 1;
         });
     }
@@ -270,6 +325,15 @@ gpp.vecmeta(M2, M4)
         if (auto result = vm.RunTrusted(prelude, "=gpp_math"); !result)
         {
             throw std::runtime_error("gpp math prelude failed: " + result.error().Message);
+        }
+        RegisterDMathBindings(vm);
+        constexpr std::string_view dprelude = R"lua(
+function dquat.to_quat(q) return vec4(q.x, q.y, q.z, q.w) end
+function dquat.from_quat(v) return dquat.new(v.x, v.y, v.z, v.w) end
+)lua";
+        if (auto result = vm.RunTrusted(dprelude, "=gpp_dmath"); !result)
+        {
+            throw std::runtime_error("gpp dmath prelude failed: " + result.error().Message);
         }
     }
 
