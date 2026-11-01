@@ -60,11 +60,27 @@ namespace GPP
           m_UiPreferences(std::move(uiPreferences)),
           m_FontAssets(std::move(fontAssets))
     {
+        m_RenderQueue.Wake = &m_UiWake;
+        m_UiOnDemand.store(m_RenderOptions->UiOnDemand, std::memory_order_relaxed);
+    }
+
+    void Renderer::RequestUiFrame()
+    {
+        m_UiRequested.store(true, std::memory_order_release);
+        { std::scoped_lock lock(m_RenderQueueMutex); }
+        m_UiWake.notify_all();
+    }
+
+    void Renderer::SetUiBusyProbe(std::function<bool()> probe)
+    {
+        std::scoped_lock lock(m_UiProbeMutex);
+        m_UiBusyProbe = std::move(probe);
     }
 
     Renderer::~Renderer()
     {
         m_Running = false;
+        m_UiWake.notify_all();
         if (m_RenderThread.joinable())
         {
             m_RenderThread.join();
@@ -546,6 +562,7 @@ namespace GPP
         m_UiPreferencesSubscription.Reset();
         m_Dispatcher->SetRenderExecutor({});
         m_Running = false;
+        m_UiWake.notify_all();
         if (m_RenderThread.joinable())
         {
             m_RenderThread.join();
@@ -1135,6 +1152,7 @@ namespace GPP
             std::scoped_lock lock(target.Mutex);
             target.Ready = std::move(image);
         }
+        RequestUiFrame();
 
         const auto frameEnd = std::chrono::steady_clock::now();
         target.LastGpuMs.store(sink.GpuMs(), std::memory_order_relaxed);
@@ -1494,6 +1512,10 @@ namespace GPP
             return std::unique_lock(m_Device->GetQueueMutex(m_Device->GetGraphicsQueue()));
         };
 
+        auto lastUiActivity = lastUiFrame;
+        const auto uiHold = std::chrono::milliseconds(m_RenderOptions->UiIdleHoldMs);
+        const auto uiIdleFrame = std::chrono::milliseconds(m_RenderOptions->UiIdleFrameMs);
+
         while (m_Running && !stopToken.stop_requested())
         {
             GPP_ZONE("Ui.Frame");
@@ -1502,6 +1524,8 @@ namespace GPP
                 std::scoped_lock lock(m_RenderQueueMutex);
                 pendingTasks.swap(m_RenderQueue);
             }
+            if (!pendingTasks.empty() || m_UiRequested.exchange(false, std::memory_order_acq_rel))
+                lastUiActivity = std::chrono::steady_clock::now();
             while (!pendingTasks.empty())
             {
                 auto task = std::move(pendingTasks.front());
@@ -1581,6 +1605,26 @@ namespace GPP
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
+            }
+
+            if (m_UiOnDemand.load(std::memory_order_relaxed) && !headless)
+            {
+                bool busy = false;
+                {
+                    std::scoped_lock lock(m_UiProbeMutex);
+                    busy = m_UiBusyProbe && m_UiBusyProbe();
+                }
+                const auto now = std::chrono::steady_clock::now();
+                if (busy) lastUiActivity = now;
+                if (now - lastUiActivity >= uiHold)
+                {
+                    std::unique_lock lock(m_RenderQueueMutex);
+                    const bool woken = m_UiWake.wait_for(lock, uiIdleFrame, [this]
+                    {
+                        return !m_Running || !m_RenderQueue.empty() || m_UiRequested.load(std::memory_order_acquire);
+                    });
+                    if (woken) continue;
+                }
             }
 
             if (!m_RenderOptions->VSync && m_RenderOptions->UiMaxFps > 0)
@@ -1688,6 +1732,8 @@ namespace GPP
                     m_MainWindowResources.LayerStack->OnUpdate(deltaTime);
                     m_MainWindowResources.LayerStack->OnUiRender();
                 }
+                if (const auto& io = ImGui::GetIO(); io.WantTextInput || ImGui::GetActiveID() != 0)
+                    lastUiActivity = std::chrono::steady_clock::now();
                 ImGui::Render();
             }
 

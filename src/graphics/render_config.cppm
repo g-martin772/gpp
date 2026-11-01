@@ -33,7 +33,9 @@ namespace GPP
 
         bool VSync = true;
         int UiMaxFps = 0;
-
+        bool UiOnDemand = false;
+        int UiIdleHoldMs = 2000;
+        int UiIdleFrameMs = 250;
 
         double ViewportSliceMs = 4.0;
         int ViewportMaxFps = 0;
@@ -66,6 +68,9 @@ namespace GPP
                 std::max(1, config.GetValue<int>("ShaderHotReloadIntervalMilliseconds", 250)));
             options.VSync = config.GetValue<bool>("VSync", true);
             options.UiMaxFps = std::max(0, config.GetValue<int>("UiMaxFps", 0));
+            options.UiOnDemand = config.GetValue<bool>("UiOnDemand", false);
+            options.UiIdleHoldMs = std::clamp(config.GetValue<int>("UiIdleHoldMilliseconds", 2000), 250, 60000);
+            options.UiIdleFrameMs = std::clamp(config.GetValue<int>("UiIdleFrameMilliseconds", 250), 50, 1000);
             options.ViewportSliceMs = std::clamp<double>(config.GetValue<float>("ViewportSliceMilliseconds", 4.0f),
                                                          0.25, 100.0);
             options.ViewportMaxFps = std::max(0, config.GetValue<int>("ViewportMaxFps", 0));

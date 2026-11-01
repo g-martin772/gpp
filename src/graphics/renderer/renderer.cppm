@@ -236,9 +236,16 @@ namespace GPP
 
         void RunBeforeUiFrame(std::function<void()> task)
         {
-            std::scoped_lock lock(m_BeforeFrameMutex);
-            m_BeforeFrameTasks.push_back(std::move(task));
+            {
+                std::scoped_lock lock(m_BeforeFrameMutex);
+                m_BeforeFrameTasks.push_back(std::move(task));
+            }
+            RequestUiFrame();
         }
+
+        // UiOnDemand: call on UI change without input events
+        void RequestUiFrame();
+        void SetUiBusyProbe(std::function<bool()> probe);
 
         struct ReadbackResult
         {
@@ -357,7 +364,22 @@ namespace GPP
         EventSubscription m_UiPreferencesSubscription{};
         std::vector<EventSubscription> m_ImGuiInputSubscriptions{};
         mutable std::mutex m_RenderQueueMutex{};
-        std::queue<std::move_only_function<void()>> m_RenderQueue{};
+        std::condition_variable_any m_UiWake{};
+        struct RenderTaskQueue : std::queue<std::move_only_function<void()>>
+        {
+            std::condition_variable_any* Wake = nullptr;
+
+            void push(std::move_only_function<void()>&& task)
+            {
+                std::queue<std::move_only_function<void()>>::push(std::move(task));
+                if (Wake) Wake->notify_all();
+            }
+        };
+        RenderTaskQueue m_RenderQueue{};
+        std::atomic<bool> m_UiRequested{false};
+        std::atomic<bool> m_UiOnDemand{false};
+        std::mutex m_UiProbeMutex;
+        std::function<bool()> m_UiBusyProbe;
         std::unordered_map<std::uint32_t, glm::uvec2> m_PendingResize{};
 
         struct FrameResources
