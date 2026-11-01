@@ -4,6 +4,7 @@ module;
 module GPP.Simulation;
 
 import :Scene;
+import :ExclusiveFlags;
 import std;
 
 namespace GPP
@@ -386,6 +387,7 @@ namespace GPP
             }
         }
 
+        NormalizeExclusiveFlags(staged.m_Registry);
         m_Registry = std::move(staged.m_Registry);
         m_GuidIndex = std::move(staged.m_GuidIndex);
         m_Extensions = std::move(staged.m_Extensions);

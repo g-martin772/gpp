@@ -250,7 +250,17 @@ namespace GPP
             {
                 Logger::LogError("Command for scene '{}' failed: {}", m_SimScene.Metadata().Name, e.what());
             }
-            if (ok) applied.push_back(CommandRecord{tick, std::move(command), std::move(inverse)});
+            if (!ok) continue;
+            const auto& record = applied.emplace_back(CommandRecord{tick, std::move(command), std::move(inverse)});
+            if (edit.Options.Move) continue;
+            for (auto& fixup : ExclusiveFixups(m_SimScene, record.Applied))
+            {
+                Command fixupInverse = DestroyEntityCommand{};
+                if (ApplyCommand(m_SimScene, fixup, &fixupInverse))
+                {
+                    applied.push_back(CommandRecord{tick, std::move(fixup), std::move(fixupInverse)});
+                }
+            }
         }
         if (applied.empty()) return;
 

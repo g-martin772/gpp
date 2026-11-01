@@ -55,7 +55,9 @@ namespace GPP
         {
             const auto* info = FindComponentField(component, field);
             const entt::entity entity = scene.FindByGuid(guid);
-            if (info && info->Set && scene.IsValid(entity)) info->Set(scene.Registry(), entity, value);
+            if (!info || !info->Set || !scene.IsValid(entity)) return;
+            info->Set(scene.Registry(), entity, value);
+            if (info->Meta.Exclusive) EnforceExclusiveFlags(scene, guid);
         };
     }
 

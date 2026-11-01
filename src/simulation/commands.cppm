@@ -9,6 +9,7 @@ import :ComponentRegistry;
 import :Components;
 import :Scene;
 import :ContentRevision;
+import :ExclusiveFlags;
 
 namespace GPP
 {
@@ -121,6 +122,11 @@ namespace GPP
     };
 
     export bool ApplyCommand(Scene& scene, const Command& command, Command* inverse = nullptr);
+
+    // Follow-up commands that restore the Exclusive-flag invariant after `applied` ran on `scene`.
+    export [[nodiscard]] std::vector<Command> ExclusiveFixups(const Scene& scene, const Command& applied);
+    // The same repair as direct writes, for scripts and graphs that set fields outside commands.
+    export void EnforceExclusiveFlags(Scene& scene, std::uint64_t preferredGuid);
 
     export [[nodiscard]] std::string CommandToYaml(const Command& command);
     export [[nodiscard]] std::optional<Command> CommandFromYaml(const std::string& yaml);

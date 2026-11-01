@@ -319,6 +319,30 @@ namespace GPP
         return std::visit([&](const auto& c) { return Apply(scene, c, inverse); }, command);
     }
 
+    std::vector<Command> ExclusiveFixups(const Scene& scene, const Command& applied)
+    {
+        std::uint64_t preferred = 0;
+        std::uint64_t demoted = 0;
+        if (const auto* set = std::get_if<SetFieldCommand>(&applied)) preferred = set->Guid;
+        else if (const auto* add = std::get_if<AddComponentCommand>(&applied)) demoted = add->Guid;
+        else if (const auto* spawn = std::get_if<SpawnEntityCommand>(&applied)) demoted = spawn->Guid;
+        else if (const auto* clone = std::get_if<CloneEntityCommand>(&applied)) demoted = clone->NewGuid;
+        std::vector<Command> fixups;
+        for (auto& edit : ExclusiveFlagEdits(scene.Registry(), preferred, demoted))
+        {
+            fixups.emplace_back(SetFieldCommand{edit.Guid, std::move(edit.Component), std::move(edit.Field), edit.Value});
+        }
+        return fixups;
+    }
+
+    void EnforceExclusiveFlags(Scene& scene, const std::uint64_t preferredGuid)
+    {
+        for (const auto& edit : ExclusiveFlagEdits(scene.Registry(), preferredGuid))
+        {
+            ApplyCommand(scene, SetFieldCommand{edit.Guid, edit.Component, edit.Field, edit.Value});
+        }
+    }
+
     std::string CommandToYaml(const Command& command)
     {
         YAML::Node n;

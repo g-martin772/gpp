@@ -208,7 +208,7 @@ namespace GPP
                     Field("FarPlane", &CameraComponent::FarPlane,
                           {.Label = "Far Plane", .Min = 1e-3, .Speed = 1.0, .Dim = Units::Dimension::Length,
                            .LegacyScale = Units::Legacy::kLengthM}),
-                    Field("Primary", &CameraComponent::Primary),
+                    Field("Primary", &CameraComponent::Primary, {.Exclusive = true}),
                 }});
 
             RegisterLightComponents();

@@ -162,6 +162,7 @@ namespace GPP
         Units::Dimension Dim = Units::Dimension::None;
         double LegacyScale = 1.0;
         double LegacyDefault = std::numeric_limits<double>::quiet_NaN();
+        bool Exclusive = false; // bool: exactly one entity holds it true while any has the component
     };
 
     namespace Reflect
