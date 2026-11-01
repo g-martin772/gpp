@@ -4,5 +4,7 @@ export import :Bindings;
 export import :Scheduler;
 export import :ScriptComponents;
 export import :ScriptHost;
+export import :ScriptModule;
+export import :ScriptTest;
 
 export import :ParticleBindings;
