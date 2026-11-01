@@ -176,7 +176,7 @@ TEST_CASE("Recording files reject wrong versions and missing hashes", "[replay]"
     std::uint64_t target = 0;
     auto recording = Record(target);
     auto yaml = RecordingToYaml(recording);
-    const auto at = yaml.find("Version: 1");
+    const auto at = yaml.find("Version: 2");
     REQUIRE(at != std::string::npos);
     yaml.replace(at, 10, "Version: 99");
     CHECK_THROWS_AS(RecordingFromYaml(yaml), std::runtime_error);

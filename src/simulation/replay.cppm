@@ -9,7 +9,8 @@ import :Runner;
 
 namespace GPP
 {
-    export constexpr int kRecordingFormatVersion = 1;
+    export constexpr int kRecordingMinFormatVersion = 1;
+    export constexpr int kRecordingFormatVersion = 2;
 
     export [[nodiscard]] std::string RecordingToYaml(const SimulationRecording& recording);
     export [[nodiscard]] SimulationRecording RecordingFromYaml(const std::string& yaml);

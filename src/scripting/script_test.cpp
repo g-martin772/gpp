@@ -115,6 +115,18 @@ function sim.step(n)
     if err then error(err, 2) end
 end
 
+local inputRaw = sim.__input
+function sim.input(action, value)
+    if type(action) ~= "string" then error("sim.input(action, value?) expects the action name", 2) end
+    if value == nil or value == true then value = 1 elseif value == false then value = 0 end
+    inputRaw(action, value)
+end
+
+function sim.input_tap(action)
+    sim.input(action, 1)
+    sim.input(action, 0)
+end
+
 function sim.events(name)
     local list = {}
     for i = 1, sim.__event_count() do
@@ -240,6 +252,7 @@ gpp.testing = testing
                 ScriptModuleOptions moduleOptions{.Limits = options.Limits, .Extend = options.Extend};
                 m_Scripts = std::make_shared<ScriptSimulationModule>(*m_Assets, std::move(moduleOptions));
                 m_Scripts->SetRandom(m_Random);
+                m_Scripts->SetInput(m_Input);
                 m_Modules.push_back(m_Scripts);
                 if (options.MakeModules)
                 {
@@ -336,6 +349,7 @@ gpp.testing = testing
                     if (m_Stopped) return "sim.step: the simulation was stopped";
                     for (std::uint64_t i = 0; i < ticks; ++i)
                     {
+                        m_Input->Begin(m_Input->Sample());
                         for (const auto& module : m_Modules) module->OnTick(m_World, deltaTime);
                         for (const auto& module : m_Modules) module->OnLateTick(m_World, deltaTime);
                         m_World.AdvanceClock(m_Dt);
@@ -462,6 +476,21 @@ gpp.testing = testing
                     call.PushString(failure);
                     return 1;
                 });
+                m_Vm.Register("sim", "__input", [this](LuauNativeCall& call)
+                {
+                    m_Input->Set(call.String(1), static_cast<float>(call.Number(2)));
+                    return 0;
+                });
+                m_Vm.Register("sim", "input_mouse", [this](LuauNativeCall& call)
+                {
+                    m_Input->AddMouse(glm::vec2(static_cast<float>(call.Number(1)), static_cast<float>(call.Number(2))));
+                    return 0;
+                });
+                m_Vm.Register("sim", "input_clear", [this](LuauNativeCall&)
+                {
+                    m_Input->Reset();
+                    return 0;
+                });
                 m_Vm.Register("sim", "__stop", [this](LuauNativeCall& call)
                 {
                     const auto failure = Stop();
@@ -552,6 +581,7 @@ gpp.testing = testing
             std::int64_t m_DefineCount{0};
             Scene m_World;
             std::shared_ptr<SimulationRandom> m_Random;
+            std::shared_ptr<SimulationInput> m_Input = std::make_shared<SimulationInput>();
             std::shared_ptr<ScriptSimulationModule> m_Scripts;
             std::vector<std::shared_ptr<ISimulationModule>> m_Modules;
             LuauVm m_Vm;

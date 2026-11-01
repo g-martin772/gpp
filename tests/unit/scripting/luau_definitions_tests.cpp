@@ -48,6 +48,10 @@ TEST_CASE("Luau definitions declare every registered scene native", "[scripting]
 
     for (const auto& name : RegisteredNames(bindings, "time")) CHECK(Declares(definitions, "time", name));
     for (const auto& name : RegisteredNames(bindings, "units")) CHECK(Declares(definitions, "units", name));
+    const auto module = ReadFile(root / "src" / "scripting" / "script_module.cpp");
+    const auto inputNames = RegisteredNames(module, "input");
+    REQUIRE(inputNames.size() == 5);
+    for (const auto& name : inputNames) CHECK(Declares(definitions, "input", name));
     CHECK(Declares(definitions, "gpp", "ease"));
     CHECK(Declares(definitions, "gpp", "random"));
     for (const char* global : {"vec2", "vec4", "ease"}) CHECK(definitions.contains(std::string("declare ") + global + ":"));

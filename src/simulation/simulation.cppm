@@ -16,6 +16,8 @@ export import :ContentRevision;
 export import :Commands;
 export import :Clipboard;
 export import :Random;
+export import :Input;
+export import :ActionMap;
 export import :StateHash;
 export import :Runner;
 export import :Replay;

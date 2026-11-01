@@ -20,7 +20,14 @@ namespace GPP
         std::shared_ptr<SceneBindings> Bindings = std::make_shared<SceneBindings>();
         std::shared_ptr<SimulationRandom> Random;
         std::shared_ptr<PhysicsSimulationModule> Physics;
+        std::shared_ptr<SimulationInput> Input;
+        bool DeferStart{false};
         std::unique_ptr<ScriptHost> Host;
+        std::mutex SharedMutex;
+        std::vector<ScriptEvent> Posted;
+        std::set<std::string> Ignored;
+        std::vector<ScriptStatus> Statuses;
+        std::atomic<bool> Reload{false};
         std::vector<std::function<void(Scene&)>> Writes;
         std::mutex ErrorMutex;
         std::vector<ScriptError> Errors;
@@ -33,10 +40,55 @@ namespace GPP
             RegisterRandomBindings(Vm, [this] { return Random.get(); });
             RegisterSceneBindings(Vm, Bindings);
             RegisterTaskBindings(Vm, TaskErrors);
+            RegisterInputBindings();
             auto context = RegisterScriptHostBindings(Vm);
             if (options.Extend) options.Extend(Vm);
+            if (options.ExtendScene) options.ExtendScene(Vm, Bindings);
             Vm.Seal();
+            DeferStart = options.DeferStart;
             Host = std::make_unique<ScriptHost>(Vm, std::move(context), TaskErrors, assets);
+            Host->SetIgnored([this](const std::string& name)
+            {
+                std::scoped_lock lock(SharedMutex);
+                return Ignored.contains(name);
+            });
+        }
+
+        void RegisterInputBindings()
+        {
+            auto& vm = Vm;
+            vm.Register("input", "axis", [this](LuauNativeCall& call)
+            {
+                call.PushNumber(Input ? Input->Axis(call.String(1)) : 0.0);
+                return 1;
+            });
+            vm.Register("input", "held", [this](LuauNativeCall& call)
+            {
+                call.PushBoolean(Input && Input->Held(call.String(1)));
+                return 1;
+            });
+            vm.Register("input", "pressed", [this](LuauNativeCall& call)
+            {
+                call.PushBoolean(Input && Input->Pressed(call.String(1)));
+                return 1;
+            });
+            vm.Register("input", "released", [this](LuauNativeCall& call)
+            {
+                call.PushBoolean(Input && Input->Released(call.String(1)));
+                return 1;
+            });
+            vm.Register("input", "mouse_delta", [this](LuauNativeCall& call)
+            {
+                call.PushValue(Input ? Input->MouseDelta() : glm::vec2(0.0f));
+                return 1;
+            });
+        }
+
+        void Publish()
+        {
+            auto statuses = Host->Statuses();
+            std::scoped_lock lock(SharedMutex);
+            Statuses = std::move(statuses);
         }
 
         void Run(Scene& scene, const std::function<void()>& step)
@@ -71,14 +123,54 @@ namespace GPP
         if (m_Impl->Physics) m_Impl->Physics->SetEventCapture(true);
     }
 
+    void ScriptSimulationModule::SetInput(std::shared_ptr<SimulationInput> input) { m_Impl->Input = std::move(input); }
+
+    void ScriptSimulationModule::Stop(Scene& scene)
+    {
+        m_Impl->Run(scene, [&] { m_Impl->Host->Stop(scene); });
+        m_Impl->Publish();
+        {
+            std::scoped_lock lock(m_Impl->SharedMutex);
+            m_Impl->Posted.clear();
+        }
+        if (m_Impl->Input) m_Impl->Input->ResetUsed();
+    }
+
+    void ScriptSimulationModule::PostEvent(std::string name, std::vector<LuauValue> args)
+    {
+        std::scoped_lock lock(m_Impl->SharedMutex);
+        m_Impl->Posted.push_back(ScriptEvent{std::move(name), std::move(args)});
+    }
+
+    void ScriptSimulationModule::SetIgnored(std::set<std::string> names)
+    {
+        std::scoped_lock lock(m_Impl->SharedMutex);
+        m_Impl->Ignored = std::move(names);
+    }
+
+    std::vector<ScriptStatus> ScriptSimulationModule::Statuses() const
+    {
+        std::scoped_lock lock(m_Impl->SharedMutex);
+        return m_Impl->Statuses;
+    }
+
     void ScriptSimulationModule::OnInit(Scene& scene)
     {
+        if (m_Impl->DeferStart) return;
         m_Impl->Run(scene, [&] { m_Impl->Host->Start(scene); });
     }
 
     void ScriptSimulationModule::OnTick(Scene& scene, const float deltaTime)
     {
+        if (m_Impl->Reload.exchange(false)) m_Impl->Host->ForceReload();
+        std::vector<ScriptEvent> posted;
+        {
+            std::scoped_lock lock(m_Impl->SharedMutex);
+            posted.swap(m_Impl->Posted);
+        }
+        for (auto& event : posted) m_Impl->Host->Events().Emit(std::move(event.Name), std::move(event.Args));
         m_Impl->Run(scene, [&] { m_Impl->Host->Tick(scene, deltaTime); });
+        m_Impl->Publish();
     }
 
     void ScriptSimulationModule::OnLateTick(Scene& scene, const float deltaTime)
@@ -87,6 +179,10 @@ namespace GPP
         if (m_Impl->Physics) events = m_Impl->Physics->TakeEvents();
         m_Impl->Run(scene, [&] { m_Impl->Host->LateTick(scene, deltaTime, events.Contacts, events.Triggers); });
     }
+
+    void ScriptSimulationModule::RequestReload() { m_Impl->Reload.store(true); }
+    std::string ScriptSimulationModule::SaveState() const { return m_Impl->Host->SaveState(); }
+    void ScriptSimulationModule::LoadState(const std::string& state) { m_Impl->Host->LoadState(state); }
 
     void ScriptSimulationModule::OnShutdown(Scene& scene)
     {

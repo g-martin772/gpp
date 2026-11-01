@@ -62,6 +62,14 @@ declare ease: (name: string, t: number) -> number
 declare vec2: (x: number, y: number) -> Vec2
 declare vec4: (x: number, y: number, z: number, w: number) -> Vec4
 
+declare input: {
+    axis: (action: string) -> number,
+    held: (action: string) -> boolean,
+    pressed: (action: string) -> boolean,
+    released: (action: string) -> boolean,
+    mouse_delta: () -> Vec2,
+}
+
 declare task: {
     wait: (seconds: number?) -> number,
     frame: () -> number,

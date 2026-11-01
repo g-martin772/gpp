@@ -6,6 +6,7 @@ import :Scene;
 import :Commands;
 import :ContentRevision;
 import :Random;
+import :Input;
 import :StateHash;
 
 namespace GPP
@@ -67,6 +68,12 @@ namespace GPP
         std::uint64_t Hash{0};
     };
 
+    export struct InputRecord
+    {
+        std::uint64_t Tick{0};
+        InputFrame Frame;
+    };
+
     export struct SimulationRecording
     {
         Scene Initial;
@@ -75,6 +82,7 @@ namespace GPP
         std::uint64_t EndTick{0};
         RunnerState State;
         std::vector<CommandRecord> Commands;
+        std::vector<InputRecord> Inputs;
         std::uint64_t CheckpointInterval{0};
         std::vector<StateCheckpoint> Checkpoints;
         std::optional<std::uint64_t> FinalHash;
@@ -220,6 +228,7 @@ namespace GPP
         void SetSimTime(double seconds);
 
         [[nodiscard]] std::shared_ptr<SimulationRandom> Random() const noexcept { return m_Random; }
+        [[nodiscard]] std::shared_ptr<SimulationInput> Input() const noexcept { return m_Input; }
 
         [[nodiscard]] RunnerState CaptureState() const;
         void RestoreState(const RunnerState& state);
@@ -263,6 +272,7 @@ namespace GPP
         void AddCheckpoint();
         void RunTick(float deltaTime, double clockDt);
         void StepOne(float deltaTime, double clockDt);
+        void AdvanceInput();
         void ExecuteSteps(std::uint64_t ticks);
         void PublishNow();
         [[nodiscard]] float StepDeltaTime() const;
@@ -299,12 +309,23 @@ namespace GPP
         std::uint64_t m_StepsCompleted = 0;
 
         std::shared_ptr<SimulationRandom> m_Random;
+        std::shared_ptr<SimulationInput> m_Input = std::make_shared<SimulationInput>();
         CommandHistory m_History;
         RevisionCounter m_Revision;
-        std::optional<UndoEntry> m_Transaction; // sim thread only
+        std::optional<UndoEntry> m_Transaction;
         mutable std::mutex m_LogMutex;
         std::deque<CommandRecord> m_CommandLog;
         std::optional<SimulationRecording> m_Recording;
+        std::map<std::string, float, std::less<>> m_RecordedHeld;
+
+        struct InputReplay
+        {
+            std::vector<InputRecord> Records;
+            std::size_t Next{0};
+            std::uint64_t EndTick{0};
+            std::map<std::string, float, std::less<>> Held;
+        };
+        std::optional<InputReplay> m_InputReplay;
 
         struct CheckpointLog
         {
@@ -312,7 +333,7 @@ namespace GPP
             std::uint64_t Origin{0};
             std::vector<StateCheckpoint> Entries;
         };
-        std::optional<CheckpointLog> m_Checkpoints; // sim thread only
+        std::optional<CheckpointLog> m_Checkpoints;
 
         std::mutex m_WakeMutex;
         std::condition_variable_any m_Wake;

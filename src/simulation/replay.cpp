@@ -4,6 +4,7 @@ module GPP.Simulation;
 
 import :Replay;
 import std;
+import glm;
 
 namespace GPP
 {
@@ -27,6 +28,40 @@ namespace GPP
             if (!node) throw std::runtime_error(std::string("Recording: missing '") + key + "'");
             return node;
         }
+
+        YAML::Node InputToYaml(const InputRecord& record)
+        {
+            YAML::Node node;
+            node["Tick"] = record.Tick;
+            if (!record.Frame.Values.empty())
+            {
+                for (const auto& [action, value] : record.Frame.Values) node["Values"][action] = value;
+            }
+            for (const auto& action : record.Frame.Pressed) node["Pressed"].push_back(action);
+            for (const auto& action : record.Frame.Released) node["Released"].push_back(action);
+            if (record.Frame.Mouse != glm::vec2(0.0f))
+            {
+                node["Mouse"].push_back(record.Frame.Mouse.x);
+                node["Mouse"].push_back(record.Frame.Mouse.y);
+                node["Mouse"].SetStyle(YAML::EmitterStyle::Flow);
+            }
+            return node;
+        }
+
+        InputRecord InputFromYaml(const YAML::Node& node)
+        {
+            InputRecord record;
+            record.Tick = Require(node, "Tick").as<std::uint64_t>();
+            for (const auto& pair : node["Values"]) record.Frame.Values.emplace(pair.first.as<std::string>(), pair.second.as<float>());
+            for (const auto& action : node["Pressed"]) record.Frame.Pressed.insert(action.as<std::string>());
+            for (const auto& action : node["Released"]) record.Frame.Released.insert(action.as<std::string>());
+            if (const auto mouse = node["Mouse"]; mouse && mouse.size() == 2)
+            {
+                record.Frame.Mouse = glm::vec2(mouse[0].as<float>(), mouse[1].as<float>());
+            }
+            return record;
+        }
+
     }
 
     std::string FormatHash(const std::uint64_t hash)
@@ -76,6 +111,9 @@ namespace GPP
             out << entry;
         }
         out << YAML::EndSeq;
+        out << YAML::Key << "Inputs" << YAML::Value << YAML::BeginSeq;
+        for (const auto& record : recording.Inputs) out << InputToYaml(record);
+        out << YAML::EndSeq;
         out << YAML::Key << "Initial" << YAML::Value << YAML::Literal << recording.Initial.SerializeToYaml();
         out << YAML::EndMap;
         return out.c_str();
@@ -91,10 +129,10 @@ namespace GPP
             throw std::runtime_error("Recording: not a GppRecording file");
         }
         const int version = root["Version"].as<int>(0);
-        if (version != kRecordingFormatVersion)
+        if (version < kRecordingMinFormatVersion || version > kRecordingFormatVersion)
         {
-            throw std::runtime_error(std::format("Recording: unsupported version {} (this build reads {})", version,
-                                                 kRecordingFormatVersion));
+            throw std::runtime_error(std::format("Recording: unsupported version {} (this build reads {} to {})", version,
+                                                 kRecordingMinFormatVersion, kRecordingFormatVersion));
         }
 
         try
@@ -112,6 +150,7 @@ namespace GPP
                 recording.Checkpoints.push_back(
                     StateCheckpoint{checkpoint["Tick"].as<std::uint64_t>(), ParseHash(checkpoint["Hash"])});
             }
+            for (const auto& entry : root["Inputs"]) recording.Inputs.push_back(InputFromYaml(entry));
             for (const auto& entry : root["Commands"])
             {
                 const auto command = CommandFromYaml(YAML::Dump(entry["Command"]));

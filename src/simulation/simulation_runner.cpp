@@ -413,7 +413,36 @@ namespace GPP
     void SimulationRunner::StepOne(const float deltaTime, const double clockDt)
     {
         DrainEdits();
+        AdvanceInput();
         RunTick(deltaTime, clockDt);
+    }
+
+    void SimulationRunner::AdvanceInput()
+    {
+        const auto tick = Tick();
+        InputFrame frame;
+        if (m_InputReplay && tick < m_InputReplay->EndTick)
+        {
+            auto& replay = *m_InputReplay;
+            while (replay.Next < replay.Records.size() && replay.Records[replay.Next].Tick < tick) ++replay.Next;
+            if (replay.Next < replay.Records.size() && replay.Records[replay.Next].Tick == tick)
+            {
+                frame = replay.Records[replay.Next++].Frame;
+                replay.Held = frame.Values;
+            }
+            else frame.Values = replay.Held;
+        }
+        else
+        {
+            m_InputReplay.reset();
+            frame = m_Input->Sample();
+        }
+        if (m_Recording && (frame.Values != m_RecordedHeld || frame.HasEvents()))
+        {
+            m_RecordedHeld = frame.Values;
+            m_Recording->Inputs.push_back(InputRecord{tick, frame});
+        }
+        m_Input->Begin(std::move(frame));
     }
 
     void SimulationRunner::PublishNow()
@@ -619,6 +648,7 @@ namespace GPP
             recording.StartTick = Tick();
             recording.State = CaptureState();
             m_Recording = std::move(recording);
+            m_RecordedHeld.clear();
             m_Checkpoints.reset();
             if (checkpointInterval > 0)
             {
@@ -659,6 +689,9 @@ namespace GPP
         }
         SetTickRate(recording.TickRate);
         m_Tick.store(recording.StartTick, std::memory_order_release);
+        m_Input->Reset();
+        m_Input->Begin({});
+        m_InputReplay = InputReplay{recording.Inputs, 0, recording.EndTick, {}};
         EnsureInitialized();
         RestoreState(recording.State);
         m_Checkpoints.reset();

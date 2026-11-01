@@ -96,6 +96,99 @@ function instance.cancel(self)
     self.__sched.cancel_all()
     self.__on = nil
 end
+
+local SKIP = { entity = true, props = true, __sched = true, __on = true }
+local MAXDEPTH = 12
+local function enc(v, out, depth, seen)
+    local t = type(v)
+    if t == "number" then
+        if v ~= v then out[#out + 1] = "x;"
+        elseif v == math.huge then out[#out + 1] = "i;"
+        elseif v == -math.huge then out[#out + 1] = "j;"
+        else out[#out + 1] = "n" .. string.format("%.17g", v) .. ";" end
+    elseif t == "boolean" then out[#out + 1] = v and "t" or "f"
+    elseif t == "string" then out[#out + 1] = "s" .. #v .. ":" .. v
+    elseif t == "vector" then out[#out + 1] = string.format("v%.9g,%.9g,%.9g;", v.x, v.y, v.z)
+    elseif t == "userdata" then out[#out + 1] = "e" .. gpp.entity_guid(v) .. ";"
+    elseif t == "table" then
+        local mt = getmetatable(v)
+        if mt == vec_meta.vec2 then out[#out + 1] = string.format("a%.9g,%.9g;", v.x, v.y)
+        elseif mt == vec_meta.vec4 then out[#out + 1] = string.format("b%.9g,%.9g,%.9g,%.9g;", v.x, v.y, v.z, v.w)
+        elseif depth >= MAXDEPTH or seen[v] then out[#out + 1] = "z"
+        else
+            seen[v] = true
+            local items = {}
+            for k, value in v do
+                local kt, vt = type(k), type(value)
+                if (kt == "string" or kt == "number") and vt ~= "function" and vt ~= "thread" and not (depth == 0 and SKIP[k]) then
+                    local key = {}
+                    enc(k, key, depth + 1, seen)
+                    local body = {}
+                    enc(value, body, depth + 1, seen)
+                    items[#items + 1] = { table.concat(key), table.concat(body) }
+                end
+            end
+            table.sort(items, function(a, b) return a[1] < b[1] end)
+            out[#out + 1] = "{"
+            for _, item in items do
+                out[#out + 1] = item[1]
+                out[#out + 1] = item[2]
+            end
+            out[#out + 1] = "}"
+            seen[v] = nil
+        end
+    else out[#out + 1] = "z" end
+end
+function instance.save(self)
+    local out = {}
+    enc(self, out, 0, {})
+    return table.concat(out)
+end
+local function dec(s, pos)
+    local c = string.sub(s, pos, pos)
+    if c == "t" then return true, pos + 1
+    elseif c == "f" then return false, pos + 1
+    elseif c == "z" then return nil, pos + 1
+    elseif c == "x" then return 0 / 0, pos + 2
+    elseif c == "i" then return math.huge, pos + 2
+    elseif c == "j" then return -math.huge, pos + 2
+    elseif c == "n" then
+        local e = string.find(s, ";", pos, true)
+        return tonumber(string.sub(s, pos + 1, e - 1)), e + 1
+    elseif c == "s" then
+        local colon = string.find(s, ":", pos, true)
+        local len = tonumber(string.sub(s, pos + 1, colon - 1))
+        return string.sub(s, colon + 1, colon + len), colon + len + 1
+    elseif c == "v" or c == "a" or c == "b" then
+        local e = string.find(s, ";", pos, true)
+        local p = {}
+        for n in string.gmatch(string.sub(s, pos + 1, e - 1), "[^,]+") do p[#p + 1] = tonumber(n) end
+        if c == "v" then return vector.create(p[1], p[2], p[3]), e + 1 end
+        if c == "a" then return vec2(p[1], p[2]), e + 1 end
+        return vec4(p[1], p[2], p[3], p[4]), e + 1
+    elseif c == "e" then
+        local e = string.find(s, ";", pos, true)
+        return gpp.entity_from(string.sub(s, pos + 1, e - 1)), e + 1
+    elseif c == "{" then
+        local t = {}
+        pos += 1
+        while string.sub(s, pos, pos) ~= "}" do
+            local k, v
+            k, pos = dec(s, pos)
+            v, pos = dec(s, pos)
+            if k ~= nil then t[k] = v end
+        end
+        return t, pos + 1
+    end
+    error("corrupt script state at " .. pos)
+end
+function instance.restore(self, data)
+    for k in self do
+        if not SKIP[k] then self[k] = nil end
+    end
+    local t = dec(data, 1)
+    for k, v in t do self[k] = v end
+end
 gpp.instance = instance
 
 function events.on(name, fn)
@@ -131,6 +224,19 @@ end
         vm.Register("gpp", "script_props", [context](LuauNativeCall& call)
         {
             call.PushMap(context->Props);
+            return 1;
+        });
+        vm.Register("gpp", "entity_guid", [](LuauNativeCall& call)
+        {
+            call.PushString(std::to_string(call.Entity(1)));
+            return 1;
+        });
+        vm.Register("gpp", "entity_from", [](LuauNativeCall& call)
+        {
+            std::uint64_t guid = 0;
+            const auto text = call.String(1);
+            std::from_chars(text.data(), text.data() + text.size(), guid);
+            call.PushEntity(guid);
             return 1;
         });
         vm.Register("gpp", "listen", [context](LuauNativeCall&)
@@ -199,6 +305,14 @@ end
         std::map<std::string, std::shared_ptr<const ScriptDescriptor>> Descriptors;
         std::vector<ScriptError> Errors;
         std::uint64_t SeenVersion{~0ull};
+
+        struct SavedInstance
+        {
+            bool Started{false};
+            std::string Script;
+            std::string Data;
+        };
+        std::map<std::pair<std::uint64_t, std::size_t>, SavedInstance> Pending;
 
         Impl(LuauVm& vm, std::shared_ptr<ScriptHostContext> context, std::shared_ptr<LuauTaskErrors> taskErrors,
              const AssetDirectories& assets)
@@ -424,8 +538,83 @@ end
             Drain();
         }
 
+        void LoadSelf(Instance& instance, const std::string& data)
+        {
+            const std::array<int, 1> self{instance.Self};
+            const std::array<LuauValue, 1> args{data};
+            auto result = Vm.CallWith(Helper, "restore", self, args);
+            if (!result) Fail(instance, std::move(result.error()));
+        }
+
+        void TakePending(Instance& instance)
+        {
+            const auto it = Pending.find({instance.Entity, instance.Index});
+            if (it == Pending.end()) return;
+            if (it->second.Script == instance.Script)
+            {
+                instance.Started = it->second.Started;
+                LoadSelf(instance, it->second.Data);
+            }
+            Pending.erase(it);
+        }
+
+        [[nodiscard]] std::string Save() const
+        {
+            std::map<std::pair<std::uint64_t, std::size_t>, std::string> chunks;
+            const auto write = [&](const std::pair<std::uint64_t, std::size_t>& key, const bool started, const std::string& script,
+                                   const std::string& data)
+            {
+                chunks[key] = std::format("{} {} {} {} {} {}\n", key.first, key.second, started ? 1 : 0, script.size(), data.size(), script) + data + '\n';
+            };
+            for (const auto& [key, saved] : Pending) write(key, saved.Started, saved.Script, saved.Data);
+            for (const auto& [key, instance] : Instances)
+            {
+                if (instance.Self == 0) continue;
+                const std::array<int, 1> self{instance.Self};
+                auto saved = Vm.CallWith(Helper, "save", self);
+                const auto* data = saved ? std::get_if<std::string>(&*saved) : nullptr;
+                if (data) write(key, instance.Started, instance.Script, *data);
+            }
+            std::string text;
+            for (const auto& [key, chunk] : chunks) text += chunk;
+            return text;
+        }
+
+        void Load(const std::string& text)
+        {
+            Pending.clear();
+            std::size_t pos = 0;
+            while (pos < text.size())
+            {
+                const auto eol = text.find('\n', pos);
+                if (eol == std::string::npos) break;
+                std::uint64_t entity = 0, index = 0, started = 0, scriptLength = 0, dataLength = 0;
+                const char* cursor = text.data() + pos;
+                const char* end = text.data() + eol;
+                const auto next = [&](std::uint64_t& value)
+                {
+                    const auto [stop, ec] = std::from_chars(cursor, end, value);
+                    if (ec != std::errc{}) return false;
+                    cursor = stop < end ? stop + 1 : stop;
+                    return true;
+                };
+                if (!next(entity) || !next(index) || !next(started) || !next(scriptLength) || !next(dataLength)) return;
+                if (cursor + scriptLength != end || eol + 1 + dataLength > text.size()) return;
+                SavedInstance saved{started != 0, std::string(cursor, scriptLength), text.substr(eol + 1, dataLength)};
+                pos = eol + 1 + dataLength + 1;
+                const auto it = Instances.find({entity, index});
+                if (it != Instances.end() && it->second.Self != 0 && it->second.Script == saved.Script)
+                {
+                    it->second.Started = saved.Started;
+                    LoadSelf(it->second, saved.Data);
+                }
+                else Pending[{entity, index}] = std::move(saved);
+            }
+        }
+
         void StopAll()
         {
+            Pending.clear();
             for (auto& [key, instance] : Instances) Destroy(instance);
             Instances.clear();
             Drain();
@@ -501,6 +690,7 @@ end
                     const std::array<int, 1> self{instance.Self};
                     auto bound = Vm.CallWith(Helper, "bind", self);
                     if (!bound) { Fail(instance, std::move(bound.error())); continue; }
+                    TakePending(instance);
                 }
                 bool healthy = true;
                 if (!instance.Started)
@@ -534,6 +724,9 @@ end
     void ScriptHost::Start(const Scene& scene) { m_Impl->Update(scene, 0.0f, false); }
     void ScriptHost::Tick(const Scene& scene, const float deltaTime) { m_Impl->Update(scene, deltaTime, true); }
     void ScriptHost::Stop(const Scene&) { m_Impl->StopAll(); }
+    void ScriptHost::ForceReload() { m_Impl->SeenVersion = ~0ull; }
+    std::string ScriptHost::SaveState() const { return m_Impl->Save(); }
+    void ScriptHost::LoadState(const std::string& state) { m_Impl->Load(state); }
     ScriptEventBus& ScriptHost::Events() { return *m_Impl->Context->Events; }
 
     void ScriptHost::LateTick(const Scene& scene, const float deltaTime, const std::span<const PhysicsContactEvent> contacts,

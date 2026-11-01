@@ -77,6 +77,10 @@ export namespace GPP
         void Stop(const Scene& scene);
         [[nodiscard]] ScriptEventBus& Events();
 
+        void ForceReload();
+        [[nodiscard]] std::string SaveState() const;
+        void LoadState(const std::string& state);
+
         [[nodiscard]] std::vector<ScriptError> TakeErrors();
         [[nodiscard]] std::vector<ScriptStatus> Statuses() const;
         [[nodiscard]] std::size_t InstanceCount() const;
