@@ -7,6 +7,7 @@ import :Luau;
 import :Bindings;
 import :EventBus;
 import :ScriptHost;
+import :HudBindings;
 
 export namespace GPP
 {
@@ -39,6 +40,7 @@ export namespace GPP
         void SetIgnored(std::set<std::string> names);
 
         [[nodiscard]] std::vector<ScriptStatus> Statuses() const;
+        [[nodiscard]] std::shared_ptr<const HudFrame> HudSnapshot() const;
 
         void OnInit(Scene& scene) override;
         void OnTick(Scene& scene, float deltaTime) override;

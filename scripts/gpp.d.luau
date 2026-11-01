@@ -166,6 +166,26 @@ declare particles: {
     region_stats: ((center: vector | { x: number, y: number, z: number }, radius: number) -> { count: number, mass: number, mean_temperature: number, mean_velocity: vector }?) & ((x: number, y: number, z: number, radius: number) -> { count: number, mass: number, mean_temperature: number, mean_velocity: vector }?),
 }
 
+type HudColor = { r: number, g: number, b: number, a: number? } | { number } | string | number | vector
+type HudSpace = "screen" | "left" | "center" | "right"
+type HudStyle = { color: HudColor?, thickness: number?, filled: boolean?, space: HudSpace? }
+type HudTextStyle = { color: HudColor?, size: number?, align: "left" | "center" | "right"?, space: HudSpace? }
+type HudDraw = {
+    text: (x: number, y: number, text: any, style: HudTextStyle?) -> (),
+    line: (x1: number, y1: number, x2: number, y2: number, style: HudStyle?) -> (),
+    rect: (x: number, y: number, w: number, h: number, style: HudStyle?) -> (),
+    circle: (x: number, y: number, radius: number, style: HudStyle?) -> (),
+    arc: (x: number, y: number, radius: number, from_degrees: number, to_degrees: number, style: HudStyle?) -> (),
+    clear: () -> (),
+}
+
+declare ui: {
+    hud: HudDraw & {
+        at: (space: HudSpace) -> HudDraw,
+        color: (r: number, g: number, b: number, a: number?) -> HudColor,
+    },
+}
+
 type Vec3d = { x: number, y: number, z: number }
 type PhysicsHit = {
     entity: Entity,

@@ -11,6 +11,7 @@ import :ScriptComponents;
 import :ScriptHost;
 import :ScriptModule;
 import :PhysicsBindings;
+import :HudBindings;
 
 namespace GPP
 {
@@ -22,6 +23,7 @@ namespace GPP
         std::shared_ptr<SimulationRandom> Random;
         std::shared_ptr<PhysicsSimulationModule> Physics;
         std::shared_ptr<SimulationInput> Input;
+        std::shared_ptr<HudCanvas> Hud = std::make_shared<HudCanvas>();
         bool DeferStart{false};
         std::unique_ptr<ScriptHost> Host;
         std::mutex SharedMutex;
@@ -43,6 +45,7 @@ namespace GPP
             RegisterTaskBindings(Vm, TaskErrors);
             RegisterInputBindings();
             RegisterPhysicsBindings(Vm, Bindings, [this] { return Physics.get(); });
+            RegisterHudBindings(Vm, Hud);
             auto context = RegisterScriptHostBindings(Vm);
             if (options.Extend) options.Extend(Vm);
             if (options.ExtendScene) options.ExtendScene(Vm, Bindings);
@@ -130,6 +133,7 @@ namespace GPP
     void ScriptSimulationModule::Stop(Scene& scene)
     {
         m_Impl->Run(scene, [&] { m_Impl->Host->Stop(scene); });
+        m_Impl->Hud->Clear();
         m_Impl->Publish();
         {
             std::scoped_lock lock(m_Impl->SharedMutex);
@@ -164,6 +168,7 @@ namespace GPP
 
     void ScriptSimulationModule::OnTick(Scene& scene, const float deltaTime)
     {
+        m_Impl->Hud->Reset();
         if (m_Impl->Reload.exchange(false)) m_Impl->Host->ForceReload();
         std::vector<ScriptEvent> posted;
         {
@@ -180,15 +185,19 @@ namespace GPP
         PhysicsEventBatch events;
         if (m_Impl->Physics) events = m_Impl->Physics->TakeEvents();
         m_Impl->Run(scene, [&] { m_Impl->Host->LateTick(scene, deltaTime, events.Contacts, events.Triggers); });
+        m_Impl->Hud->Publish();
     }
 
     void ScriptSimulationModule::RequestReload() { m_Impl->Reload.store(true); }
     std::string ScriptSimulationModule::SaveState() const { return m_Impl->Host->SaveState(); }
     void ScriptSimulationModule::LoadState(const std::string& state) { m_Impl->Host->LoadState(state); }
 
+    std::shared_ptr<const HudFrame> ScriptSimulationModule::HudSnapshot() const { return m_Impl->Hud->Snapshot(); }
+
     void ScriptSimulationModule::OnShutdown(Scene& scene)
     {
         m_Impl->Run(scene, [&] { m_Impl->Host->Stop(scene); });
+        m_Impl->Hud->Clear();
     }
 
     std::vector<ScriptError> ScriptSimulationModule::TakeErrors()

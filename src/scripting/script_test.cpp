@@ -12,6 +12,7 @@ import :ScriptComponents;
 import :EventBus;
 import :ScriptModule;
 import :PhysicsBindings;
+import :HudBindings;
 import :ScriptTest;
 
 namespace GPP
@@ -134,6 +135,30 @@ function sim.events(name)
     for i = 1, sim.__event_count() do
         local eventName, tick, args = sim.__event(i)
         if name == nil or name == eventName then table.insert(list, {name = eventName, tick = tick, args = args}) end
+    end
+    return list
+end
+
+local KINDS = {[0] = "text", "line", "rect", "circle", "arc"}
+local SPACES = {[0] = "screen", "left", "center", "right"}
+local ALIGNS = {[0] = "left", "center", "right"}
+function sim.hud()
+    local list = {}
+    for i = 1, sim.__hud_count() do
+        local kind, space, align, filled, x, y, a, b, c, thickness, size, r, g, bl, al, text = sim.__hud(i)
+        local entry = {kind = KINDS[kind], space = SPACES[space], x = x, y = y, thickness = thickness, color = {r = r, g = g, b = bl, a = al}}
+        if kind == 0 then
+            entry.text, entry.size, entry.align = text, size, ALIGNS[align]
+        elseif kind == 1 then
+            entry.x1, entry.y1, entry.x2, entry.y2 = x, y, a, b
+        elseif kind == 2 then
+            entry.w, entry.h, entry.filled = a, b, filled
+        elseif kind == 3 then
+            entry.radius, entry.filled = a, filled
+        else
+            entry.radius, entry.from, entry.to = a, b, c
+        end
+        table.insert(list, entry)
     end
     return list
 end
@@ -551,6 +576,31 @@ gpp.testing = testing
                     call.PushValues(event.Args);
                     return 3;
                 });
+                m_Vm.Register("sim", "__hud_count", [this](LuauNativeCall& call)
+                {
+                    m_Hud = m_Scripts->HudSnapshot();
+                    call.PushNumber(static_cast<double>(m_Hud->Commands.size()));
+                    return 1;
+                });
+                m_Vm.Register("sim", "__hud", [this](LuauNativeCall& call)
+                {
+                    const auto index = static_cast<std::size_t>(call.Number(1));
+                    if (!m_Hud || index == 0 || index > m_Hud->Commands.size()) return 0;
+                    const auto& command = m_Hud->Commands[index - 1];
+                    for (const double value : {static_cast<double>(command.Kind), static_cast<double>(command.Space),
+                                               static_cast<double>(command.Align)})
+                    {
+                        call.PushNumber(value);
+                    }
+                    call.PushBoolean(command.Filled);
+                    for (const float value : {command.X, command.Y, command.A, command.B, command.C, command.Thickness, command.Size,
+                                              command.Color[0], command.Color[1], command.Color[2], command.Color[3]})
+                    {
+                        call.PushNumber(value);
+                    }
+                    call.PushString(command.Text);
+                    return 16;
+                });
                 m_Vm.Register("sim", "dt", [this](LuauNativeCall& call)
                 {
                     call.PushNumber(m_Dt);
@@ -590,6 +640,7 @@ gpp.testing = testing
             std::shared_ptr<SimulationRandom> m_Random;
             std::shared_ptr<SimulationInput> m_Input = std::make_shared<SimulationInput>();
             std::shared_ptr<ScriptSimulationModule> m_Scripts;
+            std::shared_ptr<const HudFrame> m_Hud;
             std::shared_ptr<PhysicsSimulationModule> m_Physics;
             std::vector<std::shared_ptr<ISimulationModule>> m_Modules;
             LuauVm m_Vm;
