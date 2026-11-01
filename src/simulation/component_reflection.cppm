@@ -300,7 +300,7 @@ namespace GPP
         }
 
         template <typename M>
-        void FromYaml(const YAML::Node& node, const std::string& name, M& out, const FieldMeta& meta)
+        void FromYaml(const YAML::Node& node, const std::string& name, M& out, const FieldMeta& meta, const bool strict = false)
         {
             const auto child = ResolveTagged(node[name], meta);
             if (!child) return;
@@ -310,6 +310,10 @@ namespace GPP
                 if (const auto it = std::ranges::find(meta.Options, text); it != meta.Options.end())
                 {
                     out = static_cast<M>(it - meta.Options.begin());
+                }
+                else if (strict)
+                {
+                    throw std::runtime_error("unknown value '" + text + "' for '" + name + "'");
                 }
             }
             else

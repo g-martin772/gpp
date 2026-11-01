@@ -41,6 +41,7 @@ namespace GPP
           m_Options(options),
           m_Metadata(m_SimScene.Metadata())
     {
+        m_FixedTimestep.store(options.UseFixedTimestep, std::memory_order_relaxed);
         std::ranges::stable_sort(m_Modules, {}, [](const auto& module) { return module->Phase(); });
 
         const double requested = options.FixedTimestep.count() > 0.0f
@@ -775,7 +776,6 @@ namespace GPP
             EnsureInitialized();
         }
 
-        const bool fixedRate = m_Options.UseFixedTimestep;
         const auto maxCatchUp = std::max(1u, m_Options.MaxCatchUpTicks);
         const auto publishInterval = PeriodFor(std::max(m_Options.MaxPublishRate, 1.0));
 
@@ -786,9 +786,16 @@ namespace GPP
         bool wasPaused = true;
         auto lastPeriod = PeriodFor(m_TickRate.load(std::memory_order_relaxed));
         std::uint64_t seenSignal = 0;
+        bool fixedRate = m_FixedTimestep.load(std::memory_order_relaxed);
 
         while (!stopToken.stop_requested())
         {
+            if (const bool requestedFixed = m_FixedTimestep.load(std::memory_order_relaxed); requestedFixed != fixedRate)
+            {
+                fixedRate = requestedFixed;
+                lastTick = Clock::now();
+                next = lastTick;
+            }
             if (DrainEdits())
             {
                 dirty = true;

@@ -150,6 +150,9 @@ namespace GPP
 
         void SetTickRate(double hertz);
         [[nodiscard]] double GetTickRate() const noexcept { return m_TickRate.load(std::memory_order_relaxed); }
+        // Off: ticks follow wall-clock time instead of a fixed period, so runs are not reproducible
+        void SetFixedTimestep(const bool fixed) noexcept { m_FixedTimestep.store(fixed, std::memory_order_relaxed); }
+        [[nodiscard]] bool GetFixedTimestep() const noexcept { return m_FixedTimestep.load(std::memory_order_relaxed); }
         static constexpr double kMinTickRate = 1.0;
         static constexpr double kMaxTickRate = 2000.0;
 
@@ -194,6 +197,8 @@ namespace GPP
         std::size_t UndoSteps(std::size_t count);
         std::size_t RedoSteps(std::size_t count);
         void ClearHistory() { m_History.Clear(); }
+        [[nodiscard]] HistoryState ExtractHistory() { return m_History.Extract(); }
+        void RestoreHistory(HistoryState state) { m_History.Restore(std::move(state)); }
         void SetHistoryCapacity(const std::size_t capacity) { m_History.SetCapacity(capacity); }
         [[nodiscard]] std::uint64_t HistoryVersion() const { return m_History.Version(); }
         [[nodiscard]] HistoryView History(const std::size_t limit = std::numeric_limits<std::size_t>::max()) const
@@ -276,6 +281,7 @@ namespace GPP
         std::atomic<bool> m_Manual{false};
         std::atomic<bool> m_Running{false};
         std::atomic<double> m_TickRate{60.0};
+        std::atomic<bool> m_FixedTimestep{true};
 
         std::mutex m_EditMutex;
         std::queue<PendingEdit> m_PendingEdits;

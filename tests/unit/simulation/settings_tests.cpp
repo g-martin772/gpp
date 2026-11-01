@@ -85,6 +85,19 @@ TEST_CASE("Decoding reports unknown keys and clamps out-of-range values", "[sett
     CHECK(value.Tolerance == 0.01f);
 }
 
+TEST_CASE("An unknown enum label is reported and the value is kept", "[settings]")
+{
+    const auto registry = MakeRegistry();
+    Demo value;
+    value.Level = Quality::Final;
+    const auto unknown = registry.Decode(value, YAML::Load("{b.level: Ultra, a.steps: 50}"));
+    CHECK(unknown == std::vector<std::string>{"b.level"});
+    CHECK(value.Level == Quality::Final);
+    CHECK(value.Steps == 50);
+    CHECK(registry.Decode(value, YAML::Load("{b.level: Draft}")).empty());
+    CHECK(value.Level == Quality::Draft);
+}
+
 TEST_CASE("SetFromText parses by type and reports errors", "[settings]")
 {
     const auto registry = MakeRegistry();

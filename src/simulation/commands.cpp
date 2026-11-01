@@ -490,6 +490,25 @@ namespace GPP
         m_Redo.clear();
     }
 
+    HistoryState CommandHistory::Extract()
+    {
+        std::scoped_lock lock(m_Mutex);
+        m_Version.fetch_add(1, std::memory_order_release);
+        HistoryState state{std::move(m_Undo), std::move(m_Redo)};
+        m_Undo.clear();
+        m_Redo.clear();
+        return state;
+    }
+
+    void CommandHistory::Restore(HistoryState state)
+    {
+        std::scoped_lock lock(m_Mutex);
+        m_Version.fetch_add(1, std::memory_order_release);
+        m_Undo = std::move(state.Undo);
+        m_Redo = std::move(state.Redo);
+        while (m_Undo.size() > m_Capacity) m_Undo.pop_front();
+    }
+
     void CommandHistory::SetCapacity(const std::size_t capacity)
     {
         std::scoped_lock lock(m_Mutex);

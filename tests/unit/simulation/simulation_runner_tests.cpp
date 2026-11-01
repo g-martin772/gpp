@@ -148,6 +148,33 @@ TEST_CASE("The simulation runs at the configured tick rate", "[simulation_runner
     CHECK(atTwoHundred <= 230);
 }
 
+TEST_CASE("The fixed timestep can be switched off and on while running", "[simulation_runner][tick_rate]")
+{
+    auto module = std::make_shared<CountingModule>();
+    SimulationRunner runner(Scene("Test"), module);
+    CHECK(runner.GetFixedTimestep());
+    runner.Start();
+
+    const auto ticksPast = [&](const int count)
+    {
+        const int target = module->Ticks.load() + count;
+        return WaitUntil([&] { return module->Ticks.load() >= target; }, std::chrono::milliseconds(3000));
+    };
+
+    REQUIRE(ticksPast(10));
+    CHECK(module->LastDelta.load() == Catch::Approx(1.0f / 60.0f).epsilon(0.001));
+
+    runner.SetFixedTimestep(false);
+    CHECK_FALSE(runner.GetFixedTimestep());
+    REQUIRE(ticksPast(10));
+    CHECK(module->LastDelta.load() < 0.012f);
+
+    runner.SetFixedTimestep(true);
+    REQUIRE(ticksPast(10));
+    CHECK(module->LastDelta.load() == Catch::Approx(1.0f / 60.0f).epsilon(0.001));
+    runner.Stop();
+}
+
 TEST_CASE("A hung simulation never blocks readers, edits or stats", "[simulation_runner][freeze]")
 {
     auto module = std::make_shared<HangingModule>();

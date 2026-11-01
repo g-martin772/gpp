@@ -108,7 +108,7 @@ namespace GPP
         };
         desc.Decode = [key, member, fieldMeta](T& c, const YAML::Node& node)
         {
-            Reflect::FromYaml<M>(node, key, c.*member, fieldMeta);
+            Reflect::FromYaml<M>(node, key, c.*member, fieldMeta, true);
         };
         if (meta.Label.empty()) meta.Label = key;
         desc.Key = std::move(key);

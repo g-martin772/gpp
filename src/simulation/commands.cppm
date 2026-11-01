@@ -153,6 +153,12 @@ namespace GPP
         std::uint64_t Version{0};
     };
 
+    export struct HistoryState
+    {
+        std::deque<UndoEntry> Undo;
+        std::vector<UndoEntry> Redo;
+    };
+
     export class CommandHistory
     {
     public:
@@ -164,6 +170,8 @@ namespace GPP
         void PushUndo(UndoEntry entry);
         void PushRedo(UndoEntry entry);
         void Clear();
+        [[nodiscard]] HistoryState Extract();
+        void Restore(HistoryState state);
         void SetCapacity(std::size_t capacity);
 
         [[nodiscard]] std::size_t Capacity() const;
