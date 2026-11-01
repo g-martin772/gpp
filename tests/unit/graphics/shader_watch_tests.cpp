@@ -126,6 +126,39 @@ TEST_CASE("Shader watcher sees a file replaced by rename", "[graphics][shader][w
     watcher.StopAsync().get();
 }
 
+TEST_CASE("Shader watcher releases directory watches on Unwatch and destruction", "[graphics][shader][watch]")
+{
+    WatchFixture fixture;
+    const auto first = fixture.Write("a.glsl", "x");
+    const auto second = fixture.Write("b.glsl", "x");
+    const auto before = ShaderFileWatcher::WatchedDirectoryCount();
+    {
+        ShaderFileWatcher watcher(fixture.Files, fixture.Dispatcher, fixture.Log);
+        const auto idA = watcher.Watch(first);
+        const auto idB = watcher.Watch(second);
+        watcher.StartAsync(std::chrono::milliseconds(250)).get();
+        CHECK(ShaderFileWatcher::WatchedDirectoryCount() == before + 1);
+
+        watcher.Unwatch(idA);
+        CHECK(ShaderFileWatcher::WatchedDirectoryCount() == before + 1);
+        Bump(second);
+        CHECK(fixture.WaitFor(1));
+
+        watcher.Unwatch(idB);
+        CHECK(ShaderFileWatcher::WatchedDirectoryCount() == before);
+        watcher.Unwatch(idB);
+        CHECK(ShaderFileWatcher::WatchedDirectoryCount() == before);
+        watcher.StopAsync().get();
+    }
+    {
+        ShaderFileWatcher watcher(fixture.Files, fixture.Dispatcher, fixture.Log);
+        watcher.Watch(first);
+        watcher.Watch(second);
+        CHECK(ShaderFileWatcher::WatchedDirectoryCount() == before + 1);
+    }
+    CHECK(ShaderFileWatcher::WatchedDirectoryCount() == before);
+}
+
 TEST_CASE("Retired objects outlive their grace period and then release", "[graphics][shader][retire][gpu]")
 {
     const auto device = CreateHeadlessDevice(std::make_shared<Logger>());

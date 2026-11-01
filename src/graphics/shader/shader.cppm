@@ -179,6 +179,7 @@ namespace GPP
 
         std::size_t Watch(const std::filesystem::path& path);
         void Unwatch(std::size_t watchId);
+        [[nodiscard]] static std::size_t WatchedDirectoryCount();
         void PollNow();
 
         Task<void> StartAsync(std::chrono::milliseconds interval = std::chrono::milliseconds(250),

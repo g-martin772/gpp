@@ -20,6 +20,7 @@ namespace GPP
         {
             std::filesystem::path path;
             std::filesystem::path normalized;
+            std::filesystem::path directory;
             std::filesystem::file_time_type lastWriteTime{};
             bool existed = false;
         };
@@ -117,8 +118,9 @@ namespace GPP
             {
                 const auto key = directory.lexically_normal();
                 std::scoped_lock lock(m_Mutex);
-                if (m_Directories.contains(key))
+                if (const auto it = m_Directories.find(key); it != m_Directories.end())
                 {
+                    ++it->second.refs;
                     return;
                 }
                 int wd = -1;
@@ -127,7 +129,7 @@ namespace GPP
                     wd = inotify_add_watch(m_Inotify, key.c_str(),
                                            IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_MODIFY | IN_ATTRIB);
                 }
-                m_Directories.emplace(key, wd);
+                m_Directories.emplace(key, Directory{wd, 1});
                 if (wd >= 0)
                 {
                     m_WatchDirectories[wd] = key;
@@ -136,6 +138,39 @@ namespace GPP
                 {
                     m_NeedsPolling = true;
                 }
+            }
+
+            void UnwatchDirectory(const std::filesystem::path& directory)
+            {
+                const auto key = directory.lexically_normal();
+                std::scoped_lock lock(m_Mutex);
+                const auto it = m_Directories.find(key);
+                if (it == m_Directories.end() || --it->second.refs > 0)
+                {
+                    return;
+                }
+                const int wd = it->second.wd;
+                m_Directories.erase(it);
+                if (wd < 0)
+                {
+                    return;
+                }
+                const bool shared = std::ranges::any_of(m_Directories, [wd](const auto& entry) { return entry.second.wd == wd; });
+                if (shared)
+                {
+                    return;
+                }
+                m_WatchDirectories.erase(wd);
+                if (m_Inotify >= 0)
+                {
+                    inotify_rm_watch(m_Inotify, wd);
+                }
+            }
+
+            std::size_t DirectoryCount()
+            {
+                std::scoped_lock lock(m_Mutex);
+                return m_Directories.size();
             }
 
             void Wake()
@@ -317,7 +352,13 @@ namespace GPP
             int m_Inotify = -1;
             int m_Wake = -1;
             bool m_NeedsPolling = false;
-            std::map<std::filesystem::path, int> m_Directories;
+            struct Directory
+            {
+                int wd = -1;
+                std::size_t refs = 0;
+            };
+
+            std::map<std::filesystem::path, Directory> m_Directories;
             std::unordered_map<int, std::filesystem::path> m_WatchDirectories;
             std::vector<std::weak_ptr<State>> m_States;
             std::set<std::filesystem::path> m_Pending;
@@ -341,9 +382,21 @@ namespace GPP
 
     ShaderFileWatcher::~ShaderFileWatcher()
     {
-        m_State->stopSource.request_stop();
-        std::scoped_lock lock(m_State->mutex);
-        m_State->running = false;
+        std::vector<std::filesystem::path> directories;
+        {
+            m_State->stopSource.request_stop();
+            std::scoped_lock lock(m_State->mutex);
+            m_State->running = false;
+            for (const auto& [id, entry] : m_State->entries)
+            {
+                directories.push_back(entry.directory);
+            }
+            m_State->entries.clear();
+        }
+        for (const auto& directory : directories)
+        {
+            WatchHub::Instance().UnwatchDirectory(directory);
+        }
     }
 
     std::size_t ShaderFileWatcher::Watch(const std::filesystem::path& path)
@@ -361,6 +414,7 @@ namespace GPP
             m_State->entries.emplace(id, State::WatchEntry{
                                           .path = resolved,
                                           .normalized = resolved.lexically_normal(),
+                                          .directory = resolved.parent_path(),
                                           .lastWriteTime = writeTime,
                                           .existed = exists && !error
                                       });
@@ -371,8 +425,23 @@ namespace GPP
 
     void ShaderFileWatcher::Unwatch(const std::size_t watchId)
     {
-        std::scoped_lock lock(m_State->mutex);
-        m_State->entries.erase(watchId);
+        std::filesystem::path directory;
+        {
+            std::scoped_lock lock(m_State->mutex);
+            const auto it = m_State->entries.find(watchId);
+            if (it == m_State->entries.end())
+            {
+                return;
+            }
+            directory = it->second.directory;
+            m_State->entries.erase(it);
+        }
+        WatchHub::Instance().UnwatchDirectory(directory);
+    }
+
+    std::size_t ShaderFileWatcher::WatchedDirectoryCount()
+    {
+        return WatchHub::Instance().DirectoryCount();
     }
 
     void ShaderFileWatcher::PollNow()
