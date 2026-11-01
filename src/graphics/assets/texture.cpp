@@ -276,17 +276,14 @@ namespace GPP
           m_Retired(m_Device), m_Watch(m_FileSystem, m_Logger)
     {
         m_DeviceLimit = m_Device->GetPhysicalDevice().getProperties().limits.maxImageDimension2D;
-        m_Worker = std::jthread([this](const std::stop_token& stop)
-        {
-            RegisterCrashThread();
-            WorkerLoop(stop);
-        });
+        m_MaxDecoders = std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u);
     }
 
     TextureCache::~TextureCache()
     {
-        m_Worker.request_stop();
-        m_Wake.notify_all();
+        std::unique_lock lock(m_Mutex);
+        m_Jobs.clear();
+        m_Idle.wait(lock, [this] { return m_Active == 0; });
     }
 
     std::uint32_t TextureCache::EffectiveMaxSize() const
@@ -294,14 +291,18 @@ namespace GPP
         return m_MaxSize > 0 ? std::min(m_MaxSize, m_DeviceLimit) : m_DeviceLimit;
     }
 
-    void TextureCache::WorkerLoop(const std::stop_token& stop)
+    void TextureCache::DrainJobs()
     {
         while (true)
         {
             Job job;
             {
-                std::unique_lock lock(m_Mutex);
-                if (!m_Wake.wait(lock, stop, [this] { return !m_Jobs.empty(); })) return;
+                std::scoped_lock lock(m_Mutex);
+                if (m_Jobs.empty())
+                {
+                    if (--m_Active == 0) m_Idle.notify_all();
+                    return;
+                }
                 job = std::move(m_Jobs.front());
                 m_Jobs.pop_front();
             }
@@ -316,11 +317,18 @@ namespace GPP
         if (!entry.Pending) ++m_Pending;
         entry.Pending = true;
         ++entry.Generation;
+        std::scoped_lock lock(m_Mutex);
+        m_Jobs.push_back({id, entry.File, entry.Generation, EffectiveMaxSize()});
+        if (m_Active >= m_MaxDecoders) return;
+        ++m_Active;
+        try
         {
-            std::scoped_lock lock(m_Mutex);
-            m_Jobs.push_back({id, entry.File, entry.Generation, EffectiveMaxSize()});
+            ThreadPool::Instance().Submit([this] { DrainJobs(); });
         }
-        m_Wake.notify_one();
+        catch (const std::exception&)
+        {
+            --m_Active;
+        }
     }
 
     const VulkanImage* TextureCache::Get(const std::string& path, const TextureRole role)

@@ -102,7 +102,7 @@ namespace GPP
                          vk::Queue queue);
         void Install(InFlight& upload);
         [[nodiscard]] std::uint32_t EffectiveMaxSize() const;
-        void WorkerLoop(const std::stop_token& stop);
+        void DrainJobs();
 
         std::shared_ptr<VulkanDevice> m_Device;
         std::shared_ptr<IFileSystem> m_FileSystem;
@@ -120,9 +120,10 @@ namespace GPP
         std::atomic<std::uint64_t> m_GpuBytes{0};
 
         std::mutex m_Mutex;
-        std::condition_variable_any m_Wake;
+        std::condition_variable m_Idle;
         std::deque<Job> m_Jobs;
         std::deque<Result> m_Done;
-        std::jthread m_Worker;
+        std::uint32_t m_MaxDecoders = 1;
+        std::uint32_t m_Active = 0;
     };
 }
