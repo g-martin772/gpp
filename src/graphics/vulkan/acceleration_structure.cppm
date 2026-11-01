@@ -86,6 +86,37 @@ namespace GPP
     export void BuildBlasBatch(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
                                vk::Queue queue, std::span<Blas* const> blases);
 
+    export class BlasBuildJob
+    {
+    public:
+        BlasBuildJob(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool, vk::Queue queue,
+                     std::vector<Blas*> blases, std::vector<std::shared_ptr<void>> keepAlive = {});
+        ~BlasBuildJob();
+        BlasBuildJob(const BlasBuildJob&) = delete;
+        BlasBuildJob& operator=(const BlasBuildJob&) = delete;
+
+        // Advances the build and compaction without blocking; true once every BLAS is final (or the job failed)
+        [[nodiscard]] bool Poll();
+        void Wait();
+        [[nodiscard]] bool Failed() const noexcept { return m_Failed; }
+        [[nodiscard]] std::span<Blas* const> Blases() const noexcept { return m_Blases; }
+
+    private:
+        enum class Phase { Building, Compacting, Done };
+
+        std::shared_ptr<VulkanDevice> m_Device;
+        const VulkanCommandPool* m_Pool;
+        vk::Queue m_Queue;
+        std::vector<Blas*> m_Blases;
+        std::vector<std::shared_ptr<void>> m_KeepAlive;
+        VulkanBuffer m_Scratch;
+        vk::QueryPool m_Queries{};
+        std::vector<Blas*> m_Shrinking;
+        SubmitHandle m_Submit;
+        Phase m_Phase = Phase::Building;
+        bool m_Failed = false;
+    };
+
     export class Tlas
     {
     public:

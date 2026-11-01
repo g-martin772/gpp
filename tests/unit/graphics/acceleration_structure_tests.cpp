@@ -123,3 +123,47 @@ TEST_CASE("TLAS refits when only transforms change and rebuilds when the instanc
     build(tlas);
     CHECK(tlas.RefitCount() == 1);
 }
+
+TEST_CASE("BLAS build jobs finish without blocking the caller", "[graphics][acceleration][gpu]")
+{
+    const auto log = std::make_shared<Logger>();
+    const auto device = CreateHeadlessDevice(log);
+    if (!device || !device->GetCapabilities().AccelerationStructure)
+    {
+        WARN("No acceleration structure support; skipping");
+        return;
+    }
+    const std::array<float, 9> positions{0, 0, 0, 1, 0, 0, 0, 1, 0};
+    const std::array<std::uint32_t, 3> indices{0, 1, 2};
+    const auto make = [&](const void* data, const vk::DeviceSize bytes)
+    {
+        auto spec = MakeStorageBufferSpecification(bytes, true);
+        spec.usage |= vk::BufferUsageFlagBits::eShaderDeviceAddress
+                      | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+        auto buffer = std::make_unique<VulkanBuffer>(device, spec, log);
+        buffer->Upload(data, bytes);
+        return buffer;
+    };
+    const auto vertices = make(positions.data(), sizeof(positions));
+    const auto index = make(indices.data(), sizeof(indices));
+    VulkanCommandPool pool(device, log, device->GetQueueIndices().Graphics);
+    const BlasTriangles triangles{.VertexAddress = vertices->GetDeviceAddress(), .VertexStride = 12, .VertexCount = 3,
+                                  .IndexAddress = index->GetDeviceAddress(), .IndexCount = 3};
+    std::array<std::unique_ptr<Blas>, 3> blases;
+    std::vector<Blas*> raw;
+    for (auto& blas : blases)
+    {
+        blas = std::make_unique<Blas>(device, triangles);
+        raw.push_back(blas.get());
+    }
+
+    BlasBuildJob job(device, pool, device->GetGraphicsQueue(), raw);
+    int polls = 0;
+    while (!job.Poll() && polls < 1'000'000) ++polls;
+    CHECK_FALSE(job.Failed());
+    CHECK(job.Poll());
+    for (const auto& blas : blases) CHECK(blas->GetDeviceAddress() != 0);
+
+    BlasBuildJob empty(device, pool, device->GetGraphicsQueue(), {});
+    CHECK(empty.Poll());
+}

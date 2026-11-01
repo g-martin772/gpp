@@ -210,29 +210,28 @@ namespace GPP
         if (m_Compact.GetHandle()) m_Structure = std::move(m_Compact);
     }
 
-    void BuildBlasBatch(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
-                        const vk::Queue queue, const std::span<Blas* const> blases)
+    BlasBuildJob::BlasBuildJob(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
+                               const vk::Queue queue, std::vector<Blas*> blases,
+                               std::vector<std::shared_ptr<void>> keepAlive)
+        : m_Device(device), m_Pool(&pool), m_Queue(queue), m_Blases(std::move(blases)), m_KeepAlive(std::move(keepAlive))
     {
-        if (blases.empty()) return;
-        GPP_ZONE("BuildBlasBatch");
+        if (m_Blases.empty())
+        {
+            m_Phase = Phase::Done;
+            return;
+        }
+        GPP_ZONE("BlasBuildJob");
         const auto vkDevice = device->GetDevice();
         const auto& dispatcher = device->GetDispatcher();
-        const auto count = static_cast<std::uint32_t>(blases.size());
+        const auto count = static_cast<std::uint32_t>(m_Blases.size());
         vk::DeviceSize scratchSize = 0;
-        for (const auto* blas : blases) scratchSize = std::max(scratchSize, blas->ScratchSize());
-        VulkanBuffer scratch;
-        const auto address = CreateScratch(device, scratch, scratchSize);
+        for (const auto* blas : m_Blases) scratchSize = std::max(scratchSize, blas->ScratchSize());
+        const auto address = CreateScratch(device, m_Scratch, scratchSize);
 
         vk::QueryPoolCreateInfo poolInfo{};
         poolInfo.queryType = vk::QueryType::eAccelerationStructureCompactedSizeKHR;
         poolInfo.queryCount = count;
-        const auto queries = vkDevice.createQueryPool(poolInfo);
-        struct QueryGuard
-        {
-            vk::Device Device;
-            vk::QueryPool Pool;
-            ~QueryGuard() { Device.destroyQueryPool(Pool); }
-        } guard{vkDevice, queries};
+        m_Queries = vkDevice.createQueryPool(poolInfo);
 
         const vk::MemoryBarrier barrier{vk::AccessFlagBits::eAccelerationStructureWriteKHR,
                                         vk::AccessFlagBits::eAccelerationStructureReadKHR
@@ -240,12 +239,12 @@ namespace GPP
         constexpr auto stage = vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR;
         std::vector<vk::AccelerationStructureKHR> handles;
         handles.reserve(count);
-        for (const auto* blas : blases) handles.push_back(blas->GetHandle());
-        ImmediateSubmit(pool, queue, [&](const vk::CommandBuffer cmd)
+        for (const auto* blas : m_Blases) handles.push_back(blas->GetHandle());
+        m_Submit = SubmitAsync(pool, queue, [&](const vk::CommandBuffer cmd)
         {
-            cmd.resetQueryPool(queries, 0, count);
+            cmd.resetQueryPool(m_Queries, 0, count);
             bool first = true;
-            for (const auto* blas : blases)
+            for (const auto* blas : m_Blases)
             {
                 if (!first) cmd.pipelineBarrier(stage, stage, {}, barrier, {}, {});
                 first = false;
@@ -253,33 +252,80 @@ namespace GPP
             }
             cmd.pipelineBarrier(stage, stage, {}, barrier, {}, {});
             cmd.writeAccelerationStructuresPropertiesKHR(handles, vk::QueryType::eAccelerationStructureCompactedSizeKHR,
-                                                         queries, 0, dispatcher);
+                                                         m_Queries, 0, dispatcher);
         });
-
-        std::vector<std::uint64_t> compacted(count);
-        const auto result = vkDevice.getQueryPoolResults(queries, 0, count, compacted.size() * sizeof(std::uint64_t),
-                                                        compacted.data(), sizeof(std::uint64_t),
-                                                        vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-        if (result != vk::Result::eSuccess) return;
-
-        std::vector<Blas*> shrinking;
-        for (std::uint32_t i = 0; i < count; ++i)
+        if (!m_Submit.Valid())
         {
-            if (compacted[i] > 0 && compacted[i] < blases[i]->GetSize()) shrinking.push_back(blases[i]);
+            m_Failed = true;
+            m_Phase = Phase::Done;
         }
-        if (shrinking.empty()) return;
-        ImmediateSubmit(pool, queue, [&](const vk::CommandBuffer cmd)
+    }
+
+    BlasBuildJob::~BlasBuildJob()
+    {
+        if (m_Submit.Valid()) m_Submit.Wait();
+        if (m_Queries) m_Device->GetDevice().destroyQueryPool(m_Queries);
+    }
+
+    bool BlasBuildJob::Poll()
+    {
+        if (m_Phase == Phase::Done) return true;
+        if (!m_Submit.Done()) return false;
+        if (m_Phase == Phase::Compacting)
         {
-            for (std::uint32_t i = 0, next = 0; i < count; ++i)
+            for (auto* blas : m_Shrinking) blas->FinishCompact();
+            m_Phase = Phase::Done;
+            return true;
+        }
+
+        const auto count = static_cast<std::uint32_t>(m_Blases.size());
+        std::vector<std::uint64_t> compacted(count);
+        const auto result = m_Device->GetDevice().getQueryPoolResults(
+            m_Queries, 0, count, compacted.size() * sizeof(std::uint64_t), compacted.data(), sizeof(std::uint64_t),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+        std::vector<std::uint64_t> sizes;
+        if (result == vk::Result::eSuccess)
+        {
+            for (std::uint32_t i = 0; i < count; ++i)
             {
-                if (next < shrinking.size() && shrinking[next] == blases[i])
+                if (compacted[i] > 0 && compacted[i] < m_Blases[i]->GetSize())
                 {
-                    shrinking[next]->RecordCompact(cmd, compacted[i]);
-                    ++next;
+                    m_Shrinking.push_back(m_Blases[i]);
+                    sizes.push_back(compacted[i]);
                 }
             }
+        }
+        if (m_Shrinking.empty())
+        {
+            m_Phase = Phase::Done;
+            return true;
+        }
+        m_Submit = SubmitAsync(*m_Pool, m_Queue, [&](const vk::CommandBuffer cmd)
+        {
+            for (std::size_t i = 0; i < m_Shrinking.size(); ++i) m_Shrinking[i]->RecordCompact(cmd, sizes[i]);
         });
-        for (auto* blas : shrinking) blas->FinishCompact();
+        if (!m_Submit.Valid())
+        {
+            m_Failed = true;
+            m_Phase = Phase::Done;
+            return true;
+        }
+        m_Phase = Phase::Compacting;
+        return false;
+    }
+
+    void BlasBuildJob::Wait()
+    {
+        while (!Poll()) m_Submit.Wait();
+    }
+
+    void BuildBlasBatch(const std::shared_ptr<VulkanDevice>& device, const VulkanCommandPool& pool,
+                        const vk::Queue queue, const std::span<Blas* const> blases)
+    {
+        if (blases.empty()) return;
+        GPP_ZONE("BuildBlasBatch");
+        BlasBuildJob job(device, pool, queue, std::vector<Blas*>(blases.begin(), blases.end()));
+        job.Wait();
     }
 
     Tlas::Tlas(std::shared_ptr<VulkanDevice> device)
