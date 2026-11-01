@@ -4,6 +4,7 @@ import std;
 import GPP.Core;
 import GPP.Simulation;
 import :Luau;
+import :EventBus;
 import :ScriptHost;
 
 export namespace GPP
@@ -24,8 +25,12 @@ export namespace GPP
 
         void SetRandom(std::shared_ptr<SimulationRandom> random);
 
+        void SetPhysics(std::shared_ptr<PhysicsSimulationModule> physics);
+
         void OnInit(Scene& scene) override;
         void OnTick(Scene& scene, float deltaTime) override;
+        void OnLateTick(Scene& scene, float deltaTime) override;
+        void OnShutdown(Scene& scene) override;
 
         [[nodiscard]] std::vector<ScriptError> TakeErrors();
         [[nodiscard]] ScriptHost& Host();

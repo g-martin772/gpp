@@ -225,3 +225,117 @@ TEST_CASE ("PhysicsSimulationModule instances can overlap in one process", "[sim
     CHECK_NOTHROW(third.OnInit(firstScene));
     third.OnShutdown(firstScene);
 }
+
+namespace
+{
+    auto AddBall(Scene& scene, const std::uint64_t guid, const glm::dvec3& position, const glm::dvec3& velocity, const int material = 0)
+    {
+        const auto entity = scene.CreateEntityWithGuid(guid, "Ball");
+        scene.Registry().emplace<TransformComponent>(entity, TransformComponent{.Position = position});
+        scene.Registry().emplace<VelocityComponent>(entity, VelocityComponent{.Linear = velocity});
+        scene.Registry().emplace<RigidBodyComponent>(entity, RigidBodyComponent{.Type = RigidBodyType::Dynamic, .Mass = 1.0, .EnableGravity = false});
+        scene.Registry().emplace<ColliderComponent>(
+            entity, ColliderComponent{.Shape = ColliderShape::Sphere, .Radius = 0.5, .MaterialId = material});
+        return entity;
+    }
+
+    PhysicsEventBatch RunUntilEvent(PhysicsSimulationModule& physics, Scene& scene, const int maxTicks)
+    {
+        for (int i = 0; i < maxTicks; ++i)
+        {
+            physics.OnTick(scene, 1.0f / 60.0f);
+            auto batch = physics.TakeEvents();
+            if (!batch.Contacts.empty() || !batch.Triggers.empty()) return batch;
+        }
+        return {};
+    }
+}
+
+TEST_CASE ("PhysicsSimulationModule reports contact point, normal, impulse, velocity and materials",
+           "[simulation][physics][events]")
+{
+    PhysicsSimulationModule physics(std::make_shared<EventDispatcher>(), std::make_shared<Logger>());
+    physics.SetEventCapture(true);
+    Scene scene("ContactTest");
+    AddBall(scene, 20, {0.0, 3.0, 0.0}, {0.0, -4.0, 0.0}, 7);
+    AddBall(scene, 10, {0.0, 0.0, 0.0}, {0.0, -1.0, 0.0}, 9);
+    physics.OnInit(scene);
+
+    const auto batch = RunUntilEvent(physics, scene, 120);
+    REQUIRE(batch.Contacts.size() == 1);
+    const auto& contact = batch.Contacts.front();
+    CHECK(contact.GuidA == 10);
+    CHECK(contact.GuidB == 20);
+    CHECK(contact.MaterialA == 9);
+    CHECK(contact.MaterialB == 7);
+    CHECK(contact.Normal.y == Catch::Approx(-1.0).margin(0.05));
+    CHECK(contact.RelativeVelocity.y == Catch::Approx(3.0).margin(0.05));
+    CHECK(contact.Impulse > 1.0);
+    CHECK(contact.Impulse < 2.5);
+    CHECK(contact.Point.y == Catch::Approx(-1.0 / 6.0).margin(0.1));
+    CHECK(physics.TakeEvents().Contacts.empty());
+    physics.OnShutdown(scene);
+}
+
+TEST_CASE ("PhysicsSimulationModule sorts same-tick contacts by guid pair", "[simulation][physics][events]")
+{
+    PhysicsSimulationModule physics(std::make_shared<EventDispatcher>(), std::make_shared<Logger>());
+    physics.SetEventCapture(true);
+    Scene scene("SortTest");
+    AddBall(scene, 90, {10.0, 3.0, 0.0}, {0.0, -4.0, 0.0});
+    AddBall(scene, 80, {10.0, 0.0, 0.0}, {0.0, -1.0, 0.0});
+    AddBall(scene, 30, {0.0, 3.0, 0.0}, {0.0, -4.0, 0.0});
+    AddBall(scene, 40, {0.0, 0.0, 0.0}, {0.0, -1.0, 0.0});
+    physics.OnInit(scene);
+
+    const auto batch = RunUntilEvent(physics, scene, 120);
+    REQUIRE(batch.Contacts.size() == 2);
+    CHECK(batch.Contacts[0].GuidA == 30);
+    CHECK(batch.Contacts[0].GuidB == 40);
+    CHECK(batch.Contacts[1].GuidA == 80);
+    CHECK(batch.Contacts[1].GuidB == 90);
+    physics.OnShutdown(scene);
+}
+
+TEST_CASE ("PhysicsSimulationModule reports a body entering and leaving a trigger", "[simulation][physics][events]")
+{
+    PhysicsSimulationModule physics(std::make_shared<EventDispatcher>(), std::make_shared<Logger>());
+    physics.SetEventCapture(true);
+    Scene scene("TriggerTest");
+    const auto zone = scene.CreateEntityWithGuid(5, "Zone");
+    scene.Registry().emplace<TransformComponent>(zone);
+    scene.Registry().emplace<RigidBodyComponent>(zone, RigidBodyComponent{.Type = RigidBodyType::Static});
+    scene.Registry().emplace<ColliderComponent>(
+        zone, ColliderComponent{.Shape = ColliderShape::Box, .HalfExtents = {1.0, 1.0, 1.0}, .IsTrigger = true});
+    const auto body = AddBall(scene, 6, {-3.0, 0.0, 0.0}, {2.0, 0.0, 0.0});
+    scene.Registry().get<ColliderComponent>(body).Radius = 0.25;
+    physics.OnInit(scene);
+
+    std::vector<PhysicsTriggerEvent> seen;
+    for (int i = 0; i < 180; ++i)
+    {
+        physics.OnTick(scene, 1.0f / 60.0f);
+        for (const auto& event : physics.TakeEvents().Triggers) seen.push_back(event);
+    }
+    REQUIRE(seen.size() == 2);
+    CHECK(seen[0].TriggerGuid == 5);
+    CHECK(seen[0].OtherGuid == 6);
+    CHECK(seen[0].Entered);
+    CHECK_FALSE(seen[1].Entered);
+    CHECK(scene.Registry().get<TransformComponent>(body).Position.x == Catch::Approx(3.0).margin(0.05));
+    physics.OnShutdown(scene);
+}
+
+TEST_CASE ("PhysicsSimulationModule keeps no events unless capture is on", "[simulation][physics][events]")
+{
+    PhysicsSimulationModule physics(std::make_shared<EventDispatcher>(), std::make_shared<Logger>());
+    Scene scene("NoCaptureTest");
+    AddBall(scene, 2, {0.0, 3.0, 0.0}, {0.0, -4.0, 0.0});
+    AddBall(scene, 1, {0.0, 0.0, 0.0}, {0.0, -1.0, 0.0});
+    physics.OnInit(scene);
+    for (int i = 0; i < 120; ++i) physics.OnTick(scene, 1.0f / 60.0f);
+    const auto batch = physics.TakeEvents();
+    CHECK(batch.Contacts.empty());
+    CHECK(batch.Triggers.empty());
+    physics.OnShutdown(scene);
+}

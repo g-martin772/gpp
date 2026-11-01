@@ -71,6 +71,10 @@ export namespace physx
     using physx::PxConstraintInfo;
     using physx::PxContactPairHeader;
     using physx::PxContactPair;
+    using physx::PxContactPairPoint;
+    using physx::PxContactPairVelocity;
+    using physx::PxContactPairExtraDataIterator;
+    using physx::PxContactPairHeaderFlag;
     using physx::PxTriggerPair;
     using physx::PxTriggerPairFlag;
     using physx::PxU32;

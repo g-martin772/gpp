@@ -6,6 +6,7 @@ import GPP.Simulation;
 import :Luau;
 import :Bindings;
 import :Scheduler;
+import :EventBus;
 import :ScriptComponents;
 
 export namespace GPP
@@ -15,6 +16,8 @@ export namespace GPP
     {
         std::uint64_t Entity{0};
         std::vector<std::pair<std::string, FieldValue>> Props;
+        std::shared_ptr<ScriptEventBus> Events = std::make_shared<ScriptEventBus>();
+        bool Listening{false};
     };
 
     struct ScriptError
@@ -69,6 +72,10 @@ export namespace GPP
 
         void Start(const Scene& scene);
         void Tick(const Scene& scene, float deltaTime);
+        void LateTick(const Scene& scene, float deltaTime, std::span<const PhysicsContactEvent> contacts = {},
+                      std::span<const PhysicsTriggerEvent> triggers = {});
+        void Stop(const Scene& scene);
+        [[nodiscard]] ScriptEventBus& Events();
 
         [[nodiscard]] std::vector<ScriptError> TakeErrors();
         [[nodiscard]] std::vector<ScriptStatus> Statuses() const;

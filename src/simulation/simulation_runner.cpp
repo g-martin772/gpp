@@ -704,6 +704,7 @@ namespace GPP
                 ProfileZone moduleZone(i < m_ModuleZones.size() ? m_ModuleZones[i] : "Sim.Module");
                 m_Modules[i]->OnTick(m_SimScene, deltaTime);
             }
+            for (const auto& module : m_Modules) module->OnLateTick(m_SimScene, deltaTime);
         }
         catch (const std::exception& e)
         {

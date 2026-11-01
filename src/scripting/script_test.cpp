@@ -9,6 +9,7 @@ import :Luau;
 import :Bindings;
 import :Scheduler;
 import :ScriptComponents;
+import :EventBus;
 import :ScriptModule;
 import :ScriptTest;
 
@@ -114,6 +115,25 @@ function sim.step(n)
     if err then error(err, 2) end
 end
 
+function sim.events(name)
+    local list = {}
+    for i = 1, sim.__event_count() do
+        local eventName, tick, args = sim.__event(i)
+        if name == nil or name == eventName then table.insert(list, {name = eventName, tick = tick, args = args}) end
+    end
+    return list
+end
+
+function sim.define_script(name, source)
+    local err = sim.__define_script(name, source)
+    if err then error(err, 2) end
+end
+
+function sim.stop()
+    local err = sim.__stop()
+    if err then error(err, 2) end
+end
+
 function sim.add_component(entity, component)
     local ok, err = sim.__add_component(entity, component)
     if not ok then error(err, 2) end
@@ -205,14 +225,35 @@ gpp.testing = testing
                 RegisterBaseComponents();
                 RegisterScriptComponents();
 
+                static std::atomic<std::uint64_t> counter{0};
+                m_ScriptDir = std::filesystem::temp_directory_path() /
+                              std::format("gpp_script_test_{}_{}", std::chrono::steady_clock::now().time_since_epoch().count(),
+                                          counter.fetch_add(1));
+                std::filesystem::create_directories(m_ScriptDir);
+                AssetOptions assetOptions;
+                auto directories = options.Assets->Directories(kScriptAssetKind);
+                directories.insert(directories.begin(), m_ScriptDir);
+                assetOptions.Kinds[kScriptAssetKind] = AssetKindOptions{std::move(directories), {".lua", ".luau"}};
+                m_Assets = std::make_unique<AssetDirectories>(std::move(assetOptions));
+                m_Assets->Poll();
+
                 ScriptModuleOptions moduleOptions{.Limits = options.Limits, .Extend = options.Extend};
-                m_Scripts = std::make_shared<ScriptSimulationModule>(*options.Assets, std::move(moduleOptions));
+                m_Scripts = std::make_shared<ScriptSimulationModule>(*m_Assets, std::move(moduleOptions));
                 m_Scripts->SetRandom(m_Random);
                 m_Modules.push_back(m_Scripts);
                 if (options.MakeModules)
                 {
                     for (auto& module : options.MakeModules()) m_Modules.push_back(std::move(module));
                 }
+                std::ranges::stable_sort(m_Modules, {}, [](const auto& module) { return module->Phase(); });
+                for (const auto& module : m_Modules)
+                {
+                    if (auto physics = std::dynamic_pointer_cast<PhysicsSimulationModule>(module)) m_Scripts->SetPhysics(physics);
+                }
+                (void)m_Scripts->Host().Events().Subscribe({}, [this](const ScriptEvent& event)
+                {
+                    m_EventLog.push_back({event, m_Ticks});
+                });
 
                 m_Vm.SetLimits(options.Limits);
                 m_Bindings->Read = &m_World;
@@ -228,7 +269,7 @@ gpp.testing = testing
                     throw std::runtime_error("script test prelude failed: " + prelude.error().Message);
                 }
                 m_Vm.Seal();
-                m_Vm.SetModuleLoader(MakeScriptModuleLoader(*options.Assets));
+                m_Vm.SetModuleLoader(MakeScriptModuleLoader(*m_Assets));
                 if (auto helper = m_Vm.Load("return gpp.testing", "=gpp_testing")) m_Helper = *helper;
             }
 
@@ -236,6 +277,8 @@ gpp.testing = testing
             {
                 if (m_File != 0) m_Vm.Release(m_File);
                 if (m_Helper != 0) m_Vm.Release(m_Helper);
+                std::error_code ec;
+                std::filesystem::remove_all(m_ScriptDir, ec);
             }
 
             TestWorld(const TestWorld&) = delete;
@@ -290,9 +333,11 @@ gpp.testing = testing
                         if (auto failure = ScriptFailure(); !failure.empty()) return failure;
                     }
                     const auto deltaTime = static_cast<float>(m_Dt);
+                    if (m_Stopped) return "sim.step: the simulation was stopped";
                     for (std::uint64_t i = 0; i < ticks; ++i)
                     {
                         for (const auto& module : m_Modules) module->OnTick(m_World, deltaTime);
+                        for (const auto& module : m_Modules) module->OnLateTick(m_World, deltaTime);
                         m_World.AdvanceClock(m_Dt);
                         ++m_Ticks;
                         if (auto failure = ScriptFailure(); !failure.empty()) return failure;
@@ -304,6 +349,22 @@ gpp.testing = testing
                 }
                 m_Vm.ResetBudget();
                 return {};
+            }
+
+            std::string Stop()
+            {
+                if (m_Stopped) return {};
+                m_Stopped = true;
+                if (!m_Initialized) return {};
+                try
+                {
+                    for (const auto& module : m_Modules) module->OnShutdown(m_World);
+                }
+                catch (const std::exception& error)
+                {
+                    return std::string("simulation failed: ") + error.what();
+                }
+                return ScriptFailure();
             }
 
             std::string ScriptFailure()
@@ -378,6 +439,21 @@ gpp.testing = testing
                     if (!std::holds_alternative<std::monostate>(value)) scripts->Entries[index - 1].Props[call.String(3)] = std::move(value);
                     return 0;
                 });
+                m_Vm.Register("sim", "set_velocity", [this](LuauNativeCall& call)
+                {
+                    const auto entity = Find(call, 1);
+                    if (entity == entt::entity{entt::null}) throw std::runtime_error("sim.set_velocity: no such entity");
+                    auto& velocity = m_World.Registry().get_or_emplace<VelocityComponent>(entity);
+                    if (const auto linear = call.ToValue(2, LuauType::DVec3); std::holds_alternative<glm::dvec3>(linear))
+                    {
+                        velocity.Linear = std::get<glm::dvec3>(linear);
+                    }
+                    if (const auto angular = call.ToValue(3, LuauType::DVec3); std::holds_alternative<glm::dvec3>(angular))
+                    {
+                        velocity.Angular = std::get<glm::dvec3>(angular);
+                    }
+                    return 0;
+                });
                 m_Vm.Register("sim", "__step", [this](LuauNativeCall& call)
                 {
                     const auto ticks = static_cast<std::uint64_t>(std::max(0.0, call.Number(1)));
@@ -385,6 +461,59 @@ gpp.testing = testing
                     if (failure.empty()) return 0;
                     call.PushString(failure);
                     return 1;
+                });
+                m_Vm.Register("sim", "__stop", [this](LuauNativeCall& call)
+                {
+                    const auto failure = Stop();
+                    if (failure.empty()) return 0;
+                    call.PushString(failure);
+                    return 1;
+                });
+                m_Vm.Register("sim", "__define_script", [this](LuauNativeCall& call)
+                {
+                    const auto name = call.String(1);
+                    const auto path = m_ScriptDir / (name + ".luau");
+                    if (name.empty() || name.find("..") != std::string::npos)
+                    {
+                        call.PushString("sim.define_script: invalid script name '" + name + "'");
+                        return 1;
+                    }
+                    std::filesystem::create_directories(path.parent_path());
+                    {
+                        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+                        out << call.String(2);
+                    }
+                    std::error_code ec;
+                    std::filesystem::last_write_time(path, std::filesystem::file_time_type{} + std::chrono::seconds(++m_DefineCount), ec);
+                    m_Assets->Poll();
+                    return 0;
+                });
+                m_Vm.Register("sim", "emit", [this](LuauNativeCall& call)
+                {
+                    auto name = call.String(1);
+                    if (name.empty()) throw std::runtime_error("sim.emit: the name must be a non-empty string");
+                    std::vector<LuauValue> args;
+                    for (int i = 2; i <= call.Count(); ++i)
+                    {
+                        args.push_back(call.IsNumber(i) ? call.ToValue(i, LuauType::Double) : call.ToValueAuto(i));
+                    }
+                    m_Scripts->Host().Events().Emit(std::move(name), std::move(args));
+                    return 0;
+                });
+                m_Vm.Register("sim", "__event_count", [this](LuauNativeCall& call)
+                {
+                    call.PushNumber(static_cast<double>(m_EventLog.size()));
+                    return 1;
+                });
+                m_Vm.Register("sim", "__event", [this](LuauNativeCall& call)
+                {
+                    const auto index = static_cast<std::size_t>(call.Number(1));
+                    if (index == 0 || index > m_EventLog.size()) return 0;
+                    const auto& [event, tick] = m_EventLog[index - 1];
+                    call.PushString(event.Name);
+                    call.PushNumber(static_cast<double>(tick));
+                    call.PushValues(event.Args);
+                    return 3;
                 });
                 m_Vm.Register("sim", "dt", [this](LuauNativeCall& call)
                 {
@@ -418,6 +547,9 @@ gpp.testing = testing
             }
 
             double m_Dt;
+            std::filesystem::path m_ScriptDir;
+            std::unique_ptr<AssetDirectories> m_Assets;
+            std::int64_t m_DefineCount{0};
             Scene m_World;
             std::shared_ptr<SimulationRandom> m_Random;
             std::shared_ptr<ScriptSimulationModule> m_Scripts;
@@ -428,6 +560,8 @@ gpp.testing = testing
             std::uint64_t m_NextGuid{1};
             std::uint64_t m_Ticks{0};
             bool m_Initialized{false};
+            bool m_Stopped{false};
+            std::vector<std::pair<ScriptEvent, std::uint64_t>> m_EventLog;
             int m_Helper{0};
             int m_File{0};
         };

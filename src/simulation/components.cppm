@@ -81,6 +81,7 @@ export namespace GPP
         float DynamicFriction{0.5f};
         float Restitution{0.1f};
         bool IsTrigger{false};
+        int MaterialId{0}; // 0 = unspecified
         std::vector<glm::vec3> ConvexHullPoints;
     };
 
@@ -183,6 +184,7 @@ namespace GPP
                     Field("Restitution", &ColliderComponent::Restitution,
                           {.Min = 0.0f, .Max = 1.0f, .Speed = 0.01f}),
                     Field("IsTrigger", &ColliderComponent::IsTrigger, {.Label = "Is Trigger"}),
+                    Field("MaterialId", &ColliderComponent::MaterialId, {.Label = "Material Id", .Min = 0.0, .Speed = 1.0}),
                     Computed<ColliderComponent, int>(
                         "HullPoints", [](const ColliderComponent& c) { return static_cast<int>(c.ConvexHullPoints.size()); },
                         nullptr, {.Label = "Hull Points", .VisibleField = "Shape", .VisibleMask = 0b10000}),

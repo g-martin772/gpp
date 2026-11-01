@@ -25,6 +25,11 @@ namespace GPP
 
         glm::dvec3 FromPhysXVector(const physx::PxVec3& v) { return {v.x, v.y, v.z}; }
 
+        int ShapeMaterial(const physx::PxShape* shape)
+        {
+            return shape ? static_cast<int>(reinterpret_cast<std::uintptr_t>(shape->userData)) : 0;
+        }
+
         struct SharedPhysX
         {
             physx::PxDefaultAllocator Allocator;
@@ -83,7 +88,8 @@ namespace GPP
                 return physx::PxFilterFlag::eDEFAULT;
             }
             pairFlags = physx::PxPairFlag::eCONTACT_DEFAULT | physx::PxPairFlag::eNOTIFY_TOUCH_FOUND |
-                physx::PxPairFlag::eNOTIFY_TOUCH_LOST;
+                physx::PxPairFlag::eNOTIFY_TOUCH_LOST | physx::PxPairFlag::eNOTIFY_CONTACT_POINTS |
+                physx::PxPairFlag::ePRE_SOLVER_VELOCITY;
             return physx::PxFilterFlag::eDEFAULT;
         }
     }
@@ -150,8 +156,13 @@ namespace GPP
             m_DebugVisualizationApplied = debugViz;
         }
 
+        m_Events = {};
         SyncActors(scene);
         StepPhysics(static_cast<float>(static_cast<double>(deltaTime) * scene.Metadata().TimeScale));
+        std::ranges::stable_sort(m_Events.Contacts, {},
+                                 [](const PhysicsContactEvent& e) { return std::pair(e.GuidA, e.GuidB); });
+        std::ranges::stable_sort(m_Events.Triggers, {},
+                                 [](const PhysicsTriggerEvent& e) { return std::pair(e.TriggerGuid, e.OtherGuid); });
 
         if (debugViz)
         {
@@ -419,6 +430,8 @@ namespace GPP
         }
         material->release();
 
+        if (shape) shape->userData = reinterpret_cast<void*>(static_cast<std::uintptr_t>(std::max(collider.MaterialId, 0)));
+
         if (!shape)
         {
             if (m_Logger) m_Logger->Error("PhysicsSimulationModule: failed to create a collider shape.");
@@ -545,17 +558,38 @@ namespace GPP
     void PhysicsSimulationModule::onContact(const physx::PxContactPairHeader& pairHeader,
                                             const physx::PxContactPair* pairs, const physx::PxU32 count)
     {
-        if (!m_CurrentScene || !m_Dispatcher)
+        if (!m_CurrentScene || (!m_Dispatcher && !m_CaptureEvents))
         {
             return;
         }
+        constexpr physx::PxU32 kMaxPoints = 16;
+        std::array<physx::PxContactPairPoint, kMaxPoints> points;
+        glm::dvec3 pointSum{0.0};
+        glm::dvec3 normalSum{0.0};
+        double impulse = 0.0;
+        std::size_t pointCount = 0;
+        int material0 = 0;
+        int material1 = 0;
         bool touchFound = false;
         for (physx::PxU32 i = 0; i < count; ++i)
         {
-            if (pairs[i].events & physx::PxPairFlag::eNOTIFY_TOUCH_FOUND)
+            if (!(pairs[i].events & physx::PxPairFlag::eNOTIFY_TOUCH_FOUND))
             {
-                touchFound = true;
-                break;
+                continue;
+            }
+            if (!touchFound)
+            {
+                material0 = ShapeMaterial(pairs[i].shapes[0]);
+                material1 = ShapeMaterial(pairs[i].shapes[1]);
+            }
+            touchFound = true;
+            const auto extracted = pairs[i].extractContacts(points.data(), kMaxPoints);
+            for (physx::PxU32 k = 0; k < extracted; ++k)
+            {
+                pointSum += FromPhysXPosition(points[k].position, m_OriginM);
+                normalSum += FromPhysXVector(points[k].normal);
+                impulse += points[k].impulse.magnitude();
+                ++pointCount;
             }
         }
         if (!touchFound)
@@ -563,18 +597,56 @@ namespace GPP
             return;
         }
 
-        const auto guidA = GuidForActor(static_cast<physx::PxRigidActor*>(pairHeader.actors[0]));
-        const auto guidB = GuidForActor(static_cast<physx::PxRigidActor*>(pairHeader.actors[1]));
-        if (guidA == 0 || guidB == 0)
+        auto guid0 = GuidForActor(static_cast<physx::PxRigidActor*>(pairHeader.actors[0]));
+        auto guid1 = GuidForActor(static_cast<physx::PxRigidActor*>(pairHeader.actors[1]));
+        if (guid0 == 0 || guid1 == 0)
         {
             return;
         }
-        m_Dispatcher->Publish(PhysicsContactEvent{guidA, guidB});
+
+        glm::dvec3 velocity0{0.0};
+        glm::dvec3 velocity1{0.0};
+        physx::PxContactPairExtraDataIterator extra(pairHeader.extraDataStream, pairHeader.extraDataStreamSize);
+        while (extra.nextItemSet())
+        {
+            if (extra.preSolverVelocity)
+            {
+                velocity0 = FromPhysXVector(extra.preSolverVelocity->linearVelocity[0]);
+                velocity1 = FromPhysXVector(extra.preSolverVelocity->linearVelocity[1]);
+                break;
+            }
+        }
+
+        PhysicsContactEvent event;
+        event.Impulse = impulse;
+        // normal: shape 1 to 0
+        event.Normal = glm::length(normalSum) > 0.0 ? glm::normalize(normalSum) : glm::dvec3(0.0, 1.0, 0.0);
+        if (pointCount > 0) event.Point = pointSum / static_cast<double>(pointCount);
+        else
+        {
+            const auto pose0 = static_cast<physx::PxRigidActor*>(pairHeader.actors[0])->getGlobalPose().p;
+            const auto pose1 = static_cast<physx::PxRigidActor*>(pairHeader.actors[1])->getGlobalPose().p;
+            event.Point = FromPhysXPosition((pose0 + pose1) * 0.5f, m_OriginM);
+        }
+        event.RelativeVelocity = velocity0 - velocity1;
+        event.GuidA = guid0;
+        event.GuidB = guid1;
+        event.MaterialA = material0;
+        event.MaterialB = material1;
+        if (guid0 > guid1)
+        {
+            std::swap(event.GuidA, event.GuidB);
+            std::swap(event.MaterialA, event.MaterialB);
+            event.Normal = -event.Normal;
+            event.RelativeVelocity = -event.RelativeVelocity;
+        }
+        if (m_Dispatcher) m_Dispatcher->Publish(event);
+        if (m_CaptureEvents) m_Events.Contacts.push_back(event);
     }
 
     void PhysicsSimulationModule::onTrigger(physx::PxTriggerPair* pairs, const physx::PxU32 count)
     {
-        if (!m_CurrentScene || !m_Dispatcher)
+        if (!m_CurrentScene || (!m_Dispatcher && !m_CaptureEvents))
         {
             return;
         }
@@ -591,9 +663,9 @@ namespace GPP
             {
                 continue;
             }
-            m_Dispatcher->Publish(PhysicsTriggerEvent{
-                triggerGuid, otherGuid, pairs[i].status == physx::PxPairFlag::eNOTIFY_TOUCH_FOUND
-            });
+            const PhysicsTriggerEvent event{triggerGuid, otherGuid, pairs[i].status == physx::PxPairFlag::eNOTIFY_TOUCH_FOUND};
+            if (m_Dispatcher) m_Dispatcher->Publish(event);
+            if (m_CaptureEvents) m_Events.Triggers.push_back(event);
         }
     }
 }

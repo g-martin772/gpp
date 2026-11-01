@@ -11,10 +11,17 @@ import :Physics;
 
 namespace GPP
 {
+    // A = lower guid; normal B to A; RelativeVelocity = A - B pre-solve
     export struct PhysicsContactEvent
     {
         std::uint64_t GuidA = 0;
         std::uint64_t GuidB = 0;
+        glm::dvec3 Point{0.0};          // m, world space
+        glm::dvec3 Normal{0.0};
+        double Impulse = 0.0;           // N s, summed
+        glm::dvec3 RelativeVelocity{0.0}; // m/s
+        int MaterialA = 0;
+        int MaterialB = 0;
     };
 
     export struct PhysicsTriggerEvent
@@ -22,6 +29,12 @@ namespace GPP
         std::uint64_t TriggerGuid = 0;
         std::uint64_t OtherGuid = 0;
         bool Entered = true;
+    };
+
+    export struct PhysicsEventBatch
+    {
+        std::vector<PhysicsContactEvent> Contacts;
+        std::vector<PhysicsTriggerEvent> Triggers;
     };
 
     export class PhysicsSimulationModule : public ISimulationModule, public physx::PxSimulationEventCallback
@@ -60,6 +73,9 @@ namespace GPP
         }
 
         [[nodiscard]] glm::dvec3 Origin() const noexcept { return m_OriginM; }
+
+        void SetEventCapture(const bool capture) noexcept { m_CaptureEvents = capture; }
+        [[nodiscard]] PhysicsEventBatch TakeEvents() { return std::exchange(m_Events, {}); }
 
         [[nodiscard]] std::vector<physx::PxDebugLine> GetDebugLines() const
         {
@@ -104,6 +120,8 @@ namespace GPP
         std::unordered_map<entt::entity, AppliedState> m_Applied;
         Scene* m_CurrentScene = nullptr;
         glm::dvec3 m_OriginM{0.0};
+        bool m_CaptureEvents = false;
+        PhysicsEventBatch m_Events;
         std::atomic<bool> m_DebugVisualizationEnabled{false};
         bool m_DebugVisualizationApplied = false;
         mutable std::mutex m_DebugLinesMutex;

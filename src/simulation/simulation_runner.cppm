@@ -27,6 +27,7 @@ namespace GPP
 
         virtual void OnInit(Scene& scene) {}
         virtual void OnTick(Scene& scene, float deltaTime) {}
+        virtual void OnLateTick(Scene& scene, float deltaTime) {}
         virtual void OnShutdown(Scene& scene) {}
 
         // Hidden state that lives outside the scene; included in Play/Stop restore and recordings. Empty means none.
