@@ -339,3 +339,56 @@ TEST_CASE ("PhysicsSimulationModule keeps no events unless capture is on", "[sim
     CHECK(batch.Triggers.empty());
     physics.OnShutdown(scene);
 }
+
+namespace
+{
+    Scene MakeJointScene()
+    {
+        Scene scene("Joints");
+        const auto anchor = scene.CreateEntityWithGuid(1, "Anchor");
+        scene.Registry().emplace<TransformComponent>(anchor, TransformComponent{.Position = {0.0, 0.0, 0.0}});
+        scene.Registry().emplace<RigidBodyComponent>(anchor, RigidBodyComponent{.Type = RigidBodyType::Static});
+        scene.Registry().emplace<ColliderComponent>(anchor, ColliderComponent{.Shape = ColliderShape::Sphere, .Radius = 0.5});
+        const auto body = scene.CreateEntityWithGuid(2, "Body");
+        scene.Registry().emplace<TransformComponent>(body, TransformComponent{.Position = {0.0, 3.0, 0.0}});
+        scene.Registry().emplace<VelocityComponent>(body);
+        scene.Registry().emplace<RigidBodyComponent>(body, RigidBodyComponent{.Type = RigidBodyType::Dynamic, .Mass = 1.0});
+        scene.Registry().emplace<ColliderComponent>(body, ColliderComponent{.Shape = ColliderShape::Sphere, .Radius = 0.5});
+        return scene;
+    }
+}
+
+TEST_CASE ("PhysicsSimulationModule restores saved joints after a state load", "[simulation][physics][joints]")
+{
+    auto logger = std::make_shared<Logger>();
+    Scene scene = MakeJointScene();
+    constexpr std::uint64_t anchor = 1;
+    constexpr std::uint64_t body = 2;
+
+    PhysicsSimulationModule first(nullptr, logger);
+    first.OnInit(scene);
+    const auto id = first.CreateJoint(anchor, body, PhysicsJointKind::Fixed, {});
+    REQUIRE(id.has_value());
+    CHECK(first.SaveState().empty() == false);
+    const auto saved = first.SaveState();
+    first.OnShutdown(scene);
+
+    Scene again = MakeJointScene();
+    PhysicsSimulationModule second(nullptr, logger);
+    second.OnInit(again);
+    second.LoadState(saved);
+    second.QueueCommand({.Kind = PhysicsCommandKind::Force, .Guid = body, .Vector = {500.0, 0.0, 0.0}});
+    for (int i = 0; i < 30; ++i) second.OnTick(again, 1.0f / 60.0f);
+    CHECK(second.JointBroken(*id) == std::optional<bool>(false));
+    CHECK(again.Registry().get<TransformComponent>(again.FindByGuid(body)).Position.x == Catch::Approx(0.0).margin(0.05));
+    CHECK(second.SaveState() == saved);
+    second.OnShutdown(again);
+}
+
+TEST_CASE ("PhysicsSimulationModule queries need an initialised scene", "[simulation][physics]")
+{
+    PhysicsSimulationModule physics(nullptr, std::make_shared<Logger>());
+    CHECK_FALSE(physics.Raycast({0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, 10.0, 0xFFFFFFFFu).has_value());
+    CHECK(physics.Overlap({0.0, 0.0, 0.0}, 1.0, 0xFFFFFFFFu).empty());
+    CHECK_FALSE(physics.CreateJoint(1, 2, PhysicsJointKind::Fixed, {}).has_value());
+}

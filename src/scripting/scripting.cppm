@@ -9,3 +9,4 @@ export import :ScriptModule;
 export import :ScriptTest;
 
 export import :ParticleBindings;
+export import :PhysicsBindings;

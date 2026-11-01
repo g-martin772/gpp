@@ -10,6 +10,7 @@ import :EventBus;
 import :ScriptComponents;
 import :ScriptHost;
 import :ScriptModule;
+import :PhysicsBindings;
 
 namespace GPP
 {
@@ -41,6 +42,7 @@ namespace GPP
             RegisterSceneBindings(Vm, Bindings);
             RegisterTaskBindings(Vm, TaskErrors);
             RegisterInputBindings();
+            RegisterPhysicsBindings(Vm, Bindings, [this] { return Physics.get(); });
             auto context = RegisterScriptHostBindings(Vm);
             if (options.Extend) options.Extend(Vm);
             if (options.ExtendScene) options.ExtendScene(Vm, Bindings);

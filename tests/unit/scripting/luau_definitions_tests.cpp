@@ -52,6 +52,20 @@ TEST_CASE("Luau definitions declare every registered scene native", "[scripting]
     const auto inputNames = RegisteredNames(module, "input");
     REQUIRE(inputNames.size() == 5);
     for (const auto& name : inputNames) CHECK(Declares(definitions, "input", name));
+    const auto prelude = ReadFile(root / "src" / "scripting" / "physics_bindings.cpp");
+    const auto physicsNames = RegisteredNames(prelude, "physics");
+    REQUIRE(physicsNames.size() >= 5);
+    for (const auto& name : physicsNames)
+    {
+        if (!name.starts_with("__")) CHECK(Declares(definitions, "physics", name));
+    }
+    const std::regex preludeFunction("\\nfunction physics\\.([a-z_]+)\\(");
+    std::size_t preludeCount = 0;
+    for (std::sregex_iterator it(prelude.begin(), prelude.end(), preludeFunction), end; it != end; ++it, ++preludeCount)
+    {
+        CHECK(Declares(definitions, "physics", (*it)[1]));
+    }
+    CHECK(preludeCount >= 10);
     CHECK(Declares(definitions, "gpp", "ease"));
     CHECK(Declares(definitions, "gpp", "random"));
     for (const char* global : {"vec2", "vec4", "ease"}) CHECK(definitions.contains(std::string("declare ") + global + ":"));

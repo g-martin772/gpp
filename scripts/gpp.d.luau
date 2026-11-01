@@ -91,3 +91,39 @@ declare particles: {
     count: () -> number,
     region_stats: ((center: vector | { x: number, y: number, z: number }, radius: number) -> { count: number, mass: number, mean_temperature: number, mean_velocity: vector }?) & ((x: number, y: number, z: number, radius: number) -> { count: number, mass: number, mean_temperature: number, mean_velocity: vector }?),
 }
+
+type Vec3d = { x: number, y: number, z: number }
+type PhysicsHit = {
+    entity: Entity,
+    point: vector,
+    normal: vector,
+    distance: number,
+    point64: Vec3d,
+}
+type JointKind = "fixed" | "hinge" | "distance"
+type JointParams = {
+    anchor: (vector | Vec3d)?,
+    axis: (vector | Vec3d)?,
+    distance: number?,
+    min_distance: number?,
+    stiffness: number?,
+    damping: number?,
+    break_force: number?,
+    break_torque: number?,
+}
+
+declare physics: {
+    raycast: (origin: vector | Vec3d, direction: vector | Vec3d, max_dist: number, layer_mask: number?) -> PhysicsHit?,
+    spherecast: (origin: vector | Vec3d, radius: number, direction: vector | Vec3d, max_dist: number, layer_mask: number?) -> PhysicsHit?,
+    overlap: (center: vector | Vec3d, radius: number, layer_mask: number?) -> { Entity },
+    add_force: (entity: Entity, force: vector | Vec3d) -> (),
+    add_torque: (entity: Entity, torque: vector | Vec3d) -> (),
+    add_impulse: (entity: Entity, impulse: vector | Vec3d, point: (vector | Vec3d)?) -> (),
+    set_velocity: (entity: Entity, velocity: vector | Vec3d) -> (),
+    set_angular_velocity: (entity: Entity, velocity: vector | Vec3d) -> (),
+    set_kinematic_target: (entity: Entity, position: vector | Vec3d, rotation: (vector | Vec3d)?) -> (),
+    set_gravity_scale: (entity: Entity, scale: number) -> (),
+    create_joint: (a: Entity, b: Entity?, kind: JointKind, params: JointParams?) -> number,
+    break_joint: (handle: number) -> boolean,
+    joint_broken: (handle: number) -> boolean?,
+}

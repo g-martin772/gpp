@@ -67,6 +67,28 @@ export namespace physx
     using physx::PxPairFlag;
     using physx::PxPairFlags;
 
+    using physx::PxQueryFilterData;
+    using physx::PxQueryFlag;
+    using physx::PxQueryFlags;
+    using physx::PxHitFlag;
+    using physx::PxHitFlags;
+    using physx::PxRaycastBuffer;
+    using physx::PxRaycastHit;
+    using physx::PxSweepBuffer;
+    using physx::PxSweepHit;
+    using physx::PxOverlapBuffer;
+    using physx::PxOverlapHit;
+    using physx::PxOverlapBufferN;
+    using physx::PxJoint;
+    using physx::PxFixedJoint;
+    using physx::PxRevoluteJoint;
+    using physx::PxDistanceJoint;
+    using physx::PxDistanceJointFlag;
+    using physx::PxFixedJointCreate;
+    using physx::PxRevoluteJointCreate;
+    using physx::PxDistanceJointCreate;
+    using physx::PxConstraintFlag;
+
     using physx::PxSimulationEventCallback;
     using physx::PxConstraintInfo;
     using physx::PxContactPairHeader;

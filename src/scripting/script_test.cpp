@@ -11,6 +11,7 @@ import :Scheduler;
 import :ScriptComponents;
 import :EventBus;
 import :ScriptModule;
+import :PhysicsBindings;
 import :ScriptTest;
 
 namespace GPP
@@ -261,7 +262,11 @@ gpp.testing = testing
                 std::ranges::stable_sort(m_Modules, {}, [](const auto& module) { return module->Phase(); });
                 for (const auto& module : m_Modules)
                 {
-                    if (auto physics = std::dynamic_pointer_cast<PhysicsSimulationModule>(module)) m_Scripts->SetPhysics(physics);
+                    if (auto physics = std::dynamic_pointer_cast<PhysicsSimulationModule>(module))
+                    {
+                        m_Physics = physics;
+                        m_Scripts->SetPhysics(physics);
+                    }
                 }
                 (void)m_Scripts->Host().Events().Subscribe({}, [this](const ScriptEvent& event)
                 {
@@ -276,6 +281,7 @@ gpp.testing = testing
                 RegisterSceneBindings(m_Vm, m_Bindings);
                 RegisterTaskBindings(m_Vm, m_TaskErrors);
                 RegisterNatives();
+                RegisterPhysicsBindings(m_Vm, m_Bindings, [this] { return m_Physics.get(); });
                 if (options.Extend) options.Extend(m_Vm);
                 if (auto prelude = m_Vm.RunTrusted(kPrelude, "=gpp_test"); !prelude)
                 {
@@ -583,6 +589,7 @@ gpp.testing = testing
             std::shared_ptr<SimulationRandom> m_Random;
             std::shared_ptr<SimulationInput> m_Input = std::make_shared<SimulationInput>();
             std::shared_ptr<ScriptSimulationModule> m_Scripts;
+            std::shared_ptr<PhysicsSimulationModule> m_Physics;
             std::vector<std::shared_ptr<ISimulationModule>> m_Modules;
             LuauVm m_Vm;
             std::shared_ptr<LuauTaskErrors> m_TaskErrors = std::make_shared<LuauTaskErrors>();

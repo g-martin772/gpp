@@ -67,6 +67,7 @@ export namespace GPP
         float LinearDamping{0.0f};
         float AngularDamping{0.05f};
         bool EnableGravity{true};
+        double GravityScale{1.0};
     };
 
     enum class ColliderShape : $u8 { Box, Sphere, Capsule, Plane, ConvexMesh };
@@ -82,6 +83,8 @@ export namespace GPP
         float Restitution{0.1f};
         bool IsTrigger{false};
         int MaterialId{0}; // 0 = unspecified
+        int Layer{0};
+        int Mask{-1}; // bit i = layer i, -1 = all
         std::vector<glm::vec3> ConvexHullPoints;
     };
 
@@ -159,6 +162,8 @@ namespace GPP
                     Field("AngularDamping", &RigidBodyComponent::AngularDamping,
                           {.Label = "Angular Damping", .Min = 0.0f, .Max = 10.0f, .Speed = 0.01f}),
                     Field("EnableGravity", &RigidBodyComponent::EnableGravity, {.Label = "Enable Gravity"}),
+                    Field("GravityScale", &RigidBodyComponent::GravityScale,
+                          {.Label = "Gravity Scale", .Speed = 0.01}),
                 }});
 
             RegisterComponent<ColliderComponent>("Collider", ComponentDescription<ColliderComponent>{
@@ -185,6 +190,8 @@ namespace GPP
                           {.Min = 0.0f, .Max = 1.0f, .Speed = 0.01f}),
                     Field("IsTrigger", &ColliderComponent::IsTrigger, {.Label = "Is Trigger"}),
                     Field("MaterialId", &ColliderComponent::MaterialId, {.Label = "Material Id", .Min = 0.0, .Speed = 1.0}),
+                    Field("Layer", &ColliderComponent::Layer, {.Min = 0.0, .Max = 31.0, .Speed = 1.0}),
+                    Field("Mask", &ColliderComponent::Mask, {.Speed = 1.0}),
                     Computed<ColliderComponent, int>(
                         "HullPoints", [](const ColliderComponent& c) { return static_cast<int>(c.ConvexHullPoints.size()); },
                         nullptr, {.Label = "Hull Points", .VisibleField = "Shape", .VisibleMask = 0b10000}),
