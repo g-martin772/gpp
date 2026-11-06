@@ -112,6 +112,8 @@ namespace GPP
 
         [[nodiscard]] std::string SaveState() const override;
         void LoadState(const std::string& state) override;
+        [[nodiscard]] std::string HashState() const override;
+        void PrepareSave() override;
 
         [[nodiscard]] std::optional<PhysicsHit> Raycast(const glm::dvec3& origin, const glm::dvec3& direction,
                                                         double maxDistance, std::uint32_t mask);
@@ -171,6 +173,11 @@ namespace GPP
         void ReapBrokenJoints();
         void ReleaseJoints(physx::PxRigidActor* actor);
         void SyncActors(Scene& scene);
+        [[nodiscard]] physx::PxRigidActor* AddActor(Scene& scene, entt::entity entity);
+        void ClearActors();
+        void CreateScene();
+        [[nodiscard]] std::string ActorState() const;
+        [[nodiscard]] static std::string JointLine(std::uint32_t id, const JointSpec& spec);
         struct AppliedState
         {
             glm::dvec3 Position{0.0};
@@ -212,6 +219,8 @@ namespace GPP
         std::vector<std::pair<std::uint32_t, JointSpec>> m_PendingJoints;
         std::uint32_t m_NextJoint = 1;
         glm::dvec3 m_OriginM{0.0};
+        std::string m_ActorState;
+        bool m_ActorStateValid = false;
         bool m_CaptureEvents = false;
         PhysicsEventBatch m_Events;
         std::atomic<bool> m_DebugVisualizationEnabled{false};

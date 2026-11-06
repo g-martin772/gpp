@@ -588,7 +588,16 @@ namespace GPP
         }
     }
 
-    RunnerState SimulationRunner::CaptureState() const
+    RunnerState SimulationRunner::CaptureState()
+    {
+        if (!m_Recording)
+        {
+            for (const auto& module : m_Modules) module->PrepareSave();
+        }
+        return SnapshotState();
+    }
+
+    RunnerState SimulationRunner::SnapshotState() const
     {
         RunnerState state;
         for (const auto& module : m_Modules) state.Modules.push_back(module->SaveState());
@@ -609,9 +618,8 @@ namespace GPP
     {
         StateHasher hasher;
         hasher.U64(HashScene(m_SimScene));
-        const auto state = CaptureState();
-        hasher.U64(state.RngState);
-        for (const auto& module : state.Modules) hasher.String(module);
+        hasher.U64(m_Random->State());
+        for (const auto& module : m_Modules) hasher.String(module->HashState());
         return hasher.Value();
     }
 
@@ -646,7 +654,8 @@ namespace GPP
             recording.Initial = m_SimScene.Clone();
             recording.TickRate = m_TickRate.load(std::memory_order_relaxed);
             recording.StartTick = Tick();
-            recording.State = CaptureState();
+            for (const auto& module : m_Modules) module->PrepareSave();
+            recording.State = SnapshotState();
             m_Recording = std::move(recording);
             m_RecordedHeld.clear();
             m_Checkpoints.reset();

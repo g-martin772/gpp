@@ -371,6 +371,7 @@ TEST_CASE ("PhysicsSimulationModule restores saved joints after a state load", "
     REQUIRE(id.has_value());
     CHECK(first.SaveState().empty() == false);
     const auto saved = first.SaveState();
+    const auto hashed = first.HashState();
     first.OnShutdown(scene);
 
     Scene again = MakeJointScene();
@@ -381,7 +382,7 @@ TEST_CASE ("PhysicsSimulationModule restores saved joints after a state load", "
     for (int i = 0; i < 30; ++i) second.OnTick(again, 1.0f / 60.0f);
     CHECK(second.JointBroken(*id) == std::optional<bool>(false));
     CHECK(again.Registry().get<TransformComponent>(again.FindByGuid(body)).Position.x == Catch::Approx(0.0).margin(0.05));
-    CHECK(second.SaveState() == saved);
+    CHECK(second.HashState() == hashed);
     second.OnShutdown(again);
 }
 

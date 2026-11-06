@@ -34,6 +34,8 @@ namespace GPP
         // Hidden state that lives outside the scene; included in Play/Stop restore and recordings. Empty means none.
         [[nodiscard]] virtual std::string SaveState() const { return {}; }
         virtual void LoadState(const std::string& state) { (void)state; }
+        virtual void PrepareSave() {}
+        [[nodiscard]] virtual std::string HashState() const { return SaveState(); }
     };
 
     export struct SimulationOptions
@@ -230,7 +232,7 @@ namespace GPP
         [[nodiscard]] std::shared_ptr<SimulationRandom> Random() const noexcept { return m_Random; }
         [[nodiscard]] std::shared_ptr<SimulationInput> Input() const noexcept { return m_Input; }
 
-        [[nodiscard]] RunnerState CaptureState() const;
+        [[nodiscard]] RunnerState CaptureState();
         void RestoreState(const RunnerState& state);
 
         [[nodiscard]] std::uint64_t StateHash();
@@ -269,6 +271,7 @@ namespace GPP
         void EnqueueMarker(TransactionMarker marker, CommandOptions options);
         void FlushTransaction();
         [[nodiscard]] std::uint64_t ComputeStateHash() const;
+        [[nodiscard]] RunnerState SnapshotState() const;
         void AddCheckpoint();
         void RunTick(float deltaTime, double clockDt);
         void StepOne(float deltaTime, double clockDt);

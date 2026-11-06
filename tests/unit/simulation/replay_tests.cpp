@@ -249,9 +249,7 @@ TEST_CASE("A physics scene replays identically", "[replay][physics]")
     PhysicsReplay(0);
 }
 
-// PhysicsSimulationModule has no SaveState/LoadState: PhysX internals are not part of a recording, so a replay started from
-// a scene that has already been stepped diverges within the first checkpoint interval.
-TEST_CASE("A physics recording started mid-simulation replays identically", "[replay][physics][!shouldfail]")
+TEST_CASE("A physics recording started mid-simulation replays identically", "[replay][physics]")
 {
     PhysicsReplay(1);
 }

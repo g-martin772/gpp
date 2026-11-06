@@ -1,3 +1,5 @@
+module;
+#include <PxPhysicsAPI.h>
 module GPP.Simulation;
 
 import :PhysicsModule;
@@ -125,15 +127,8 @@ namespace GPP
         if (m_RuntimeHeld) { ReleasePhysX(); m_RuntimeHeld = false; m_Physics = nullptr; }
     }
 
-    void PhysicsSimulationModule::OnInit(Scene& scene)
+    void PhysicsSimulationModule::CreateScene()
     {
-        if (!m_RuntimeHeld)
-        {
-            m_Physics = AcquirePhysX();
-            m_RuntimeHeld = true;
-        }
-        m_CpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
-
         physx::PxSceneDesc sceneDesc(m_Physics->getTolerancesScale());
         sceneDesc.gravity = physx::PxVec3(0.0f, 0.0f, 0.0f);
         sceneDesc.cpuDispatcher = m_CpuDispatcher;
@@ -144,6 +139,18 @@ namespace GPP
         {
             throw std::runtime_error("PhysicsSimulationModule: createScene failed.");
         }
+        m_DebugVisualizationApplied = false;
+    }
+
+    void PhysicsSimulationModule::OnInit(Scene& scene)
+    {
+        if (!m_RuntimeHeld)
+        {
+            m_Physics = AcquirePhysX();
+            m_RuntimeHeld = true;
+        }
+        m_CpuDispatcher = physx::PxDefaultCpuDispatcherCreate(2);
+        CreateScene();
 
         glm::dvec3 sum{0.0};
         std::size_t count = 0;
@@ -168,6 +175,7 @@ namespace GPP
     {
         if (!m_Scene) return;
         m_CurrentScene = &scene;
+        m_ActorStateValid = false;
 
         const bool debugViz = m_DebugVisualizationEnabled.load(std::memory_order_relaxed);
         if (debugViz != m_DebugVisualizationApplied)
@@ -265,6 +273,39 @@ namespace GPP
         if (m_RuntimeHeld) { ReleasePhysX(); m_RuntimeHeld = false; m_Physics = nullptr; }
     }
 
+    physx::PxRigidActor* PhysicsSimulationModule::AddActor(Scene& scene, const entt::entity entity)
+    {
+        const auto& body = scene.Registry().get<RigidBodyComponent>(entity);
+        const auto& collider = scene.Registry().get<ColliderComponent>(entity);
+        const auto& transform = scene.Registry().get<TransformComponent>(entity);
+        auto* actor = CreateActor(entity, body, collider, transform, scene.Registry().try_get<MeshComponent>(entity));
+        if (!actor) return nullptr;
+        SeedVelocity(entity, scene, actor);
+        AppliedState applied{.Position = transform.Position, .Rotation = transform.Rotation};
+        if (const auto* velocity = scene.Registry().try_get<VelocityComponent>(entity))
+        {
+            applied.Linear = velocity->Linear;
+            applied.Angular = velocity->Angular;
+        }
+        m_Applied.insert_or_assign(entity, applied);
+        m_ActorsByEntity.emplace(entity, actor);
+        m_EntitiesByActor.emplace(actor, entity);
+        return actor;
+    }
+
+    void PhysicsSimulationModule::ClearActors()
+    {
+        for (const auto& [entity, actor] : m_ActorsByEntity) DestroyActor(actor);
+        m_ActorsByEntity.clear();
+        m_EntitiesByActor.clear();
+        m_Applied.clear();
+        m_Joints.clear();
+        m_PendingJoints.clear();
+        m_Commands.clear();
+        m_KinematicTargets.clear();
+        m_ActorStateValid = false;
+    }
+
     void PhysicsSimulationModule::SyncActors(Scene& scene)
     {
         std::unordered_set<entt::entity> current;
@@ -277,23 +318,7 @@ namespace GPP
                 PushExternalChanges(scene, entity, existing->second);
                 continue;
             }
-
-            const auto& body = view.get<RigidBodyComponent>(entity);
-            const auto& collider = view.get<ColliderComponent>(entity);
-            const auto& transform = view.get<TransformComponent>(entity);
-            if (auto* actor = CreateActor(entity, body, collider, transform, scene.Registry().try_get<MeshComponent>(entity)))
-            {
-                SeedVelocity(entity, scene, actor);
-                AppliedState applied{.Position = transform.Position, .Rotation = transform.Rotation};
-                if (const auto* velocity = scene.Registry().try_get<VelocityComponent>(entity))
-                {
-                    applied.Linear = velocity->Linear;
-                    applied.Angular = velocity->Angular;
-                }
-                m_Applied.insert_or_assign(entity, applied);
-                m_ActorsByEntity.emplace(entity, actor);
-                m_EntitiesByActor.emplace(actor, entity);
-            }
+            AddActor(scene, entity);
         }
 
         for (auto it = m_ActorsByEntity.begin(); it != m_ActorsByEntity.end();)
@@ -1013,25 +1038,145 @@ namespace GPP
         }
     }
 
-    std::string PhysicsSimulationModule::SaveState() const
+    namespace
     {
-        std::vector<std::pair<std::uint32_t, const JointSpec*>> specs;
+        constexpr std::string_view kPhysicsStateTag = "physics";
+        constexpr int kPhysicsStateVersion = 2;
+
+        std::vector<std::string_view> Tokens(const std::string_view line)
+        {
+            std::vector<std::string_view> tokens;
+            std::size_t pos = 0;
+            while (pos < line.size())
+            {
+                const auto end = line.find(' ', pos);
+                const auto stop = end == std::string_view::npos ? line.size() : end;
+                if (stop > pos) tokens.push_back(line.substr(pos, stop - pos));
+                pos = stop + 1;
+            }
+            return tokens;
+        }
+
+        template <typename T>
+        bool Parse(const std::string_view token, T& value)
+        {
+            const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
+            return result.ec == std::errc{} && result.ptr == token.data() + token.size();
+        }
+
+        template <typename T>
+        bool ParseAll(const std::vector<std::string_view>& tokens, const std::size_t first, T* out, const std::size_t count)
+        {
+            if (tokens.size() < first + count) return false;
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                if (!Parse(tokens[first + i], out[i])) return false;
+            }
+            return true;
+        }
+    }
+
+    std::string PhysicsSimulationModule::JointLine(const std::uint32_t id, const JointSpec& spec)
+    {
+        const std::array<float, 20> values{
+            spec.FrameA.p.x, spec.FrameA.p.y, spec.FrameA.p.z, spec.FrameA.q.x, spec.FrameA.q.y, spec.FrameA.q.z,
+            spec.FrameA.q.w, spec.FrameB.p.x, spec.FrameB.p.y, spec.FrameB.p.z, spec.FrameB.q.x, spec.FrameB.q.y,
+            spec.FrameB.q.z, spec.FrameB.q.w, spec.Distance, spec.MinDistance, spec.Stiffness, spec.Damping,
+            spec.BreakForce, spec.BreakTorque};
+        std::string out = std::format("{} {} {} {}", id, static_cast<int>(spec.Kind), spec.GuidA, spec.GuidB);
+        for (const float value : values) out += std::format(" {}", value);
+        return out;
+    }
+
+    void PhysicsSimulationModule::PrepareSave()
+    {
+        if (m_Scene && m_Bound) LoadState(SaveState());
+    }
+
+    std::string PhysicsSimulationModule::HashState() const
+    {
+        std::string body;
+        std::uint32_t count = 0;
+        const auto append = [&body, &count](const std::uint32_t id, const JointSpec& spec)
+        {
+            body += JointLine(id, spec) + '\n';
+            ++count;
+        };
         for (const auto& [id, record] : m_Joints)
         {
-            if (record.Joint && !record.Broken) specs.emplace_back(id, &record.Spec);
+            if (record.Joint && !record.Broken) append(id, record.Spec);
         }
-        for (const auto& [id, spec] : m_PendingJoints) specs.emplace_back(id, &spec);
-        if (specs.empty()) return {};
-        std::string out = std::format("{}\n", m_NextJoint);
-        for (const auto& [id, spec] : specs)
+        for (const auto& [id, spec] : m_PendingJoints) append(id, spec);
+        if (count == 0) return {};
+        return std::format("{}\n", m_NextJoint) + body;
+    }
+
+    std::string PhysicsSimulationModule::ActorState() const
+    {
+        if (m_ActorStateValid) return m_ActorState;
+        std::string out;
+        const auto types = physx::PxActorTypeFlag::eRIGID_STATIC | physx::PxActorTypeFlag::eRIGID_DYNAMIC;
+        std::vector<physx::PxActor*> actors(m_Scene->getNbActors(types));
+        actors.resize(m_Scene->getActors(types, actors.data(), static_cast<physx::PxU32>(actors.size())));
+        for (auto* base : actors)
         {
-            const std::array<float, 20> values{
-                spec->FrameA.p.x, spec->FrameA.p.y, spec->FrameA.p.z, spec->FrameA.q.x, spec->FrameA.q.y,
-                spec->FrameA.q.z, spec->FrameA.q.w, spec->FrameB.p.x, spec->FrameB.p.y, spec->FrameB.p.z,
-                spec->FrameB.q.x, spec->FrameB.q.y, spec->FrameB.q.z, spec->FrameB.q.w, spec->Distance,
-                spec->MinDistance, spec->Stiffness, spec->Damping, spec->BreakForce, spec->BreakTorque};
-            out += std::format("{} {} {} {}", id, static_cast<int>(spec->Kind), spec->GuidA, spec->GuidB);
-            for (const float value : values) out += std::format(" {}", value);
+            auto* actor = base->is<physx::PxRigidActor>();
+            const auto owner = actor ? m_EntitiesByActor.find(actor) : m_EntitiesByActor.end();
+            if (owner == m_EntitiesByActor.end() || !m_Bound->IsValid(owner->second)) continue;
+            const auto pose = actor->getGlobalPose();
+            physx::PxVec3 linear(0.0f);
+            physx::PxVec3 angular(0.0f);
+            bool sleeping = false;
+            float wake = 0.0f;
+            if (auto* dynamic = actor->is<physx::PxRigidDynamic>())
+            {
+                sleeping = dynamic->isSleeping();
+                wake = dynamic->getWakeCounter();
+                if (!(dynamic->getRigidBodyFlags() & physx::PxRigidBodyFlag::eKINEMATIC))
+                {
+                    linear = dynamic->getLinearVelocity();
+                    angular = dynamic->getAngularVelocity();
+                }
+            }
+            const auto applied = m_Applied.find(owner->second);
+            const AppliedState a = applied != m_Applied.end() ? applied->second : AppliedState{};
+            out += "actor";
+            const auto put = [&out](const auto value) { out += std::format(" {}", value); };
+            put(m_Bound->GuidOf(owner->second));
+            for (const float value : {pose.p.x, pose.p.y, pose.p.z, pose.q.x, pose.q.y, pose.q.z, pose.q.w, linear.x,
+                                      linear.y, linear.z, angular.x, angular.y, angular.z})
+                put(value);
+            put(sleeping ? 1 : 0);
+            put(wake);
+            for (const double value : {a.Position.x, a.Position.y, a.Position.z}) put(value);
+            for (const float value : {a.Rotation.w, a.Rotation.x, a.Rotation.y, a.Rotation.z}) put(value);
+            for (const double value : {a.Linear.x, a.Linear.y, a.Linear.z, a.Angular.x, a.Angular.y, a.Angular.z})
+                put(value);
+            out += '\n';
+        }
+        return out;
+    }
+
+    std::string PhysicsSimulationModule::SaveState() const
+    {
+        if (!m_Scene || !m_Bound) return HashState();
+        std::string out = std::format("{} {}\norigin {} {} {}\nnext {}\n", kPhysicsStateTag, kPhysicsStateVersion,
+                                      m_OriginM.x, m_OriginM.y, m_OriginM.z, m_NextJoint);
+        for (const auto& [id, record] : m_Joints)
+        {
+            if (record.Joint || record.Broken) out += std::format("joint {} {}\n", JointLine(id, record.Spec), record.Broken ? 1 : 0);
+        }
+        for (const auto& [id, spec] : m_PendingJoints) out += std::format("joint {} 0\n", JointLine(id, spec));
+
+        out += ActorState();
+        for (const auto& c : m_Commands)
+        {
+            const glm::quat r = c.Rotation.value_or(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+            out += std::format("command {} {}", static_cast<int>(c.Kind), c.Guid);
+            for (const double value : {c.Vector.x, c.Vector.y, c.Vector.z, c.Point.x, c.Point.y, c.Point.z})
+                out += std::format(" {}", value);
+            out += std::format(" {}", c.Rotation ? 1 : 0);
+            for (const float value : {r.w, r.x, r.y, r.z}) out += std::format(" {}", value);
             out += '\n';
         }
         return out;
@@ -1039,27 +1184,53 @@ namespace GPP
 
     void PhysicsSimulationModule::LoadState(const std::string& state)
     {
-        for (auto& [id, record] : m_Joints)
+        std::vector<std::vector<std::string_view>> lines;
+        std::size_t pos = 0;
+        while (pos < state.size())
         {
-            if (record.Joint) record.Joint->release();
+            const auto end = state.find('\n', pos);
+            const auto stop = end == std::string::npos ? state.size() : end;
+            auto tokens = Tokens(std::string_view(state).substr(pos, stop - pos));
+            if (!tokens.empty()) lines.push_back(std::move(tokens));
+            pos = stop + 1;
         }
-        m_Joints.clear();
-        m_PendingJoints.clear();
-        std::istringstream in(state);
-        std::string line;
-        if (!std::getline(in, line)) return;
-        std::istringstream header(line);
-        header >> m_NextJoint;
-        while (std::getline(in, line))
+        if (lines.empty()) return;
+
+        const bool versioned = lines.front().front() == kPhysicsStateTag;
+        if (versioned && m_Scene && m_Bound)
         {
-            std::istringstream fields(line);
-            std::uint32_t id = 0;
+            ClearActors();
+            m_ActorState.clear();
+            m_ActorStateValid = false;
+            m_Scene->release();
+            m_Scene = nullptr;
+            CreateScene();
+            for (const auto& line : lines)
+            {
+                std::array<double, 3> origin{};
+                if (line[0] == "origin" && ParseAll(line, 1, origin.data(), origin.size()))
+                    m_OriginM = {origin[0], origin[1], origin[2]};
+            }
+        }
+        else
+        {
+            for (auto& [id, record] : m_Joints)
+            {
+                if (record.Joint) record.Joint->release();
+            }
+            m_Joints.clear();
+            m_PendingJoints.clear();
+        }
+
+        const auto parseJoint = [](const std::vector<std::string_view>& line, const std::size_t first,
+                                   std::uint32_t& id, JointSpec& spec) -> bool
+        {
             int kind = 0;
-            JointSpec spec;
             std::array<float, 20> v{};
-            fields >> id >> kind >> spec.GuidA >> spec.GuidB;
-            for (auto& value : v) fields >> value;
-            if (!fields) continue;
+            if (line.size() < first + 4 + v.size()) return false;
+            if (!Parse(line[first], id) || !Parse(line[first + 1], kind) || !Parse(line[first + 2], spec.GuidA) ||
+                !Parse(line[first + 3], spec.GuidB) || !ParseAll(line, first + 4, v.data(), v.size()))
+                return false;
             spec.Kind = static_cast<PhysicsJointKind>(kind);
             spec.FrameA = physx::PxTransform(physx::PxVec3(v[0], v[1], v[2]), physx::PxQuat(v[3], v[4], v[5], v[6]));
             spec.FrameB = physx::PxTransform(physx::PxVec3(v[7], v[8], v[9]), physx::PxQuat(v[10], v[11], v[12], v[13]));
@@ -1069,7 +1240,93 @@ namespace GPP
             spec.Damping = v[17];
             spec.BreakForce = v[18];
             spec.BreakTorque = v[19];
-            m_PendingJoints.emplace_back(id, spec);
+            return true;
+        };
+
+        if (!versioned)
+        {
+            std::uint32_t next = 1;
+            if (Parse(lines.front()[0], next)) m_NextJoint = next;
+            for (std::size_t i = 1; i < lines.size(); ++i)
+            {
+                std::uint32_t id = 0;
+                JointSpec spec;
+                if (parseJoint(lines[i], 0, id, spec)) m_PendingJoints.emplace_back(id, spec);
+            }
+            return;
         }
+
+        for (const auto& line : lines)
+        {
+            if (line[0] == "next" && line.size() > 1) Parse(line[1], m_NextJoint);
+            else if (line[0] == "joint")
+            {
+                std::uint32_t id = 0;
+                JointSpec spec;
+                int broken = 0;
+                if (!parseJoint(line, 1, id, spec) || !Parse(line.back(), broken)) continue;
+                if (broken) m_Joints[id] = JointRecord{spec, nullptr, true};
+                else m_PendingJoints.emplace_back(id, spec);
+            }
+            else if (line[0] == "command")
+            {
+                std::array<double, 6> v{};
+                std::array<float, 4> r{};
+                std::uint64_t guid = 0;
+                int kind = 0;
+                int hasRotation = 0;
+                if (line.size() < 14 || !Parse(line[1], kind) || !Parse(line[2], guid) ||
+                    !ParseAll(line, 3, v.data(), v.size()) || !Parse(line[9], hasRotation) ||
+                    !ParseAll(line, 10, r.data(), r.size()))
+                    continue;
+                PhysicsCommand command;
+                command.Kind = static_cast<PhysicsCommandKind>(kind);
+                command.Guid = guid;
+                command.Vector = {v[0], v[1], v[2]};
+                command.Point = {v[3], v[4], v[5]};
+                if (hasRotation) command.Rotation = glm::quat(r[0], r[1], r[2], r[3]);
+                m_Commands.push_back(command);
+            }
+            else if (line[0] == "actor" && m_Scene && m_Bound)
+            {
+                std::uint64_t guid = 0;
+                std::array<float, 13> f{};
+                float wake = 0.0f;
+                int sleeping = 0;
+                AppliedState applied;
+                std::array<double, 3> position{};
+                std::array<float, 4> rotation{};
+                std::array<double, 6> motion{};
+                if (line.size() < 30 || !Parse(line[1], guid) || !ParseAll(line, 2, f.data(), f.size()) ||
+                    !Parse(line[15], sleeping) || !Parse(line[16], wake) || !ParseAll(line, 17, position.data(), 3) ||
+                    !ParseAll(line, 20, rotation.data(), 4) || !ParseAll(line, 24, motion.data(), 6))
+                    continue;
+                const auto entity = m_Bound->FindByGuid(guid);
+                if (!m_Bound->IsValid(entity) || m_ActorsByEntity.contains(entity)) continue;
+                if (!m_Bound->Registry().all_of<RigidBodyComponent, ColliderComponent, TransformComponent>(entity)) continue;
+                auto* actor = AddActor(*m_Bound, entity);
+                if (!actor) continue;
+                actor->setGlobalPose(physx::PxTransform(physx::PxVec3(f[0], f[1], f[2]),
+                                                        physx::PxQuat(f[3], f[4], f[5], f[6])), false);
+                if (auto* dynamic = actor->is<physx::PxRigidDynamic>();
+                    dynamic && !(dynamic->getRigidBodyFlags() & physx::PxRigidBodyFlag::eKINEMATIC))
+                {
+                    dynamic->setLinearVelocity(physx::PxVec3(f[7], f[8], f[9]), false);
+                    dynamic->setAngularVelocity(physx::PxVec3(f[10], f[11], f[12]), false);
+                    dynamic->setWakeCounter(wake);
+                    if (sleeping) dynamic->putToSleep();
+                }
+                applied.Position = {position[0], position[1], position[2]};
+                applied.Rotation = {rotation[0], rotation[1], rotation[2], rotation[3]};
+                applied.Linear = {motion[0], motion[1], motion[2]};
+                applied.Angular = {motion[3], motion[4], motion[5]};
+                m_Applied.insert_or_assign(entity, applied);
+                const std::string_view raw(line.front().data(),
+                                           static_cast<std::size_t>(line.back().data() + line.back().size() - line.front().data()));
+                m_ActorState += raw;
+                m_ActorState += '\n';
+            }
+        }
+        m_ActorStateValid = true;
     }
 }
