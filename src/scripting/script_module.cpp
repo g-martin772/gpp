@@ -92,6 +92,19 @@ namespace GPP
                 call.PushNumber(Input ? Input->Scroll() : 0.0);
                 return 1;
             });
+            vm.Register("input", "captured", [this](LuauNativeCall& call)
+            {
+                const auto captured = Input ? Input->Captured() : std::nullopt;
+                if (captured) call.PushBoolean(*captured);
+                else call.PushNil();
+                return 1;
+            });
+            vm.Register("input", "bindings", [this](LuauNativeCall& call)
+            {
+                const auto sources = Input ? Input->Bindings(call.String(1)) : std::vector<std::string>{};
+                for (const auto& source : sources) call.PushString(source);
+                return static_cast<int>(sources.size());
+            });
         }
 
         void Publish()

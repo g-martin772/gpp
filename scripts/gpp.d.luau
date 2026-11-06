@@ -144,6 +144,8 @@ declare input: {
     released: (action: string) -> boolean,
     mouse_delta: () -> Vec2,
     scroll: () -> number,
+    captured: () -> boolean?,
+    bindings: (action: string) -> ...string,
 }
 
 declare task: {

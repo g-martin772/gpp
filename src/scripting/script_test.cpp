@@ -125,6 +125,16 @@ function sim.input(action, value)
     inputRaw(action, value)
 end
 
+local capturedRaw = sim.__input_captured
+function sim.input_captured(value)
+    capturedRaw(value == false and 0 or 1)
+end
+
+local bindRaw = sim.__input_bind
+function sim.input_bind(action, ...)
+    for _, source in {...} do bindRaw(action, source) end
+end
+
 function sim.input_tap(action)
     sim.input(action, 1)
     sim.input(action, 0)
@@ -524,6 +534,17 @@ gpp.testing = testing
                     m_Input->AddScroll(static_cast<float>(call.Number(1)));
                     return 0;
                 });
+                m_Vm.Register("sim", "__input_captured", [this](LuauNativeCall& call)
+                {
+                    m_Input->SetCaptured(call.Number(1) != 0.0);
+                    return 0;
+                });
+                m_Vm.Register("sim", "__input_bind", [this](LuauNativeCall& call)
+                {
+                    m_Bound[call.String(1)].push_back(call.String(2));
+                    m_Input->SetBindings(m_Bound);
+                    return 0;
+                });
                 m_Vm.Register("sim", "input_clear", [this](LuauNativeCall&)
                 {
                     m_Input->Reset();
@@ -645,6 +666,7 @@ gpp.testing = testing
             Scene m_World;
             std::shared_ptr<SimulationRandom> m_Random;
             std::shared_ptr<SimulationInput> m_Input = std::make_shared<SimulationInput>();
+            std::map<std::string, std::vector<std::string>, std::less<>> m_Bound;
             std::shared_ptr<ScriptSimulationModule> m_Scripts;
             std::shared_ptr<const HudFrame> m_Hud;
             std::shared_ptr<PhysicsSimulationModule> m_Physics;

@@ -50,7 +50,7 @@ TEST_CASE("Luau definitions declare every registered scene native", "[scripting]
     for (const auto& name : RegisteredNames(bindings, "units")) CHECK(Declares(definitions, "units", name));
     const auto module = ReadFile(root / "src" / "scripting" / "script_module.cpp");
     const auto inputNames = RegisteredNames(module, "input");
-    REQUIRE(inputNames.size() == 6);
+    REQUIRE(inputNames.size() == 8);
     for (const auto& name : inputNames) CHECK(Declares(definitions, "input", name));
     const auto prelude = ReadFile(root / "src" / "scripting" / "physics_bindings.cpp");
     const auto physicsNames = RegisteredNames(prelude, "physics");

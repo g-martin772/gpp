@@ -115,10 +115,32 @@ export namespace GPP
         [[nodiscard]] bool Used() const noexcept { return m_Used.load(std::memory_order_relaxed); }
         void ResetUsed() noexcept { m_Used.store(false, std::memory_order_relaxed); }
 
+        void SetCaptured(const bool captured) noexcept { m_Captured.store(captured ? 1 : 0, std::memory_order_relaxed); }
+        [[nodiscard]] std::optional<bool> Captured() const noexcept
+        {
+            const auto state = m_Captured.load(std::memory_order_relaxed);
+            return state < 0 ? std::nullopt : std::optional<bool>(state != 0);
+        }
+
+        void SetBindings(std::map<std::string, std::vector<std::string>, std::less<>> bindings)
+        {
+            std::scoped_lock lock(m_Mutex);
+            m_Bindings = std::move(bindings);
+        }
+
+        [[nodiscard]] std::vector<std::string> Bindings(const std::string_view action)
+        {
+            std::scoped_lock lock(m_Mutex);
+            const auto it = m_Bindings.find(action);
+            return it == m_Bindings.end() ? std::vector<std::string>{} : it->second;
+        }
+
     private:
         std::mutex m_Mutex;
         InputFrame m_Pending;
         InputFrame m_Current;
+        std::map<std::string, std::vector<std::string>, std::less<>> m_Bindings;
         mutable std::atomic<bool> m_Used{false};
+        std::atomic<signed char> m_Captured{-1};
     };
 }

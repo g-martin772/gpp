@@ -56,10 +56,12 @@ export namespace GPP
         void SetSource(std::string_view source, float value);
         void AddMouse(glm::vec2 delta);
         void AddScroll(float delta);
+        void SetCaptured(bool captured);
         void Release();
 
     private:
         void Push(const InputAction& action);
+        void PushBindings();
 
         mutable std::mutex m_Mutex;
         ActionMap m_Map;

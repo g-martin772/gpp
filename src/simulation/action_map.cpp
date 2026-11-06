@@ -174,6 +174,19 @@ namespace GPP
     {
         std::scoped_lock lock(m_Mutex);
         m_Target = std::move(target);
+        PushBindings();
+    }
+
+    void ActionRouter::PushBindings()
+    {
+        if (!m_Target) return;
+        std::map<std::string, std::vector<std::string>, std::less<>> bindings;
+        for (const auto& action : m_Map.Actions())
+        {
+            auto& list = bindings[action.Name];
+            for (const auto& binding : action.Bindings) list.push_back(ActionMap::FormatBinding(binding));
+        }
+        m_Target->SetBindings(std::move(bindings));
     }
 
     void ActionRouter::Push(const InputAction& action)
@@ -199,6 +212,7 @@ namespace GPP
         }
         m_Map = std::move(map);
         for (const auto& action : m_Map.Actions()) Push(action);
+        PushBindings();
     }
 
     ActionMap ActionRouter::Map() const
@@ -229,6 +243,12 @@ namespace GPP
     {
         std::scoped_lock lock(m_Mutex);
         if (m_Target) m_Target->AddScroll(delta);
+    }
+
+    void ActionRouter::SetCaptured(const bool captured)
+    {
+        std::scoped_lock lock(m_Mutex);
+        if (m_Target) m_Target->SetCaptured(captured);
     }
 
     void ActionRouter::Release()

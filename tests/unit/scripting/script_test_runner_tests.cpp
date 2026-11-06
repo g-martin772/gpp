@@ -338,3 +338,34 @@ end)
     INFO(FormatScriptTestReport({.Files = {file}}, true));
     CHECK(file.Ok());
 }
+
+TEST_CASE("Scripts read capture state and bindings", "[scripting][script-test]")
+{
+    ScriptRoot root("capture_bindings");
+    root.Write("probe", R"(
+return {
+    OnTick = function(self, dt)
+        local captured = input.captured()
+        local list = { input.bindings("move_z") }
+        scene.set(self.entity, "Transform", "Position", vector.create(captured == nil and -1 or (captured and 1 or 0), #list, 0))
+    end,
+})");
+    const auto file = RunScriptTestSource(R"(
+test("nil until the host reports, then follows it", function()
+    local e = sim.spawn("Probe")
+    sim.attach(e, "probe")
+    sim.step(1)
+    assert(scene.get(e, "Transform", "Position").x == -1)
+    sim.input_captured(false)
+    sim.step(1)
+    assert(scene.get(e, "Transform", "Position").x == 0)
+    sim.input_captured(true)
+    sim.input_bind("move_z", "key:w", "-key:s")
+    sim.step(1)
+    local p = scene.get(e, "Transform", "Position")
+    assert(p.x == 1 and p.y == 2)
+end)
+)", "capture.luau", root.Run());
+    INFO(FormatScriptTestReport({.Files = {file}}, true));
+    CHECK(file.Ok());
+}

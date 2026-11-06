@@ -190,6 +190,27 @@ TEST_CASE("The router turns sources into clamped action values", "[input][action
     CHECK(router.Map() == rebound);
 }
 
+TEST_CASE("The router publishes bindings and capture state to its target", "[input][actions]")
+{
+    auto target = std::make_shared<SimulationInput>();
+    CHECK_FALSE(target->Captured().has_value());
+    ActionRouter router;
+    router.SetMap(ActionMap::Defaults());
+    router.SetTarget(target);
+    CHECK(target->Bindings("move_x") == std::vector<std::string>{"key:d", "-key:a"});
+    CHECK(target->Bindings("missing").empty());
+
+    router.SetCaptured(true);
+    CHECK(target->Captured() == std::optional<bool>(true));
+    router.SetCaptured(false);
+    CHECK(target->Captured() == std::optional<bool>(false));
+
+    auto rebound = ActionMap::Defaults();
+    rebound.Set("move_x", {{"key:right", 1.0f}, {"key:left", 0.5f}});
+    router.SetMap(rebound);
+    CHECK(target->Bindings("move_x") == std::vector<std::string>{"key:right", "0.5*key:left"});
+}
+
 TEST_CASE("The runner records sampled input and replays it to the same state", "[input][replay]")
 {
     std::uint64_t target = 0;
