@@ -143,6 +143,7 @@ declare input: {
     pressed: (action: string) -> boolean,
     released: (action: string) -> boolean,
     mouse_delta: () -> Vec2,
+    scroll: () -> number,
 }
 
 declare task: {

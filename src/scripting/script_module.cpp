@@ -87,6 +87,11 @@ namespace GPP
                 call.PushValue(Input ? Input->MouseDelta() : glm::vec2(0.0f));
                 return 1;
             });
+            vm.Register("input", "scroll", [this](LuauNativeCall& call)
+            {
+                call.PushNumber(Input ? Input->Scroll() : 0.0);
+                return 1;
+            });
         }
 
         void Publish()

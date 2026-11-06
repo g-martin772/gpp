@@ -56,12 +56,24 @@ TEST_CASE("Input frames latch taps between ticks and drop zeros", "[input]")
     CHECK(first.Values.at("move_x") == Approx(0.25f));
     CHECK(first.Pressed.size() == 1);
     CHECK(first.Mouse == glm::vec2(3.0f, 3.0f));
+    CHECK(first.Scroll == 0.0f);
 
     const auto second = input.Sample();
     CHECK(second.Pressed.empty());
     CHECK(second.Released.empty());
     CHECK(second.Mouse == glm::vec2(0.0f));
     CHECK(second.Values == first.Values);
+
+    input.AddScroll(1.0f);
+    input.AddScroll(0.25f);
+    input.AddScroll(std::numeric_limits<float>::infinity());
+    const auto scrolled = input.Sample();
+    CHECK(scrolled.Scroll == Approx(1.25f));
+    CHECK(scrolled.HasEvents());
+    CHECK(input.Sample().Scroll == 0.0f);
+    input.AddScroll(2.0f);
+    input.Begin(input.Sample());
+    CHECK(input.Scroll() == Approx(2.0f));
 
     input.Set("move_x", std::numeric_limits<float>::quiet_NaN());
     CHECK(input.Sample().Values.empty());
@@ -266,6 +278,36 @@ TEST_CASE("Recorded input survives the file and keeps verifying", "[input][repla
     ReplayOptions options;
     options.OnRunnerCreated = [replayed](SimulationRunner& replayRunner) { replayed->Input = replayRunner.Input(); };
     CHECK(VerifyReplay(loaded, {replayed}, options).Ok);
+}
+
+TEST_CASE("Scroll round trips through the recording and old frames load without it", "[input][replay]")
+{
+    std::uint64_t target = 0;
+    auto module = std::make_shared<EchoModule>();
+    SimulationRunner runner(MakeScene(target), module);
+    module->Target = target;
+    module->Input = runner.Input();
+    runner.BeginRecording(3);
+    runner.Input()->AddScroll(-3.5f);
+    runner.StepAndWait(2);
+    const auto recording = runner.EndRecording();
+    REQUIRE(recording.Inputs.size() == 1);
+    CHECK(recording.Inputs[0].Frame.Scroll == Approx(-3.5f));
+
+    const auto text = RecordingToYaml(recording);
+    CHECK(text.contains("Scroll:"));
+    const auto loaded = RecordingFromYaml(text);
+    REQUIRE(loaded.Inputs.size() == 1);
+    CHECK(loaded.Inputs[0].Frame == recording.Inputs[0].Frame);
+
+    auto old = text;
+    const auto key = old.find("Scroll:");
+    REQUIRE(key != std::string::npos);
+    const auto at = old.rfind('\n', key) + 1;
+    old.erase(at, old.find('\n', key) - at + 1);
+    const auto legacy = RecordingFromYaml(old);
+    REQUIRE(legacy.Inputs.size() == 1);
+    CHECK(legacy.Inputs[0].Frame.Scroll == 0.0f);
 }
 
 TEST_CASE("Version 1 recordings without input still load", "[input][replay]")

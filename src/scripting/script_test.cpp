@@ -519,6 +519,11 @@ gpp.testing = testing
                     m_Input->AddMouse(glm::vec2(static_cast<float>(call.Number(1)), static_cast<float>(call.Number(2))));
                     return 0;
                 });
+                m_Vm.Register("sim", "input_scroll", [this](LuauNativeCall& call)
+                {
+                    m_Input->AddScroll(static_cast<float>(call.Number(1)));
+                    return 0;
+                });
                 m_Vm.Register("sim", "input_clear", [this](LuauNativeCall&)
                 {
                     m_Input->Reset();

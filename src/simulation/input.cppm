@@ -13,8 +13,9 @@ export namespace GPP
         std::set<std::string, std::less<>> Pressed;
         std::set<std::string, std::less<>> Released;
         glm::vec2 Mouse{0.0f};
+        float Scroll{0.0f};
 
-        [[nodiscard]] bool HasEvents() const { return !Pressed.empty() || !Released.empty() || Mouse != glm::vec2(0.0f); }
+        [[nodiscard]] bool HasEvents() const { return !Pressed.empty() || !Released.empty() || Mouse != glm::vec2(0.0f) || Scroll != 0.0f; }
         [[nodiscard]] bool operator==(const InputFrame&) const = default;
     };
 
@@ -45,6 +46,13 @@ export namespace GPP
             m_Pending.Mouse += delta;
         }
 
+        void AddScroll(const float delta)
+        {
+            if (!std::isfinite(delta)) return;
+            std::scoped_lock lock(m_Mutex);
+            m_Pending.Scroll += delta;
+        }
+
         void Clear()
         {
             std::scoped_lock lock(m_Mutex);
@@ -68,6 +76,7 @@ export namespace GPP
             m_Pending.Pressed.clear();
             m_Pending.Released.clear();
             m_Pending.Mouse = glm::vec2(0.0f);
+            m_Pending.Scroll = 0.0f;
             return frame;
         }
 
@@ -95,6 +104,12 @@ export namespace GPP
         {
             m_Used.store(true, std::memory_order_relaxed);
             return m_Current.Mouse;
+        }
+
+        [[nodiscard]] float Scroll() const
+        {
+            m_Used.store(true, std::memory_order_relaxed);
+            return m_Current.Scroll;
         }
 
         [[nodiscard]] bool Used() const noexcept { return m_Used.load(std::memory_order_relaxed); }

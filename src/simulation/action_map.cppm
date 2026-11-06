@@ -55,6 +55,7 @@ export namespace GPP
         [[nodiscard]] ActionMap Map() const;
         void SetSource(std::string_view source, float value);
         void AddMouse(glm::vec2 delta);
+        void AddScroll(float delta);
         void Release();
 
     private:

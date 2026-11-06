@@ -98,6 +98,7 @@ return {
     OnTick = function(self, dt)
         local x, y, z = scene.get_xyz(self.entity, "Transform", "Position")
         local m = input.mouse_delta()
+        y += input.scroll() * 10
         if input.pressed("jump") then z += 5 end
         if input.released("jump") then z += 1 end
         if input.held("fire") then y += 0.5 end
@@ -152,6 +153,48 @@ TEST_CASE("input.* reads the frame the runner sampled for the tick", "[scripting
     CHECK(rig.Position().z == Approx(6.0));
     CHECK(rig.Position().y == Approx(1.0));
     CHECK(rig.Module->TakeErrors().empty());
+}
+
+TEST_CASE("input.scroll accumulates per tick and replays to the same hash", "[scripting][module][input][replay]")
+{
+    InputRig rig(kDriver);
+    rig.Runner->BeginRecording(5);
+    rig.Runner->StepAndWait(2);
+    rig.Runner->Input()->AddScroll(1.0f);
+    rig.Runner->Input()->AddScroll(0.5f);
+    rig.Runner->StepAndWait(1);
+    CHECK(rig.Position().y == Approx(15.0));
+    rig.Runner->StepAndWait(2);
+    CHECK(rig.Position().y == Approx(15.0));
+    rig.Runner->Input()->AddScroll(-2.0f);
+    rig.Runner->StepAndWait(1);
+    CHECK(rig.Position().y == Approx(-5.0));
+    const auto recording = rig.Runner->EndRecording();
+    const auto live = rig.Runner->StateHash();
+    REQUIRE(recording.Inputs.size() == 2);
+    CHECK(recording.Inputs[0].Frame.Scroll == Approx(1.5f));
+
+    auto replay = [&](const SimulationRecording& which)
+    {
+        auto module = std::make_shared<ScriptSimulationModule>(*rig.Files.Assets);
+        ReplayOptions options;
+        options.OnRunnerCreated = [module](SimulationRunner& runner)
+        {
+            module->SetRandom(runner.Random());
+            module->SetInput(runner.Input());
+        };
+        return VerifyReplay(which, {module}, options);
+    };
+    const auto loaded = RecordingFromYaml(RecordingToYaml(recording));
+    CHECK(loaded.Inputs[1].Frame.Scroll == Approx(-2.0f));
+    const auto verified = replay(loaded);
+    INFO(verified.Message);
+    CHECK(verified.Ok);
+    CHECK(verified.FinalHash == live);
+
+    auto without = recording;
+    without.Inputs.clear();
+    CHECK_FALSE(replay(without).Ok);
 }
 
 TEST_CASE("Scripts reading input replay to the same hash", "[scripting][module][input][replay]")

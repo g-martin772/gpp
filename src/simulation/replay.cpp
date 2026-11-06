@@ -45,6 +45,7 @@ namespace GPP
                 node["Mouse"].push_back(record.Frame.Mouse.y);
                 node["Mouse"].SetStyle(YAML::EmitterStyle::Flow);
             }
+            if (record.Frame.Scroll != 0.0f) node["Scroll"] = record.Frame.Scroll;
             return node;
         }
 
@@ -59,6 +60,7 @@ namespace GPP
             {
                 record.Frame.Mouse = glm::vec2(mouse[0].as<float>(), mouse[1].as<float>());
             }
+            if (const auto scroll = node["Scroll"]) record.Frame.Scroll = scroll.as<float>();
             return record;
         }
 

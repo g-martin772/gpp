@@ -225,6 +225,12 @@ namespace GPP
         if (m_Target) m_Target->AddMouse(delta);
     }
 
+    void ActionRouter::AddScroll(const float delta)
+    {
+        std::scoped_lock lock(m_Mutex);
+        if (m_Target) m_Target->AddScroll(delta);
+    }
+
     void ActionRouter::Release()
     {
         std::scoped_lock lock(m_Mutex);
