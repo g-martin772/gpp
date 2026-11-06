@@ -307,3 +307,34 @@ TEST_CASE("Test files are discovered recursively and in order", "[scripting][tes
     CHECK(FormatScriptTestReport(report, true).find("PASS sub/c_third.luau: c") != std::string::npos);
     CHECK_FALSE(ScriptTestReport{}.Ok());
 }
+
+TEST_CASE("Script tests extend the scene bindings for the test world and script components", "[scripting][script-test]")
+{
+    ScriptRoot root("extend_scene");
+    root.Write("probe", R"(
+return {
+    OnTick = function(self, dt)
+        scene.set(self.entity, "Transform", "Position", vector.create(time.rate(self.entity), 0, 0))
+    end,
+})");
+    auto options = root.Run();
+    options.ExtendScene = [](LuauVm& vm, const std::shared_ptr<SceneBindings>& bindings)
+    {
+        vm.Register("time", "rate", [bindings](LuauNativeCall& call)
+        {
+            call.PushNumber(bindings->Read && bindings->Read->IsValid(bindings->Read->FindByGuid(call.Entity(1))) ? 0.5 : -1.0);
+            return 1;
+        });
+    };
+    const auto file = RunScriptTestSource(R"(
+test("both vms see the extension", function()
+    local e = sim.spawn("Probe")
+    assert(time.rate(e) == 0.5)
+    sim.attach(e, "probe")
+    sim.step(2)
+    assert(scene.get(e, "Transform", "Position").x == 0.5)
+end)
+)", "extend.luau", options);
+    INFO(FormatScriptTestReport({.Files = {file}}, true));
+    CHECK(file.Ok());
+}

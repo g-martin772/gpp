@@ -4,6 +4,7 @@ import std;
 import GPP.Core;
 import GPP.Simulation;
 import :Luau;
+import :Bindings;
 
 export namespace GPP
 {
@@ -15,6 +16,7 @@ export namespace GPP
         LuauLimits Limits{.MaxSafepoints = 100'000'000, .MaxSeconds = 10.0};
         std::function<std::vector<std::shared_ptr<ISimulationModule>>()> MakeModules;
         std::function<void(LuauVm&)> Extend;
+        std::function<void(LuauVm&, const std::shared_ptr<SceneBindings>&)> ExtendScene;
         std::optional<std::filesystem::path> DisplayRoot;
     };
 

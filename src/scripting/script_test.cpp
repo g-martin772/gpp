@@ -276,7 +276,7 @@ gpp.testing = testing
                 m_Assets = std::make_unique<AssetDirectories>(std::move(assetOptions));
                 m_Assets->Poll();
 
-                ScriptModuleOptions moduleOptions{.Limits = options.Limits, .Extend = options.Extend};
+                ScriptModuleOptions moduleOptions{.Limits = options.Limits, .Extend = options.Extend, .ExtendScene = options.ExtendScene};
                 m_Scripts = std::make_shared<ScriptSimulationModule>(*m_Assets, std::move(moduleOptions));
                 m_Scripts->SetRandom(m_Random);
                 m_Scripts->SetInput(m_Input);
@@ -309,6 +309,7 @@ gpp.testing = testing
                 RegisterNatives();
                 RegisterPhysicsBindings(m_Vm, m_Bindings, [this] { return m_Physics.get(); });
                 if (options.Extend) options.Extend(m_Vm);
+                if (options.ExtendScene) options.ExtendScene(m_Vm, m_Bindings);
                 if (auto prelude = m_Vm.RunTrusted(kPrelude, "=gpp_test"); !prelude)
                 {
                     throw std::runtime_error("script test prelude failed: " + prelude.error().Message);

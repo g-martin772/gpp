@@ -87,6 +87,7 @@ declare time: {
     elapsed: () -> number,
     scale: () -> number,
     set_scale: (scale: number) -> (),
+    clockrate: (entity: Entity) -> number,
 }
 
 declare gpp: {
